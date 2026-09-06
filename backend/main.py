@@ -7,7 +7,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from database import engine, get_db
-from models import Base, User, Merchant
+from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem
 
 from contextlib import asynccontextmanager
 
@@ -31,6 +31,29 @@ class MerchantCreate(BaseModel):
     name: str
     description: Optional[str] = None
     location: Optional[str] = None
+
+class MenuItemCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    price: float
+    image_url: Optional[str] = None
+    is_available: bool = True
+
+class OrderItemCreate(BaseModel):
+    menu_item_id: UUID
+    quantity: int = 1
+
+class OrderCreate(BaseModel):
+    customer_id: UUID
+    merchant_id: UUID
+    pickup_slot_id: UUID
+    items: List[OrderItemCreate]
+
+from datetime import datetime
+
+class PickupSlotCreate(BaseModel):
+    time_slot: datetime
+    max_capacity: int = 10
 
 
 # --- ROUTES ---
@@ -89,5 +112,127 @@ async def list_merchants(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Merchant))
     merchants = result.scalars().all()
     return merchants
+
+# 4. Route to create a menu item under a specific merchant
+@app.post("/merchants/{merchant_id}/items")
+async def create_menu_item(merchant_id: UUID, item_data: MenuItemCreate, db: AsyncSession = Depends(get_db)):
+    merchant_check = await db.get(Merchant, merchant_id)
+    if not merchant_check:
+        raise HTTPException(status_code=404, detail="Merchant not found.")
+
+    new_item = MenuItem(
+        merchant_id=merchant_id,
+        name=item_data.name,
+        description=item_data.description,
+        price=item_data.price,
+        image_url=item_data.image_url,
+        is_available=item_data.is_available
+    )
+    db.add(new_item)
+    try:
+        await db.commit()
+        await db.refresh(new_item)
+        return new_item
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+# Route to create a pickup slot under a specific merchant
+@app.post("/merchants/{merchant_id}/pickup-slots")
+async def create_pickup_slot(merchant_id: UUID, slot_data: PickupSlotCreate, db: AsyncSession = Depends(get_db)):
+    merchant_check = await db.get(Merchant, merchant_id)
+    if not merchant_check:
+        raise HTTPException(status_code=404, detail="Merchant not found.")
+
+    new_slot = PickupSlot(
+        merchant_id=merchant_id,
+        time_slot=slot_data.time_slot,
+        max_capacity=slot_data.max_capacity
+    )
+    db.add(new_slot)
+    try:
+        await db.commit()
+        await db.refresh(new_slot)
+        return new_slot
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+
+# 5. Route to list pickup slots for a merchant
+@app.get("/merchants/{merchant_id}/pickup-slots")
+async def list_pickup_slots(merchant_id: UUID, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(PickupSlot).where(PickupSlot.merchant_id == merchant_id))
+    return result.scalars().all()
+
+
+# 6. Route to list all menu items for a specific merchant
+@app.get("/merchants/{merchant_id}/items")
+async def list_menu_items(merchant_id: UUID, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(MenuItem).where(MenuItem.merchant_id == merchant_id))
+    return result.scalars().all()
+
+# 7. Route to place an order (checkout)
+@app.post("/orders")
+async def create_order(order_data: OrderCreate, db: AsyncSession = Depends(get_db)):
+    # Validate the pickup slot exists and has room
+    slot = await db.get(PickupSlot, order_data.pickup_slot_id)
+    if not slot:
+        raise HTTPException(status_code=404, detail="Pickup slot not found.")
+    if slot.current_bookings >= slot.max_capacity:
+        raise HTTPException(status_code=400, detail="This pickup slot is fully booked.")
+
+    # Validate items and calculate total price server-side (never trust client prices)
+    total_price = 0
+    line_items = []
+    for line in order_data.items:
+        item = await db.get(MenuItem, line.menu_item_id)
+        if not item:
+            raise HTTPException(status_code=404, detail=f"Menu item {line.menu_item_id} not found.")
+        if not item.is_available:
+            raise HTTPException(status_code=400, detail=f"'{item.name}' is currently unavailable.")
+        line_total = float(item.price) * line.quantity
+        total_price += line_total
+        line_items.append((item, line.quantity))
+
+    # Create the order
+    new_order = Order(
+        customer_id=order_data.customer_id,
+        merchant_id=order_data.merchant_id,
+        pickup_slot_id=order_data.pickup_slot_id,
+        status="pending",
+        total_price=total_price
+    )
+    db.add(new_order)
+
+    try:
+        await db.flush()  # gets new_order.id without fully committing yet
+
+        # Create order line items
+        for item, quantity in line_items:
+            db.add(OrderItem(
+                order_id=new_order.id,
+                menu_item_id=item.id,
+                quantity=quantity,
+                price_at_order=item.price
+            ))
+
+        # Lock in the pickup slot
+        slot.current_bookings += 1
+
+        await db.commit()
+        await db.refresh(new_order)
+        return new_order
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+@app.get("/orders/{order_id}")
+async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
+    order = await db.get(Order, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found.")
+    items_result = await db.execute(select(OrderItem).where(OrderItem.order_id == order_id))
+    items = items_result.scalars().all()
+    return {"order": order, "items": items}
 
 
