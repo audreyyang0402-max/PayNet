@@ -1,3 +1,9 @@
+import os
+import hmac
+import hashlib
+import httpx as httpx_client  # aliased since you might already have httpx elsewhere
+from fastapi import Request
+
 from fastapi_offline import FastAPIOffline
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +24,10 @@ async def lifespan(app: FastAPIOffline):
     yield
 
 app = FastAPIOffline(lifespan=lifespan)
+
+HITPAY_API_KEY = os.getenv("HITPAY_API_KEY")
+HITPAY_SALT = os.getenv("HITPAY_SALT")
+HITPAY_API_URL = os.getenv("HITPAY_API_URL", "https://api.sandbox.hit-pay.com")
 
 # Pydantic Schemas for validation
 class UserCreate(BaseModel):
@@ -234,5 +244,52 @@ async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
     items_result = await db.execute(select(OrderItem).where(OrderItem.order_id == order_id))
     items = items_result.scalars().all()
     return {"order": order, "items": items}
+
+# Route to create a HitPay payment request for an order
+@app.post("/orders/{order_id}/pay")
+async def create_payment_request(order_id: UUID, db: AsyncSession = Depends(get_db)):
+    order = await db.get(Order, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found.")
+
+    async with httpx_client.AsyncClient() as client:
+        response = await client.post(
+            f"{HITPAY_API_URL}/v1/payment-requests",
+            headers={"X-BUSINESS-API-KEY": HITPAY_API_KEY},
+            data={
+                "amount": str(order.total_price),
+                "currency": "MYR",
+                "reference_number": str(order.id),
+                "webhook": "https://shelving-appointee-matter.ngrok-free.dev/webhooks/hitpay"
+            }
+        )
+        payment_data = response.json()
+
+    return payment_data
+
+
+# Route to receive HitPay's payment confirmation webhook
+@app.post("/webhooks/hitpay")
+async def hitpay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    form = await request.form()
+    payload = dict(form)
+
+    received_hmac = payload.pop("hmac", None)
+    sorted_payload = "".join(f"{k}{v}" for k, v in sorted(payload.items()))
+    expected_hmac = hmac.new(
+        HITPAY_SALT.encode(), sorted_payload.encode(), hashlib.sha256
+    ).hexdigest()
+
+    if received_hmac != expected_hmac:
+        raise HTTPException(status_code=400, detail="Invalid webhook signature.")
+
+    if payload.get("status") == "completed":
+        order_id = payload.get("reference_number")
+        order = await db.get(Order, UUID(order_id))
+        if order:
+            order.status = "paid"
+            await db.commit()
+
+    return {"received": True}
 
 

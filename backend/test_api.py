@@ -87,6 +87,11 @@ async def run_test():
                         get_order_res = await client.get(f"{BASE_URL}/orders/{order_data['id']}")
                         print("Order Details:", get_order_res.json())
 
+                                            # 10. Create a HitPay payment request for that order
+                    if "id" in order_data:
+                        pay_res = await client.post(f"{BASE_URL}/orders/{order_data['id']}/pay")
+                        print("Payment Request:", pay_res.json())
+
         # 4. Read the market directory list back
         get_merchants = await client.get(f"{BASE_URL}/merchants")
         print("Live Merchant List:", get_merchants.json())
