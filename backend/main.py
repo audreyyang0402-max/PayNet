@@ -267,6 +267,25 @@ async def create_payment_request(order_id: UUID, db: AsyncSession = Depends(get_
 
     return payment_data
 
+@app.get("/orders/{order_id}/check-payment")
+async def check_payment_status(order_id: UUID, payment_request_id: str, db: AsyncSession = Depends(get_db)):
+    order = await db.get(Order, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found.")
+
+    async with httpx_client.AsyncClient() as client:
+        response = await client.get(
+            f"{HITPAY_API_URL}/v1/payment-requests/{payment_request_id}",
+            headers={"X-BUSINESS-API-KEY": HITPAY_API_KEY}
+        )
+        data = response.json()
+
+    if data.get("status") == "completed":
+        order.status = "completed"
+        await db.commit()
+
+    return data
+
 
 # Route to receive HitPay's payment confirmation webhook
 @app.post("/webhooks/hitpay")
@@ -286,9 +305,9 @@ async def hitpay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     if payload.get("status") == "completed":
         order_id = payload.get("reference_number")
         order = await db.get(Order, UUID(order_id))
-        if order:
-            order.status = "paid"
-            await db.commit()
+    if order:
+        order.status = "completed"
+        await db.commit()
 
     return {"received": True}
 
