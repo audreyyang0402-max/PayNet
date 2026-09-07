@@ -1,11 +1,12 @@
 import os
 import hmac
 import hashlib
+from datetime import datetime
 import httpx as httpx_client  # aliased since you might already have httpx elsewhere
 from fastapi import Request
 
 from fastapi_offline import FastAPIOffline
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from pydantic import BaseModel, EmailStr
@@ -14,6 +15,9 @@ from uuid import UUID
 
 from database import engine, get_db
 from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem
+
+# --- NEW AUTH IMPORTS ---
+from auth import hash_password, verify_password, create_access_token, get_current_user
 
 from contextlib import asynccontextmanager
 
@@ -33,8 +37,20 @@ HITPAY_API_URL = os.getenv("HITPAY_API_URL", "https://api.sandbox.hit-pay.com")
 class UserCreate(BaseModel):
     name: str
     email: EmailStr
-    password_hash: str
+    password: str  # UPDATED: Changed from password_hash since client sends plain text
     role: str = "customer"
+
+# NEW: Schemas for handling login and token generation
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user_id: str
+    role: str
+    name: str
 
 class MerchantCreate(BaseModel):
     user_id: UUID
@@ -54,12 +70,10 @@ class OrderItemCreate(BaseModel):
     quantity: int = 1
 
 class OrderCreate(BaseModel):
-    customer_id: UUID
+    # customer_id: UUID  <-- REMOVED: We now get this securely from the JWT token
     merchant_id: UUID
     pickup_slot_id: UUID
     items: List[OrderItemCreate]
-
-from datetime import datetime
 
 class PickupSlotCreate(BaseModel):
     time_slot: datetime
@@ -76,17 +90,22 @@ def read_root():
 # 1. Route to create a user first (Merchants need a user_id)
 @app.post("/users", response_model=dict)
 async def create_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
+    # Check if email is already taken
+    existing_user = await db.execute(select(User).where(User.email == user_data.email))
+    if existing_user.scalars().first():
+        raise HTTPException(status_code=400, detail="Email already registered.")
+
     new_user = User(
         name=user_data.name,
         email=user_data.email,
-        password_hash=user_data.password_hash,  # Note: Add hashing service layer in a later phase
+        password_hash=hash_password(user_data.password),  # UPDATED: Now hashes securely
         role=user_data.role
     )
     db.add(new_user)
     try:
         await db.commit()
         await db.refresh(new_user)
-        return {"id": str(new_user.id), "name": new_user.name, "role": new_user.role}
+        return {"id": str(new_user.id), "name": new_user.name, "email": new_user.email, "role": new_user.role}
     except Exception as e:
         await db.rollback()
         # MODIFIED: Prints the real hidden database exception straight to your uvicorn console logs
@@ -94,6 +113,44 @@ async def create_user(user_data: UserCreate, db: AsyncSession = Depends(get_db))
         print(str(e))
         print("==============================\n")
         raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+
+# 1b. Route to login and receive a JWT Token (NEW)
+@app.post("/auth/login", response_model=TokenResponse)
+async def login(login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == login_data.email))
+    user = result.scalars().first()
+
+    if not user or not verify_password(login_data.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Issue JWT Token
+    access_token = create_access_token(
+        data={"sub": str(user.id), "role": user.role, "email": user.email}
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user_id": str(user.id),
+        "role": user.role,
+        "name": user.name
+    }
+
+
+# 1c. Route to Verify Current User Token (Useful for Next.js app startup) (NEW)
+@app.get("/auth/me")
+async def get_me(current_user: User = Depends(get_current_user)):
+    return {
+        "id": str(current_user.id),
+        "name": current_user.name,
+        "email": current_user.email,
+        "role": current_user.role
+    }
 
 
 # 2. Route to create a merchant
@@ -123,6 +180,7 @@ async def list_merchants(db: AsyncSession = Depends(get_db)):
     merchants = result.scalars().all()
     return merchants
 
+
 # 4. Route to create a menu item under a specific merchant
 @app.post("/merchants/{merchant_id}/items")
 async def create_menu_item(merchant_id: UUID, item_data: MenuItemCreate, db: AsyncSession = Depends(get_db)):
@@ -146,6 +204,8 @@ async def create_menu_item(merchant_id: UUID, item_data: MenuItemCreate, db: Asy
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+
 # Route to create a pickup slot under a specific merchant
 @app.post("/merchants/{merchant_id}/pickup-slots")
 async def create_pickup_slot(merchant_id: UUID, slot_data: PickupSlotCreate, db: AsyncSession = Depends(get_db)):
@@ -181,9 +241,14 @@ async def list_menu_items(merchant_id: UUID, db: AsyncSession = Depends(get_db))
     result = await db.execute(select(MenuItem).where(MenuItem.merchant_id == merchant_id))
     return result.scalars().all()
 
+
 # 7. Route to place an order (checkout)
 @app.post("/orders")
-async def create_order(order_data: OrderCreate, db: AsyncSession = Depends(get_db)):
+async def create_order(
+    order_data: OrderCreate, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)  # UPDATED: Secured with JWT
+):
     # Validate the pickup slot exists and has room
     slot = await db.get(PickupSlot, order_data.pickup_slot_id)
     if not slot:
@@ -206,7 +271,7 @@ async def create_order(order_data: OrderCreate, db: AsyncSession = Depends(get_d
 
     # Create the order
     new_order = Order(
-        customer_id=order_data.customer_id,
+        customer_id=current_user.id,  # UPDATED: Derived securely from JWT token
         merchant_id=order_data.merchant_id,
         pickup_slot_id=order_data.pickup_slot_id,
         status="pending",
@@ -236,6 +301,7 @@ async def create_order(order_data: OrderCreate, db: AsyncSession = Depends(get_d
         await db.rollback()
         raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
 
+
 @app.get("/orders/{order_id}")
 async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
     order = await db.get(Order, order_id)
@@ -245,15 +311,20 @@ async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
     items = items_result.scalars().all()
     return {"order": order, "items": items}
 
-# Route to list all orders for a specific customer
-@app.get("/users/{user_id}/orders")
-async def list_customer_orders(user_id: UUID, db: AsyncSession = Depends(get_db)):
-    user_check = await db.get(User, user_id)
-    if not user_check:
-        raise HTTPException(status_code=404, detail="User not found.")
 
-    result = await db.execute(select(Order).where(Order.customer_id == user_id).order_by(Order.created_at.desc()))
+# Route to list all orders for a specific customer
+@app.get("/users/me/orders")  # UPDATED: Endpoint changed to /users/me/orders
+async def list_customer_orders(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)  # UPDATED: Secured with JWT
+):
+    result = await db.execute(
+        select(Order)
+        .where(Order.customer_id == current_user.id)
+        .order_by(Order.created_at.desc())
+    )
     return result.scalars().all()
+
 
 # Route to create a HitPay payment request for an order
 @app.post("/orders/{order_id}/pay")
@@ -276,6 +347,7 @@ async def create_payment_request(order_id: UUID, db: AsyncSession = Depends(get_
         payment_data = response.json()
 
     return payment_data
+
 
 @app.get("/orders/{order_id}/check-payment")
 async def check_payment_status(order_id: UUID, payment_request_id: str, db: AsyncSession = Depends(get_db)):
@@ -315,10 +387,9 @@ async def hitpay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     if payload.get("status") == "completed":
         order_id = payload.get("reference_number")
         order = await db.get(Order, UUID(order_id))
-    if order:
-        order.status = "completed"
-        await db.commit()
+        if order:
+            order.status = "completed"
+            await db.commit()
 
     return {"received": True}
-
 
