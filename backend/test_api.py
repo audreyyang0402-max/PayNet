@@ -87,6 +87,10 @@ async def run_test():
                         get_order_res = await client.get(f"{BASE_URL}/orders/{order_data['id']}")
                         print("Order Details:", get_order_res.json())
 
+                    # 9b. List this customer's order history (newest first)
+                    history_res = await client.get(f"{BASE_URL}/users/{user_uuid}/orders")
+                    print("Order History:", history_res.status_code, history_res.json())
+
                                             # 10. Create a HitPay payment request for that order
                     if "id" in order_data:
                         pay_res = await client.post(f"{BASE_URL}/orders/{order_data['id']}/pay")

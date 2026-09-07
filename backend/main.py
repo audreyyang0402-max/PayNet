@@ -245,6 +245,16 @@ async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
     items = items_result.scalars().all()
     return {"order": order, "items": items}
 
+# Route to list all orders for a specific customer
+@app.get("/users/{user_id}/orders")
+async def list_customer_orders(user_id: UUID, db: AsyncSession = Depends(get_db)):
+    user_check = await db.get(User, user_id)
+    if not user_check:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    result = await db.execute(select(Order).where(Order.customer_id == user_id).order_by(Order.created_at.desc()))
+    return result.scalars().all()
+
 # Route to create a HitPay payment request for an order
 @app.post("/orders/{order_id}/pay")
 async def create_payment_request(order_id: UUID, db: AsyncSession = Depends(get_db)):
