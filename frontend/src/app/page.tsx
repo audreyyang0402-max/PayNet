@@ -15,9 +15,18 @@ export default async function Home() {
   return (
     <main className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-4xl mx-auto">
-        <header className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Sunway Express Lane</h1>
-          <p className="text-gray-600 mt-1">Preorder your campus meals and skip the queue.</p>
+        {/* Header with Title and Profile Dashboard Button */}
+        <header className="flex justify-between items-center mb-8">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Sunway Express Lane</h1>
+            <p className="text-gray-600 mt-1">Preorder your campus meals and skip the queue.</p>
+          </div>
+          <Link 
+            href="/profile" 
+            className="bg-white hover:bg-gray-50 border border-gray-200 text-gray-800 text-sm font-semibold px-4 py-2.5 rounded-xl transition-all shadow-sm flex items-center gap-2"
+          >
+            👤 My Profile
+          </Link>
         </header>
 
         {errorMessage && (

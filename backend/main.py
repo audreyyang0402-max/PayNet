@@ -7,6 +7,7 @@ from fastapi import Request
 
 from fastapi_offline import FastAPIOffline
 from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware # <-- NEW IMPORT
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from pydantic import BaseModel, EmailStr
@@ -28,6 +29,15 @@ async def lifespan(app: FastAPIOffline):
     yield
 
 app = FastAPIOffline(lifespan=lifespan)
+
+# --- NEW CORS CONFIGURATION ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"], 
+    allow_credentials=True,
+    allow_methods=["*"], 
+    allow_headers=["*"], 
+)
 
 HITPAY_API_KEY = os.getenv("HITPAY_API_KEY")
 HITPAY_SALT = os.getenv("HITPAY_SALT")
@@ -341,7 +351,9 @@ async def create_payment_request(order_id: UUID, db: AsyncSession = Depends(get_
                 "amount": str(order.total_price),
                 "currency": "MYR",
                 "reference_number": str(order.id),
-                "webhook": "https://shelving-appointee-matter.ngrok-free.dev/webhooks/hitpay"
+                "webhook": "https://shelving-appointee-matter.ngrok-free.dev/webhooks/hitpay",
+                # Add this redirect URL so HitPay brings users back to your success page!
+                "redirect_url": "http://localhost:3000/checkout/success"
             }
         )
         payment_data = response.json()
