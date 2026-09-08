@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { CartProvider } from "@/context/CartContext";
+import CartSummary from "@/components/CartSummary"; // <-- 1. Added this import
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -21,6 +22,7 @@ export default function RootLayout({
       <body className={inter.className}>
         <CartProvider>
           {children}
+          <CartSummary /> {/* <-- 2. Added the floating cart here */}
         </CartProvider>
       </body>
     </html>
