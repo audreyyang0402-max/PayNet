@@ -42,12 +42,13 @@ export default function ProfilePage() {
   const [editPassword, setEditPassword] = useState("");
   const [updateSuccess, setUpdateSuccess] = useState("");
   
-  // Persist dismissal using localStorage so it stays closed across page navigation
-  const [dismissedReady, setDismissedReady] = useState(() => {
+  // Track permanently dismissed order IDs in local storage permanently
+  const [dismissedOrderIds, setDismissedOrderIds] = useState<string[]>(() => {
     if (typeof window !== "undefined") {
-      return localStorage.getItem("dismissedReady") === "true";
+      const saved = localStorage.getItem("permanentlyDismissedOrders");
+      return saved ? JSON.parse(saved) : [];
     }
-    return false;
+    return [];
   });
 
   useEffect(() => {
@@ -155,13 +156,14 @@ export default function ProfilePage() {
     localStorage.removeItem("token");
     localStorage.removeItem("userRole");
     localStorage.removeItem("userName");
-    localStorage.removeItem("dismissedReady"); // Clears notification dismissal on logout
-    setDismissedReady(false);
+    // Note: We keep permanentlyDismissedOrders in localStorage so it stays deleted even after logging out and back in!
     router.push("/vendor/login" as any);
   };
 
-  // Check if any order is ready for pickup
-  const readyOrders = orders.filter((o) => o.status.toLowerCase() === "ready");
+  // Only show notifications for orders that are ready AND have NOT been permanently dismissed
+  const readyOrders = orders.filter(
+    (o) => o.status.toLowerCase() === "ready" && !dismissedOrderIds.includes(o.id)
+  );
 
   if (loading) return <div className="min-h-screen flex items-center justify-center">Loading profile...</div>;
   if (error) return <div className="p-8 text-red-600 bg-red-50 text-center m-8 rounded-xl">{error}</div>;
@@ -269,35 +271,36 @@ export default function ProfilePage() {
           )}
         </div>
 
-        {/* Notification Banner for Ready Orders */}
-        {readyOrders.length > 0 && !dismissedReady && (
-          <div className="bg-green-50 border border-green-200 p-4 rounded-2xl shadow-sm flex items-center justify-between animate-pulse">
+        {/* Individual Notification Banners for Each Ready Order */}
+        {readyOrders.map((order) => (
+          <div key={order.id} className="bg-green-50 border border-green-200 p-4 rounded-2xl shadow-sm flex items-center justify-between animate-pulse">
             <div className="flex items-center space-x-3">
               <span className="text-2xl">🔔</span>
               <div>
-                <h3 className="font-bold text-green-800 text-sm">Action Required: Food is Ready!</h3>
-                <p className="text-xs text-green-700">You have {readyOrders.length} order(s) marked as ready. Head over to the stall to pick up your food!</p>
+                <h3 className="font-bold text-green-800 text-sm">Action Required: Order #{order.id.slice(0, 8)} is Ready!</h3>
+                <p className="text-xs text-green-700">Your food for this receipt is ready. Head over to the stall to pick it up!</p>
               </div>
             </div>
             <button
               onClick={() => {
-                setDismissedReady(true);
-                localStorage.setItem("dismissedReady", "true");
+                const updated = [...dismissedOrderIds, order.id];
+                setDismissedOrderIds(updated);
+                localStorage.setItem("permanentlyDismissedOrders", JSON.stringify(updated));
               }}
               className="text-green-700 hover:text-green-900 font-bold text-sm px-2 py-1 cursor-pointer transition-colors"
-              title="Dismiss notification"
+              title="Dismiss notification permanently"
             >
               ✕
             </button>
           </div>
-        )}
+        ))}
 
         {/* Order History Section (Only shown for customers) */}
         {user?.role === 'customer' && (
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
             <h2 className="text-xl font-bold text-gray-900">Order History & Receipts</h2>
             {orders.length === 0 ? (
-              <div className="text-center py-8 border border-dashed border-gray-200 rounded-xl space-y-3">
+              <div className="test-center py-8 border border-dashed border-gray-200 rounded-xl space-y-3 text-center">
                 <p className="text-gray-500 text-sm">You haven't placed any orders yet.</p>
                 <Link
                   href="/checkout"
