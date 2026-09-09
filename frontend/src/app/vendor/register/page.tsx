@@ -1,4 +1,4 @@
-// src/app/register/page.tsx (or update your existing register page)
+// src/app/register/page.tsx
 "use client";
 
 import { useState } from "react";
@@ -10,6 +10,7 @@ export default function RegisterPage() {
   const [formData, setFormData] = useState({
     name: "",
     email: "",
+    phone_number: "", // Added phone number state
     password: "",
     role: "customer", // Default role
     store_name: "",   // Only used if role === "merchant"
@@ -27,6 +28,7 @@ export default function RegisterPage() {
       let body: any = {
         name: formData.name,
         email: formData.email,
+        phone_number: formData.phone_number, // Passed to backend
         password: formData.password,
         role: formData.role,
       };
@@ -124,6 +126,18 @@ export default function RegisterPage() {
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
               placeholder="name@email.com"
+            />
+          </div>
+
+          {/* Phone Number Field */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Phone Number</label>
+            <input
+              type="tel"
+              value={formData.phone_number}
+              onChange={(e) => setFormData({ ...formData, phone_number: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+              placeholder="+60123456789"
             />
           </div>
 

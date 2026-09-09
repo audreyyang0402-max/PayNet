@@ -44,6 +44,16 @@ export default function MerchantDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Edit Merchant Profile States
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [editStoreName, setEditStoreName] = useState("");
+  const [editLocation, setEditLocation] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editPassword, setEditPassword] = useState("");
+  const [profileUpdateSuccess, setProfileUpdateSuccess] = useState("");
+
   // Form state for adding a new item
   const [newItem, setNewItem] = useState({
     name: "",
@@ -76,6 +86,19 @@ export default function MerchantDashboard() {
         if (!profileRes.ok) throw new Error("Could not load merchant profile.");
         const profileData = await profileRes.json();
         setMerchant(profileData);
+        setEditStoreName(profileData.name || "");
+        setEditLocation(profileData.location || "");
+        setEditDescription(profileData.description || "");
+
+        // Fetch user auth info for email/phone
+        const userRes = await fetch("http://127.0.0.1:8000/auth/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (userRes.ok) {
+          const userData = await userRes.json();
+          setEditEmail(userData.email || "");
+          setEditPhone(userData.phone_number || "");
+        }
 
         // Fetch menu items
         const menuRes = await fetch(`http://127.0.0.1:8000/merchants/${profileData.id}/items`);
@@ -106,6 +129,48 @@ export default function MerchantDashboard() {
 
     loadDashboardData();
   }, [router]);
+
+  const handleUpdateMerchantProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfileUpdateSuccess("");
+    setError(null);
+
+    try {
+      const token = localStorage.getItem("token");
+      const payload: any = {
+        email: editEmail,
+        phone_number: editPhone,
+        store_name: editStoreName,
+        location: editLocation,
+        description: editDescription,
+      };
+      if (editPassword) {
+        payload.password = editPassword;
+      }
+
+      const res = await fetch("http://127.0.0.1:8000/merchants/me", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.detail || "Failed to update merchant profile.");
+      }
+
+      const updated = await res.json();
+      setMerchant((prev) => prev ? { ...prev, name: updated.store_name, location: updated.location, description: updated.description } : null);
+      setProfileUpdateSuccess("Store profile updated successfully!");
+      setEditPassword("");
+      setIsEditingProfile(false);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -251,20 +316,114 @@ export default function MerchantDashboard() {
       <div className="max-w-5xl mx-auto space-y-8">
         
         {/* Header Section */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex justify-between items-center">
-          <div>
-            <span className="bg-orange-50 text-orange-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block">
-              Merchant Portal
-            </span>
-            <h1 className="text-2xl font-bold text-gray-900">{merchant?.name}</h1>
-            <p className="text-gray-500 text-sm">📍 {merchant?.location}</p>
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+          <div className="flex justify-between items-start">
+            <div>
+              <span className="bg-orange-50 text-orange-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block">
+                Merchant Portal
+              </span>
+              <h1 className="text-2xl font-bold text-gray-900">{merchant?.name}</h1>
+              <p className="text-gray-500 text-sm">📍 {merchant?.location}</p>
+              {merchant?.description && (
+                <p className="text-gray-600 text-xs mt-2 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                  {merchant.description}
+                </p>
+              )}
+            </div>
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => setIsEditingProfile(!isEditingProfile)}
+                className="px-3.5 py-2 text-xs font-semibold text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-xl transition-colors cursor-pointer"
+              >
+                {isEditingProfile ? "Cancel" : "Edit Store Profile"}
+              </button>
+              <button 
+                onClick={handleLogout}
+                className="text-gray-500 hover:text-red-600 text-sm font-medium transition-colors cursor-pointer"
+              >
+                Log Out
+              </button>
+            </div>
           </div>
-          <button 
-            onClick={handleLogout}
-            className="text-gray-500 hover:text-red-600 text-sm font-medium transition-colors cursor-pointer"
-          >
-            Log Out
-          </button>
+
+          {profileUpdateSuccess && (
+            <div className="p-3 bg-green-50 text-green-700 text-xs rounded-xl">{profileUpdateSuccess}</div>
+          )}
+
+          {isEditingProfile && (
+            <form onSubmit={handleUpdateMerchantProfile} className="space-y-4 pt-4 border-t border-gray-100">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store / Stall Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={editStoreName}
+                    onChange={(e) => setEditStoreName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Campus Location</label>
+                  <input
+                    type="text"
+                    required
+                    value={editLocation}
+                    onChange={(e) => setEditLocation(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store Bio & Opening Hours</label>
+                <textarea
+                  rows={2}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                  placeholder="Operating Hours: Mon-Fri 8 AM - 5 PM"
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    required
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Phone Number</label>
+                  <input
+                    type="tel"
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                    placeholder="+60123456789"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">New Password</label>
+                  <input
+                    type="password"
+                    value={editPassword}
+                    onChange={(e) => setEditPassword(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                    placeholder="Leave blank to keep"
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
+              >
+                Save Changes
+              </button>
+            </form>
+          )}
         </div>
 
         {/* Sales Summary Cards */}
