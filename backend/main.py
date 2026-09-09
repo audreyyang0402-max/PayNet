@@ -51,6 +51,15 @@ class UserCreate(BaseModel):
     role: str = "customer"
 
 # NEW: Schemas for handling login and token generation
+class MerchantRegisterRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    store_name: str
+    location: Optional[str] = None
+    description: Optional[str] = None
+    role: str = "merchant"
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
@@ -123,6 +132,68 @@ async def create_user(user_data: UserCreate, db: AsyncSession = Depends(get_db))
         print(str(e))
         print("==============================\n")
         raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+# Route to register a merchant user and create their stall profile simultaneously
+@app.post("/auth/register-merchant", response_model=dict)
+async def register_merchant(data: MerchantRegisterRequest, db: AsyncSession = Depends(get_db)):
+    # Check if email is already taken
+    existing_user = await db.execute(select(User).where(User.email == data.email))
+    if existing_user.scalars().first():
+        raise HTTPException(status_code=400, detail="Email already registered.")
+
+    # 1. Create the user account with role="merchant"
+    new_user = User(
+        name=data.name,
+        email=data.email,
+        password_hash=hash_password(data.password),
+        role="merchant"
+    )
+    db.add(new_user)
+    await db.flush()  # Flushes to generate new_user.id without full commit yet
+
+    # 2. Create the linked merchant store profile
+    new_merchant = Merchant(
+        user_id=new_user.id,
+        name=data.store_name,
+        location=data.location,
+        description=data.description
+    )
+    db.add(new_merchant)
+
+    try:
+        await db.commit()
+        await db.refresh(new_user)
+        return {
+            "id": str(new_user.id),
+            "name": new_user.name,
+            "email": new_user.email,
+            "role": new_user.role
+        }
+    except Exception as e:
+        await db.rollback()
+        print("\n=== MERCHANT REGISTRATION ERROR ===")
+        print(str(e))
+        print("===================================\n")
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+# Route to get the merchant profile of the currently logged-in user
+@app.get("/merchants/me/profile")
+async def get_my_merchant_profile(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Ensure only merchants can access this
+    if current_user.role != "merchant":
+        raise HTTPException(status_code=403, detail="Access denied. User is not a merchant.")
+    
+    # Find the merchant profile linked to this user's ID
+    result = await db.execute(select(Merchant).where(Merchant.user_id == current_user.id))
+    merchant = result.scalars().first()
+    
+    if not merchant:
+        raise HTTPException(status_code=404, detail="No merchant profile found for this user.")
+        
+    return merchant
 
 
 # 1b. Route to login and receive a JWT Token (NEW)
@@ -216,6 +287,44 @@ async def create_menu_item(merchant_id: UUID, item_data: MenuItemCreate, db: Asy
         raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
 
 
+# --- NEW: Routes to Update and Delete Menu Items ---
+
+@app.put("/merchants/items/{item_id}")
+async def update_menu_item(item_id: UUID, item_data: MenuItemCreate, db: AsyncSession = Depends(get_db)):
+    item = await db.get(MenuItem, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Menu item not found.")
+    
+    item.name = item_data.name
+    item.description = item_data.description
+    item.price = item_data.price
+    item.image_url = item_data.image_url
+    item.is_available = item_data.is_available
+
+    try:
+        await db.commit()
+        await db.refresh(item)
+        return item
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+
+@app.delete("/merchants/items/{item_id}")
+async def delete_menu_item(item_id: UUID, db: AsyncSession = Depends(get_db)):
+    item = await db.get(MenuItem, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Menu item not found.")
+    
+    try:
+        await db.delete(item)
+        await db.commit()
+        return {"message": "Menu item deleted successfully"}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+
 # Route to create a pickup slot under a specific merchant
 @app.post("/merchants/{merchant_id}/pickup-slots")
 async def create_pickup_slot(merchant_id: UUID, slot_data: PickupSlotCreate, db: AsyncSession = Depends(get_db)):
@@ -243,6 +352,21 @@ async def create_pickup_slot(merchant_id: UUID, slot_data: PickupSlotCreate, db:
 async def list_pickup_slots(merchant_id: UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(PickupSlot).where(PickupSlot.merchant_id == merchant_id))
     return result.scalars().all()
+
+# Route to delete a pickup slot
+@app.delete("/merchants/pickup-slots/{slot_id}")
+async def delete_pickup_slot(slot_id: UUID, db: AsyncSession = Depends(get_db)):
+    slot = await db.get(PickupSlot, slot_id)
+    if not slot:
+        raise HTTPException(status_code=404, detail="Pickup slot not found.")
+    
+    try:
+        await db.delete(slot)
+        await db.commit()
+        return {"message": "Pickup slot deleted successfully"}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
 
 
 # 6. Route to list all menu items for a specific merchant
@@ -336,6 +460,36 @@ async def list_customer_orders(
     return result.scalars().all()
 
 
+# --- Routes for Merchant Order Management ---
+
+# Route to list all incoming orders for a specific merchant
+@app.get("/merchants/{merchant_id}/orders")
+async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Order)
+        .where(Order.merchant_id == merchant_id)
+        .order_by(Order.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+# Route to update order status (e.g., pending -> preparing -> ready)
+@app.patch("/orders/{order_id}/status")
+async def update_order_status(order_id: UUID, status: str, db: AsyncSession = Depends(get_db)):
+    order = await db.get(Order, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found.")
+    
+    order.status = status
+    try:
+        await db.commit()
+        await db.refresh(order)
+        return {"message": "Order status updated successfully", "status": order.status}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+
 # Route to create a HitPay payment request for an order
 @app.post("/orders/{order_id}/pay")
 async def create_payment_request(order_id: UUID, db: AsyncSession = Depends(get_db)):
@@ -352,7 +506,6 @@ async def create_payment_request(order_id: UUID, db: AsyncSession = Depends(get_
                 "currency": "MYR",
                 "reference_number": str(order.id),
                 "webhook": "https://shelving-appointee-matter.ngrok-free.dev/webhooks/hitpay",
-                # Add this redirect URL so HitPay brings users back to your success page!
                 "redirect_url": "http://localhost:3000/checkout/success"
             }
         )
@@ -404,4 +557,3 @@ async def hitpay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             await db.commit()
 
     return {"received": True}
-
