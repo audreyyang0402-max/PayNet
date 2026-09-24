@@ -1,6 +1,7 @@
 import uuid
 from sqlalchemy import Column, String, Boolean, Text, Numeric, Date, DateTime, Integer, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship  # <--- Add this import
 from database import Base
 
 
@@ -14,6 +15,9 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="customer")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Add backref for rentals if needed
+    rental_bookings = relationship("RentalBooking", back_populates="vendor_user")
 
 
 class Merchant(Base):
@@ -28,7 +32,6 @@ class Merchant(Base):
     is_temporary = Column(Boolean, default=False)
     active_from = Column(Date)
     active_until = Column(Date)
-    # REMOVED the physical ForeignKey constraint here to prevent the circular dependency loop
     rental_booking_id = Column(UUID(as_uuid=True)) 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -86,6 +89,9 @@ class BoulevardStall(Base):
     location = Column(String, nullable=False)
     size = Column(String)
     rental_rate = Column(Numeric(10, 2), nullable=False)
+    
+    # Add relationship so selectinload(RentalBooking.stall) works
+    rental_bookings = relationship("RentalBooking", back_populates="stall")
 
 
 class RentalBooking(Base):
@@ -100,6 +106,10 @@ class RentalBooking(Base):
     deposit_paid = Column(Boolean, default=False)
     merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # --- ADD THESE RELATIONSHIPS ---
+    vendor_user = relationship("User", back_populates="rental_bookings")
+    stall = relationship("BoulevardStall", back_populates="rental_bookings")
 
 
 class SDGMetric(Base):
