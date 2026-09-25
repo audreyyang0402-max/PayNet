@@ -3,12 +3,14 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 interface MerchantProfile {
   id: string;
   name: string;
   location: string;
   description: string;
+  is_temporary?: boolean; // Optional flag for pop-up vendors
 }
 
 interface MenuItem {
@@ -85,7 +87,20 @@ export default function MerchantDashboard() {
 
         if (!profileRes.ok) throw new Error("Could not load merchant profile.");
         const profileData = await profileRes.json();
-        setMerchant(profileData);
+        
+        // Check if this merchant has a boulevard booking or is temporary
+        const bookingsRes = await fetch("http://127.0.0.1:8000/boulevard/my-bookings", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        let hasActiveRentals = false;
+        if (bookingsRes.ok) {
+          const bookingsData = await bookingsRes.json();
+          if (bookingsData.length > 0) {
+            hasActiveRentals = true;
+          }
+        }
+
+        setMerchant({ ...profileData, is_temporary: hasActiveRentals || profileData.location?.toLowerCase().includes("boulevard") });
         setEditStoreName(profileData.name || "");
         setEditLocation(profileData.location || "");
         setEditDescription(profileData.description || "");
@@ -330,7 +345,18 @@ export default function MerchantDashboard() {
                 </p>
               )}
             </div>
-            <div className="flex items-center space-x-4">
+            
+            <div className="flex items-center space-x-3">
+              {/* Conditional Boulevard Rental Link for Temporary Pop-up Vendors */}
+              {merchant?.is_temporary && (
+                <Link
+                  href="/vendor/rental"
+                  className="px-3.5 py-2 text-xs font-semibold text-white bg-orange-600 hover:bg-orange-700 rounded-xl transition-colors shadow-sm"
+                >
+                  Manage Stall Rental
+                </Link>
+              )}
+
               <button
                 onClick={() => setIsEditingProfile(!isEditingProfile)}
                 className="px-3.5 py-2 text-xs font-semibold text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-xl transition-colors cursor-pointer"

@@ -43,10 +43,12 @@ export default function LoginPage() {
       localStorage.setItem("userName", data.name);
 
       // Smart redirection based on role
-      if (data.role === "merchant") {
+      if (data.role === "admin") {
+        router.push("/admin/rentals" as any);
+      } else if (data.role === "merchant") {
         router.push("/vendor/dashboard" as any);
       } else {
-        router.push("/checkout" as any);
+        router.push("/" as any);
       }
     } catch (err: any) {
       setError(err.message);
@@ -63,7 +65,7 @@ export default function LoginPage() {
             Campus Platform
           </span>
           <h1 className="text-2xl font-bold text-gray-900 mt-2">Welcome Back</h1>
-          <p className="text-gray-500 text-sm mt-1">Log in to your student or merchant account</p>
+          <p className="text-gray-500 text-sm mt-1">Log in to your account</p>
         </div>
 
         {error && (

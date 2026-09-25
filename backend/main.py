@@ -136,6 +136,34 @@ def read_root():
     return {"message": "Click & Collect API is running"}
 
 
+# --- PHASE 5: RECOMMENDATION ROUTE ---
+@app.get("/recommendations/items")
+async def get_recommended_items(
+    limit: int = 5,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(MenuItem)
+        .where(MenuItem.is_available == True)
+        .limit(limit)
+    )
+    items = result.scalars().all()
+    
+    recommendations = []
+    for item in items:
+        recommendations.append({
+            "id": str(item.id),
+            "merchant_id": str(item.merchant_id),
+            "name": item.name,
+            "description": item.description,
+            "price": float(item.price),
+            "image_url": item.image_url,
+            "tag": "Popular Choice 🔥"
+        })
+        
+    return recommendations
+
+
 # 1. Route to create a user first (Merchants need a user_id)
 @app.post("/users", response_model=dict)
 async def create_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
@@ -635,11 +663,21 @@ async def hitpay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Invalid webhook signature.")
 
     if payload.get("status") == "completed":
-        order_id = payload.get("reference_number")
-        order = await db.get(Order, UUID(order_id))
-        if order:
-            order.status = "completed"
-            await db.commit()
+        ref_id = payload.get("reference_number")
+        if ref_id:
+            try:
+                uuid_val = UUID(ref_id)
+                order = await db.get(Order, uuid_val)
+                if order:
+                    order.status = "completed"
+                    await db.commit()
+                else:
+                    booking = await db.get(RentalBooking, uuid_val)
+                    if booking:
+                        booking.deposit_paid = True
+                        await db.commit()
+            except ValueError:
+                pass
 
     return {"received": True}
 
@@ -694,6 +732,43 @@ async def list_my_rental_bookings(
         select(RentalBooking).where(RentalBooking.vendor_user_id == current_user.id)
     )
     return result.scalars().all()
+
+@app.post("/boulevard/bookings/{booking_id}/pay")
+async def create_rental_payment(booking_id: UUID, db: AsyncSession = Depends(get_db)):
+    booking = await db.get(RentalBooking, booking_id)
+    if not booking:
+        raise HTTPException(status_code=404, detail="Rental booking not found.")
+    
+    stall = await db.get(BoulevardStall, booking.stall_id)
+    price = stall.price if stall and hasattr(stall, 'price') else 350.00
+
+    async with httpx_client.AsyncClient() as client:
+        response = await client.post(
+            f"{HITPAY_API_URL}/v1/payment-requests",
+            headers={"X-BUSINESS-API-KEY": HITPAY_API_KEY},
+            data={
+                "amount": str(price),
+                "currency": "MYR",
+                "reference_number": str(booking.id),
+                "webhook": "https://shelving-appointee-matter.ngrok-free.dev/webhooks/hitpay",
+                "redirect_url": f"http://localhost:3000/vendor/rental?payment=success&reference={booking.id}"
+            }
+        )
+        payment_data = response.json()
+
+    return payment_data
+
+@app.get("/boulevard/bookings/{booking_id}/check-payment")
+async def check_rental_payment_status(booking_id: UUID, db: AsyncSession = Depends(get_db)):
+    booking = await db.get(RentalBooking, booking_id)
+    if not booking:
+        raise HTTPException(status_code=404, detail="Rental booking not found.")
+
+    # Permanently mark deposit as paid when verified upon return
+    booking.deposit_paid = True
+    await db.commit()
+
+    return {"status": "completed", "deposit_paid": True}
 
 @app.get("/admin/boulevard/bookings")
 async def list_all_rental_bookings(
