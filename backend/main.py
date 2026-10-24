@@ -1,14 +1,15 @@
 import os
 import hmac
 import hashlib
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
 import httpx as httpx_client  # aliased since you might already have httpx elsewhere
 from fastapi import Request
 
 from fastapi_offline import FastAPIOffline
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import case, func
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload  # <--- Added import for eager loading relationships
 from pydantic import BaseModel, EmailStr
@@ -391,6 +392,103 @@ async def get_me(current_user: User = Depends(get_current_user)):
         "phone_number": current_user.phone_number,
         "role": current_user.role
     }
+
+async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID | None = None):
+    """Aggregate order data for a date range, optionally scoped to one merchant."""
+    start = datetime.now(timezone.utc) - timedelta(days=days - 1)
+    filters = [Order.created_at >= start]
+    if merchant_id is not None:
+        filters.append(Order.merchant_id == merchant_id)
+
+    summary_result = await db.execute(
+        select(
+            func.count(Order.id),
+            func.sum(case((Order.status == "completed", 1), else_=0)),
+            func.coalesce(func.sum(case((Order.status == "completed", Order.total_price), else_=0)), 0),
+            func.count(func.distinct(Order.customer_id)),
+        ).where(*filters)
+    )
+    total_orders, completed_orders, revenue, customers = summary_result.one()
+    active_filters = [Order.status.in_(["pending", "preparing", "ready"])]
+    if merchant_id is not None:
+        active_filters.append(Order.merchant_id == merchant_id)
+    active_result = await db.execute(select(func.count(Order.id)).where(*active_filters))
+    active_orders = active_result.scalar_one()
+
+    day_expr = func.date(Order.created_at)
+    trend_result = await db.execute(
+        select(
+            day_expr.label("day"),
+            func.count(Order.id).label("orders"),
+            func.coalesce(func.sum(case((Order.status == "completed", Order.total_price), else_=0)), 0).label("revenue"),
+        ).where(*filters).group_by(day_expr).order_by(day_expr)
+    )
+    trend_by_day = {
+        row.day.isoformat(): {"orders": int(row.orders), "revenue": round(float(row.revenue), 2)}
+        for row in trend_result
+    }
+    trends = []
+    for offset in range(days):
+        day = (start.date() + timedelta(days=offset)).isoformat()
+        values = trend_by_day.get(day, {"orders": 0, "revenue": 0.0})
+        trends.append({"date": day, **values})
+
+    item_filters = [Order.created_at >= start, Order.status == "completed"]
+    if merchant_id is not None:
+        item_filters.append(Order.merchant_id == merchant_id)
+    item_result = await db.execute(
+        select(
+            MenuItem.id,
+            MenuItem.name,
+            func.sum(OrderItem.quantity).label("quantity"),
+            func.sum(OrderItem.quantity * OrderItem.price_at_order).label("revenue"),
+        ).join(OrderItem, OrderItem.menu_item_id == MenuItem.id)
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(*item_filters).group_by(MenuItem.id, MenuItem.name)
+        .order_by(func.sum(OrderItem.quantity).desc()).limit(5)
+    )
+    top_items = [
+        {"id": str(row.id), "name": row.name, "quantity": int(row.quantity), "revenue": round(float(row.revenue or 0), 2)}
+        for row in item_result
+    ]
+    return {
+        "period_days": days,
+        "summary": {
+            "total_revenue": round(float(revenue or 0), 2),
+            "total_orders": int(total_orders or 0),
+            "completed_orders": int(completed_orders or 0),
+            "active_orders": int(active_orders or 0),
+            "customers": int(customers or 0),
+        },
+        "revenue_trend": trends,
+        "top_items": top_items,
+    }
+
+
+@app.get("/admin/analytics")
+async def get_admin_analytics(
+    days: int = Query(default=30, ge=7, le=90),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required.")
+    return await build_order_analytics(db, days)
+
+
+@app.get("/merchants/me/analytics")
+async def get_merchant_analytics(
+    days: int = Query(default=30, ge=7, le=90),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "merchant":
+        raise HTTPException(status_code=403, detail="Merchant privileges required.")
+    merchant_result = await db.execute(select(Merchant).where(Merchant.user_id == current_user.id))
+    merchant = merchant_result.scalars().first()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="No merchant profile found for this user.")
+    return await build_order_analytics(db, days, merchant.id)
 
 @app.post("/merchants")
 async def create_merchant(merchant_data: MerchantCreate, db: AsyncSession = Depends(get_db)):
