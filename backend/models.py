@@ -65,7 +65,7 @@ class Order(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     customer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
-    status = Column(String, nullable=False, default="pending")
+    status = Column(String, nullable=False, default="pending")  # pending, preparing, ready, completed
     total_price = Column(Numeric(10, 2), nullable=False)
     pickup_slot_id = Column(UUID(as_uuid=True), ForeignKey("pickup_slots.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())

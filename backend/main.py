@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload  # <--- Added import for eager loading relationships
 from pydantic import BaseModel, EmailStr
-from typing import List, Optional
+from typing import List, Optional, Literal
 from uuid import UUID
 
 from database import engine, get_db
@@ -127,6 +127,10 @@ class RentalBookingCreate(BaseModel):
 
 class RentalStatusUpdate(BaseModel):
     status: str  # e.g., "approved", "rejected"
+
+
+class OrderStatusUpdate(BaseModel):
+    status: Literal["pending", "preparing", "ready", "completed"]
 
 
 # --- ROUTES ---
@@ -593,16 +597,30 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
     return result.scalars().all()
 
 @app.patch("/orders/{order_id}/status")
-async def update_order_status(order_id: UUID, status: str, db: AsyncSession = Depends(get_db)):
+async def update_order_status(
+    order_id: UUID,
+    status_update: OrderStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)   # optional but recommended
+):
     order = await db.get(Order, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
-    
-    order.status = status
+
+    # Optional security: only the merchant who owns the order can update it
+    # (uncomment later if you want)
+    # if current_user.role != "merchant":
+    #     raise HTTPException(status_code=403, detail="Only merchants can update order status")
+
+    order.status = status_update.status
     try:
         await db.commit()
         await db.refresh(order)
-        return {"message": "Order status updated successfully", "status": order.status}
+        return {
+            "message": "Order status updated successfully",
+            "order_id": str(order.id),
+            "new_status": order.status
+        }
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
