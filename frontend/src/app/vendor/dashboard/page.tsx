@@ -347,6 +347,9 @@ export default function MerchantDashboard() {
             </div>
             
             <div className="flex items-center space-x-3">
+              <Link href="/vendor/analytics" className="px-3.5 py-2 text-xs font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-xl transition-colors">
+                Analytics
+              </Link>
               {/* Conditional Boulevard Rental Link for Temporary Pop-up Vendors */}
               {merchant?.is_temporary && (
                 <Link

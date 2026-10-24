@@ -106,6 +106,9 @@ export default function AdminRentalsPage() {
               <Link href="/admin/rentals" className="px-4 py-2 bg-white text-gray-900 rounded-lg shadow-sm">
                 Rental Management
               </Link>
+              <Link href="/admin/analytics" className="px-4 py-2 text-gray-500 hover:text-gray-900 rounded-lg transition-all">
+                Analytics
+              </Link>
               <Link href="/admin/users" className="px-4 py-2 text-gray-500 hover:text-gray-900 rounded-lg transition-all">
                 User Directory
               </Link>
