@@ -193,12 +193,20 @@ export default function Home() {
             <h1 className="text-2xl font-bold text-gray-900">Sunway Express Lane</h1>
             <p className="text-gray-500 text-sm">Preorder your campus meals, check AI picks, and skip the queue.</p>
           </div>
-          <Link 
-            href="/profile" 
-            className="bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-semibold px-4 py-2.5 rounded-xl transition-all"
-          >
-            👤 My Profile
-          </Link>
+          <div className="flex items-center space-x-3">
+            <Link 
+              href="/vendor/rental" 
+              className="bg-orange-50 hover:bg-orange-100 text-orange-600 text-sm font-semibold px-4 py-2.5 rounded-xl transition-all"
+            >
+              🎪 Boulevard Rentals
+            </Link>
+            <Link 
+              href="/profile" 
+              className="bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-semibold px-4 py-2.5 rounded-xl transition-all"
+            >
+              👤 My Profile
+            </Link>
+          </div>
         </header>
 
         {errorMessage && (
