@@ -9,7 +9,7 @@ from fastapi_offline import FastAPIOffline
 from fastapi import FastAPI, Depends, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import case, func
+from sqlalchemy import case, func, delete
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload  # <--- Added import for eager loading relationships
 from pydantic import BaseModel, EmailStr
@@ -58,6 +58,10 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
     password: Optional[str] = None
+
+# NEW: Schema for updating user role (Admin)
+class UserRoleUpdate(BaseModel):
+    role: str
 
 # NEW: Schema for updating merchant profile & store details
 class MerchantProfileUpdate(BaseModel):
@@ -705,11 +709,6 @@ async def update_order_status(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
 
-    # Optional security: only the merchant who owns the order can update it
-    # (uncomment later if you want)
-    # if current_user.role != "merchant":
-    #     raise HTTPException(status_code=403, detail="Only merchants can update order status")
-
     order.status = status_update.status
     try:
         await db.commit()
@@ -815,7 +814,6 @@ async def create_rental_booking(
     if not stall:
         raise HTTPException(status_code=404, detail="Stall not found.")
 
-    # Find if user has a merchant profile, or link later upon approval
     merchant_res = await db.execute(select(Merchant).where(Merchant.user_id == current_user.id))
     merchant = merchant_res.scalars().first()
     merchant_id = merchant.id if merchant else None
@@ -880,7 +878,6 @@ async def check_rental_payment_status(booking_id: UUID, db: AsyncSession = Depen
     if not booking:
         raise HTTPException(status_code=404, detail="Rental booking not found.")
 
-    # Permanently mark deposit as paid when verified upon return
     booking.deposit_paid = True
     await db.commit()
 
@@ -941,6 +938,81 @@ async def list_all_users(
         })
     return response_data
 
+# --- NEW ADMIN ROUTES FOR EDIT / DELETE USERS ---
+
+@app.delete("/admin/users/{user_id}")
+async def admin_delete_user(
+    user_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Access denied. Admin privileges required.")
+    
+    user_to_delete = await db.get(User, user_id)
+    if not user_to_delete:
+        raise HTTPException(status_code=404, detail="User not found.")
+    
+    if user_to_delete.id == current_user.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own admin account.")
+
+    try:
+        # 1. Find and delete all orders (and their items) associated with this user
+        orders_result = await db.execute(select(Order).where(Order.customer_id == user_id))
+        orders = orders_result.scalars().all()
+        
+        for order in orders:
+            await db.execute(delete(OrderItem).where(OrderItem.order_id == order.id))
+            await db.delete(order)
+
+        # 2. Delete the user
+        await db.delete(user_to_delete)
+        await db.commit()
+        return {"message": "User deleted successfully"}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+@app.put("/admin/users/{user_id}/role")
+async def admin_update_user_role(
+    user_id: UUID,
+    role_data: UserRoleUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Access denied. Admin privileges required.")
+    
+    user_to_update = await db.get(User, user_id)
+    if not user_to_update:
+        raise HTTPException(status_code=404, detail="User not found.")
+    
+    user_to_update.role = role_data.role.lower()
+
+    if user_to_update.role == "merchant":
+        existing_merchant = await db.execute(
+            select(Merchant).where(Merchant.user_id == user_to_update.id)
+        )
+        merchant = existing_merchant.scalars().first()
+        if not merchant:
+            new_merchant = Merchant(
+                user_id=user_to_update.id,
+                name=f"{user_to_update.name}'s Store",
+                description="Campus Merchant",
+                location="Sunway Campus"
+            )
+            db.add(new_merchant)
+
+    try:
+        await db.commit()
+        await db.refresh(user_to_update)
+        return {"message": "User role updated successfully", "role": user_to_update.role}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+# --- END NEW ADMIN ROUTES ---
+
 @app.patch("/boulevard/bookings/{booking_id}/status")
 async def update_rental_status(
     booking_id: UUID,
@@ -957,7 +1029,6 @@ async def update_rental_status(
 
     booking.status = status_data.status
 
-    # If approved, automatically ensure they have a merchant profile and role
     if status_data.status == "approved":
         vendor_user = await db.get(User, booking.vendor_user_id)
         if vendor_user:
