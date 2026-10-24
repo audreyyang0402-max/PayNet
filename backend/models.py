@@ -89,6 +89,7 @@ class BoulevardStall(Base):
     location = Column(String, nullable=False)
     size = Column(String)
     rental_rate = Column(Numeric(10, 2), nullable=False)
+    is_available = Column(Boolean, default=True)
     
     # Add relationship so selectinload(RentalBooking.stall) works
     rental_bookings = relationship("RentalBooking", back_populates="stall")

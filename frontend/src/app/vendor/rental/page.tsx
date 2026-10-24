@@ -11,6 +11,8 @@ interface Stall {
   location: string;
   size: string;
   rental_rate: number;
+  is_available?: boolean;
+  is_occupied?: boolean;
 }
 
 interface Booking {
@@ -64,7 +66,7 @@ export default function VendorRentalsPage() {
           setPaymentSuccessMsg("Rental payment completed successfully via HitPay!");
         }
 
-        // 1. Fetch available Boulevard stalls
+        // 1. Fetch all Boulevard stalls
         const stallsRes = await fetch("http://127.0.0.1:8000/boulevard/stalls");
         if (stallsRes.ok) {
           const stallsData = await stallsRes.json();
@@ -151,6 +153,11 @@ export default function VendorRentalsPage() {
     }
   };
 
+  // Filter stalls for the booking dropdown (only available and not occupied)
+  const availableStalls = stalls.filter(
+    (stall) => stall.is_available !== false && !stall.is_occupied
+  );
+
   if (loading) return <div className="min-h-screen flex items-center justify-center">Loading rentals...</div>;
 
   return (
@@ -164,7 +171,7 @@ export default function VendorRentalsPage() {
               ← Back to Marketplace
             </Link>
             <h1 className="text-2xl font-bold text-gray-900 mt-2">Boulevard Stall Rentals</h1>
-            <p className="text-gray-500 text-sm">Browse available boulevard spots and manage your rental requests.</p>
+            <p className="text-gray-500 text-sm">Browse campus boulevard spots and manage your rental requests.</p>
           </div>
         </div>
 
@@ -174,21 +181,38 @@ export default function VendorRentalsPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           
-          {/* Available Stalls Grid */}
+          {/* All Stalls Status List */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
-            <h2 className="text-lg font-bold text-gray-900">Available Stalls</h2>
+            <h2 className="text-lg font-bold text-gray-900">Campus Stalls Overview</h2>
             {stalls.length === 0 ? (
               <p className="text-gray-500 text-sm py-4 text-center">No stalls available at the moment.</p>
             ) : (
               <div className="space-y-3">
                 {stalls.map((stall) => (
-                  <div key={stall.id} className="p-4 rounded-xl border border-gray-200 bg-gray-50 space-y-1">
-                    <div className="flex justify-between items-center">
-                      <h3 className="font-bold text-gray-900 text-sm">Stall #{stall.stall_number}</h3>
+                  <div key={stall.id} className="p-4 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-gray-900 text-sm">Stall #{stall.stall_number}</h3>
+                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                            stall.is_occupied 
+                              ? "bg-red-100 text-red-800" 
+                              : stall.is_available === false 
+                              ? "bg-amber-100 text-amber-800" 
+                              : "bg-green-100 text-green-800"
+                          }`}>
+                            {stall.is_occupied 
+                              ? "Occupied (Rented)" 
+                              : stall.is_available === false 
+                              ? "Unavailable" 
+                              : "Available"}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">📍 Location: {stall.location}</p>
+                        {stall.size && <p className="text-xs text-gray-500">📏 Size: {stall.size}</p>}
+                      </div>
                       <span className="text-orange-600 font-semibold text-sm">RM {Number(stall.rental_rate).toFixed(2)} / mo</span>
                     </div>
-                    <p className="text-xs text-gray-500">📍 Location: {stall.location}</p>
-                    {stall.size && <p className="text-xs text-gray-500">📏 Size: {stall.size}</p> }
                   </div>
                 ))}
               </div>
@@ -200,17 +224,17 @@ export default function VendorRentalsPage() {
             <h2 className="text-lg font-bold text-gray-900">Request Stall Rental</h2>
             <form onSubmit={handleBookStall} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Select Stall</label>
+                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Select Available Stall</label>
                 <select
                   required
                   value={selectedStallId}
                   onChange={(e) => setSelectedStallId(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 bg-white focus:ring-2 focus:ring-orange-500 outline-none"
                 >
-                  <option value="">-- Choose a Stall --</option>
-                  {stalls.map((stall) => (
+                  <option value="">-- Choose an Available Stall --</option>
+                  {availableStalls.map((stall) => (
                     <option key={stall.id} value={stall.id}>
-                      Stall #{stall.stall_number} ({stall.location}) - RM {stall.rental_rate}
+                      Stall #{stall.stall_number} ({stall.location}) - RM {stall.rental_rate}/mo
                     </option>
                   ))}
                 </select>

@@ -137,6 +137,12 @@ class RentalStatusUpdate(BaseModel):
 class OrderStatusUpdate(BaseModel):
     status: Literal["pending", "preparing", "ready", "completed"]
 
+class StallCreate(BaseModel):
+    stall_number: str
+    location: str
+    size: str
+    rental_rate: float
+
 
 # --- ROUTES ---
 
@@ -802,7 +808,143 @@ async def hitpay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 @app.get("/boulevard/stalls")
 async def list_boulevard_stalls(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(BoulevardStall))
-    return result.scalars().all()
+    stalls = result.scalars().all()
+    
+    stall_list = []
+    for stall in stalls:
+        # Check if there is an active approved and paid booking for this stall
+        booking_res = await db.execute(
+            select(RentalBooking).where(
+                RentalBooking.stall_id == stall.id,
+                RentalBooking.status == "approved",
+                RentalBooking.deposit_paid == True
+            )
+        )
+        active_booking = booking_res.scalars().first()
+        
+        stall_list.append({
+            "id": str(stall.id),
+            "stall_number": stall.stall_number,
+            "location": stall.location,
+            "size": stall.size,
+            "rental_rate": stall.rental_rate,
+            "is_occupied": active_booking is not None,
+            "is_available": getattr(stall, 'is_available', True)
+        })
+        
+    return stall_list
+
+@app.post("/boulevard/stalls")
+async def create_stall(
+    stall_data: StallCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    new_stall = BoulevardStall(
+        stall_number=stall_data.stall_number,
+        location=stall_data.location,
+        size=stall_data.size,
+        rental_rate=stall_data.rental_rate,
+        is_available=True
+    )
+    db.add(new_stall)
+    try:
+        await db.commit()
+        await db.refresh(new_stall)
+        return new_stall
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+@app.put("/boulevard/stalls/{stall_id}")
+async def update_stall(
+    stall_id: UUID,
+    stall_data: StallCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required.")
+    
+    stall = await db.get(BoulevardStall, stall_id)
+    if not stall:
+        raise HTTPException(status_code=404, detail="Stall not found.")
+    
+    stall.stall_number = stall_data.stall_number
+    stall.location = stall_data.location
+    stall.size = stall_data.size
+    stall.rental_rate = stall_data.rental_rate
+
+    try:
+        await db.commit()
+        await db.refresh(stall)
+        return stall
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+@app.patch("/boulevard/stalls/{stall_id}/toggle-availability")
+async def toggle_stall_availability(
+    stall_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required.")
+    
+    stall = await db.get(BoulevardStall, stall_id)
+    if not stall:
+        raise HTTPException(status_code=404, detail="Stall not found.")
+    
+    current_status = getattr(stall, 'is_available', True)
+    stall.is_available = not current_status
+
+    try:
+        await db.commit()
+        await db.refresh(stall)
+
+        # Check occupancy status to keep response fully synchronized
+        booking_res = await db.execute(
+            select(RentalBooking).where(
+                RentalBooking.stall_id == stall.id,
+                RentalBooking.status == "approved",
+                RentalBooking.deposit_paid == True
+            )
+        )
+        active_booking = booking_res.scalars().first()
+
+        return {
+            "id": str(stall.id),
+            "stall_number": stall.stall_number,
+            "location": stall.location,
+            "size": stall.size,
+            "rental_rate": stall.rental_rate,
+            "is_occupied": active_booking is not None,
+            "is_available": stall.is_available
+        }
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+@app.delete("/boulevard/stalls/{stall_id}")
+async def delete_stall(
+    stall_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required.")
+    
+    stall = await db.get(BoulevardStall, stall_id)
+    if not stall:
+        raise HTTPException(status_code=404, detail="Stall not found.")
+    
+    try:
+        await db.delete(stall)
+        await db.commit()
+        return {"message": "Stall deleted successfully"}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
 
 @app.post("/boulevard/bookings")
 async def create_rental_booking(
@@ -854,7 +996,7 @@ async def create_rental_payment(booking_id: UUID, db: AsyncSession = Depends(get
         raise HTTPException(status_code=404, detail="Rental booking not found.")
     
     stall = await db.get(BoulevardStall, booking.stall_id)
-    price = stall.price if stall and hasattr(stall, 'price') else 350.00
+    price = stall.rental_rate if stall and hasattr(stall, 'rental_rate') else 350.00
 
     async with httpx_client.AsyncClient() as client:
         response = await client.post(
@@ -912,29 +1054,6 @@ async def list_all_rental_bookings(
             "vendor_name": b.vendor_user.name if b.vendor_user else "Unknown Vendor",
             "vendor_email": b.vendor_user.email if b.vendor_user else "N/A",
             "stall_name": f"Stall {b.stall.stall_number}" if b.stall else "Boulevard Stall"
-        })
-    return response_data
-
-@app.get("/admin/users")
-async def list_all_users(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Access denied. Admin privileges required.")
-    
-    result = await db.execute(select(User).order_by(User.created_at.desc()))
-    users = result.scalars().all()
-    
-    response_data = []
-    for u in users:
-        response_data.append({
-            "id": str(u.id),
-            "name": u.name,
-            "email": u.email,
-            "phone_number": u.phone_number or "N/A",
-            "role": u.role,
-            "created_at": u.created_at.isoformat() if u.created_at else None
         })
     return response_data
 
