@@ -156,7 +156,6 @@ export default function ProfilePage() {
     localStorage.removeItem("token");
     localStorage.removeItem("userRole");
     localStorage.removeItem("userName");
-    // Note: We keep permanentlyDismissedOrders in localStorage so it stays deleted even after logging out and back in!
     router.push("/vendor/login" as any);
   };
 
@@ -174,7 +173,7 @@ export default function ProfilePage() {
         
         {/* Navigation & Logout Header */}
         <div className="flex justify-between items-center">
-          <Link href="/checkout" className="text-orange-600 hover:underline font-medium text-sm">
+          <Link href="/" className="text-orange-600 hover:underline font-medium text-sm">
             ← Back to Marketplace
           </Link>
           <div className="space-x-4">
@@ -300,10 +299,10 @@ export default function ProfilePage() {
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
             <h2 className="text-xl font-bold text-gray-900">Order History & Receipts</h2>
             {orders.length === 0 ? (
-              <div className="test-center py-8 border border-dashed border-gray-200 rounded-xl space-y-3 text-center">
+              <div className="text-center py-8 border border-dashed border-gray-200 rounded-xl space-y-3">
                 <p className="text-gray-500 text-sm">You haven't placed any orders yet.</p>
                 <Link
-                  href="/checkout"
+                  href="/"
                   className="inline-block px-4 py-2 bg-orange-600 text-white text-xs font-semibold rounded-lg hover:bg-orange-700 transition-all"
                 >
                   Browse Merchants
@@ -330,7 +329,7 @@ export default function ProfilePage() {
                     {/* Itemized Receipt breakdown */}
                     <div className="border-t border-gray-200 pt-3 space-y-1">
                       <p className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Receipt Items:</p>
-                      {order.items.map((item, idx) => (
+                      {order.items.Item ? null : order.items.map((item, idx) => (
                         <div key={idx} className="flex justify-between text-xs text-gray-600">
                           <span>Item ID: {item.menu_item_id.slice(0, 8)}... (x{item.quantity})</span>
                           <span>RM {Number(item.price_at_order * item.quantity).toFixed(2)}</span>

@@ -18,6 +18,7 @@ interface MenuItem {
   description: string;
   price: number;
   is_available: boolean;
+  image_url?: string;
 }
 
 interface PickupSlot {
@@ -243,6 +244,12 @@ export default function Home() {
                   {menuItems.map((item) => (
                     <div key={item.id} className="p-4 rounded-xl border border-gray-200 bg-gray-50 flex flex-col justify-between space-y-3">
                       <div>
+                        {/* Dish Image Preview */}
+                        {item.image_url && (
+                          <div className="w-full h-36 rounded-lg overflow-hidden bg-gray-100 mb-3">
+                            <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" />
+                          </div>
+                        )}
                         <div className="flex justify-between items-start">
                           <h3 className="font-bold text-gray-900 text-sm">{item.name}</h3>
                           <span className="text-orange-600 font-bold text-sm">RM {Number(item.price).toFixed(2)}</span>
