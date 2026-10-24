@@ -50,6 +50,57 @@ export default function AdminUsersPage() {
     fetchUsers();
   }, [router]);
 
+  // Handle Deleting a User
+  const handleDeleteUser = async (userId: string) => {
+    if (!confirm("Are you sure you want to delete this user?")) return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`http://127.0.0.1:8000/admin/users/${userId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.detail || "Failed to delete user");
+      }
+
+      // Remove from local state instantly
+      setUsers(users.filter((u) => u.id !== userId));
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  // Handle Updating a User's Role
+  const handleUpdateRole = async (userId: string, currentRole: string) => {
+    const newRole = prompt("Enter new role (admin, merchant, customer):", currentRole);
+    if (!newRole || newRole === currentRole) return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`http://127.0.0.1:8000/admin/users/${userId}/role`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ role: newRole.toLowerCase() }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.detail || "Failed to update role");
+      }
+
+      // Refresh users list
+      fetchUsers();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
   const filteredUsers = filterRole === "all" 
     ? users 
     : users.filter(u => u.role === filterRole);
@@ -109,6 +160,7 @@ export default function AdminUsersPage() {
                     <th className="pb-3 px-4">Email</th>
                     <th className="pb-3 px-4">Phone</th>
                     <th className="pb-3 px-4">Role</th>
+                    <th className="pb-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -116,7 +168,7 @@ export default function AdminUsersPage() {
                     <tr key={u.id} className="hover:bg-gray-50/50">
                       <td className="py-3 px-4 font-semibold text-gray-900">{u.name}</td>
                       <td className="py-3 px-4 text-gray-600">{u.email}</td>
-                      <td className="py-3 px-4 text-gray-500">{u.phone_number}</td>
+                      <td className="py-3 px-4 text-gray-500">{u.phone_number || "N/A"}</td>
                       <td className="py-3 px-4">
                         <span className={`inline-block text-xs font-semibold px-2.5 py-0.5 rounded-full uppercase ${
                           u.role === 'admin' ? 'bg-purple-100 text-purple-800' :
@@ -124,6 +176,20 @@ export default function AdminUsersPage() {
                         }`}>
                           {u.role}
                         </span>
+                      </td>
+                      <td className="py-3 px-4 text-right space-x-2">
+                        <button
+                          onClick={() => handleUpdateRole(u.id, u.role)}
+                          className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteUser(u.id)}
+                          className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold rounded-lg transition"
+                        >
+                          Delete
+                        </button>
                       </td>
                     </tr>
                   ))}
