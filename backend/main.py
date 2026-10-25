@@ -120,6 +120,11 @@ class PickupSlotCreate(BaseModel):
     time_slot: datetime
     max_capacity: int = 10
 
+# NEW: Schema for updating pickup slots
+class PickupSlotUpdate(BaseModel):
+    time_slot: datetime
+    max_capacity: int
+
 class ForgotPasswordRequest(BaseModel):
     email: str
     new_password: str
@@ -605,11 +610,41 @@ async def list_pickup_slots(merchant_id: UUID, db: AsyncSession = Depends(get_db
     result = await db.execute(select(PickupSlot).where(PickupSlot.merchant_id == merchant_id))
     return result.scalars().all()
 
+@app.put("/merchants/pickup-slots/{slot_id}")
+async def update_pickup_slot(slot_id: UUID, slot_data: PickupSlotUpdate, db: AsyncSession = Depends(get_db)):
+    slot = await db.get(PickupSlot, slot_id)
+    if not slot:
+        raise HTTPException(status_code=404, detail="Pickup slot not found.")
+    
+    if slot_data.max_capacity < slot.current_bookings:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Cannot reduce max capacity below current bookings ({slot.current_bookings})."
+        )
+
+    slot.time_slot = slot_data.time_slot
+    slot.max_capacity = slot_data.max_capacity
+
+    try:
+        await db.commit()
+        await db.refresh(slot)
+        return slot
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
 @app.delete("/merchants/pickup-slots/{slot_id}")
 async def delete_pickup_slot(slot_id: UUID, db: AsyncSession = Depends(get_db)):
     slot = await db.get(PickupSlot, slot_id)
     if not slot:
         raise HTTPException(status_code=404, detail="Pickup slot not found.")
+    
+    # --- PREVENT DELETION IF THERE ARE BOOKINGS ---
+    if slot.current_bookings > 0:
+        raise HTTPException(
+            status_code=400, 
+            detail="Cannot delete this pickup slot because customers have already booked orders in it."
+        )
     
     try:
         await db.delete(slot)
@@ -767,7 +802,7 @@ async def update_order_status(
     order_id: UUID,
     status_update: OrderStatusUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)   # optional but recommended
+    current_user: User = Depends(get_current_user)    # optional but recommended
 ):
     order = await db.get(Order, order_id)
     if not order:
@@ -960,7 +995,6 @@ async def toggle_stall_availability(
         await db.commit()
         await db.refresh(stall)
 
-        # Check occupancy status to keep response fully synchronized
         booking_res = await db.execute(
             select(RentalBooking).where(
                 RentalBooking.stall_id == stall.id,
@@ -1115,8 +1149,6 @@ async def list_all_rental_bookings(
         })
     return response_data
 
-# --- NEW ADMIN ROUTES FOR EDIT / DELETE USERS ---
-
 @app.get("/admin/users")
 async def admin_list_users(
     role: Optional[str] = Query(default=None),
@@ -1214,8 +1246,6 @@ async def admin_update_user_role(
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
-
-# --- END NEW ADMIN ROUTES ---
 
 @app.patch("/boulevard/bookings/{booking_id}/status")
 async def update_rental_status(
