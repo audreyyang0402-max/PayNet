@@ -1,7 +1,7 @@
 import uuid
 from sqlalchemy import Column, String, Boolean, Text, Numeric, Date, DateTime, Integer, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship  # <--- Add this import
+from sqlalchemy.orm import relationship
 from database import Base
 
 
@@ -18,6 +18,8 @@ class User(Base):
     
     # Add backref for rentals if needed
     rental_bookings = relationship("RentalBooking", back_populates="vendor_user")
+    # Added backref for orders placed by this user as a customer
+    orders = relationship("Order", back_populates="customer")
 
 
 class Merchant(Base):
@@ -70,6 +72,10 @@ class Order(Base):
     pickup_slot_id = Column(UUID(as_uuid=True), ForeignKey("pickup_slots.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # --- RELATIONSHIPS ---
+    items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+    customer = relationship("User", back_populates="orders")  # <--- Added customer relationship
+
 
 class OrderItem(Base):
     __tablename__ = "order_items"
@@ -79,6 +85,10 @@ class OrderItem(Base):
     menu_item_id = Column(UUID(as_uuid=True), ForeignKey("menu_items.id"), nullable=False)
     quantity = Column(Integer, nullable=False, default=1)
     price_at_order = Column(Numeric(10, 2), nullable=False)
+
+    # --- RELATIONSHIPS ---
+    order = relationship("Order", back_populates="items")
+    menu_item = relationship("MenuItem")
 
 
 class BoulevardStall(Base):
@@ -91,7 +101,6 @@ class BoulevardStall(Base):
     rental_rate = Column(Numeric(10, 2), nullable=False)
     is_available = Column(Boolean, default=True)
     
-    # Add relationship so selectinload(RentalBooking.stall) works
     rental_bookings = relationship("RentalBooking", back_populates="stall")
 
 
@@ -108,7 +117,7 @@ class RentalBooking(Base):
     merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # --- ADD THESE RELATIONSHIPS ---
+    # --- RELATIONSHIPS ---
     vendor_user = relationship("User", back_populates="rental_bookings")
     stall = relationship("BoulevardStall", back_populates="rental_bookings")
 

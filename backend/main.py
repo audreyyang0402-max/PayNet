@@ -676,12 +676,35 @@ async def create_order(
 
 @app.get("/orders/{order_id}")
 async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
-    order = await db.get(Order, order_id)
+    result = await db.execute(
+        select(Order)
+        .options(selectinload(Order.items).selectinload(OrderItem.menu_item))
+        .where(Order.id == order_id)
+    )
+    order = result.scalars().first()
+    
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
-    items_result = await db.execute(select(OrderItem).where(OrderItem.order_id == order_id))
-    items = items_result.scalars().all()
-    return {"order": order, "items": items}
+        
+    items_data = []
+    for oi in order.items:
+        items_data.append({
+            "id": str(oi.id),
+            "menu_item_id": str(oi.menu_item_id),
+            "name": oi.menu_item.name if oi.menu_item else "Unknown Dish",
+            "quantity": oi.quantity,
+            "price_at_order": float(oi.price_at_order)
+        })
+
+    return {
+        "order": {
+            "id": str(order.id),
+            "status": order.status,
+            "total_price": float(order.total_price),
+            "created_at": order.created_at
+        },
+        "items": items_data
+    }
 
 @app.get("/users/me/orders")
 async def list_customer_orders(
@@ -690,19 +713,54 @@ async def list_customer_orders(
 ):
     result = await db.execute(
         select(Order)
+        .options(selectinload(Order.items).selectinload(OrderItem.menu_item))
         .where(Order.customer_id == current_user.id)
         .order_by(Order.created_at.desc())
     )
-    return result.scalars().all()
+    orders = result.scalars().all()
+    
+    response_data = []
+    for order in orders:
+        items_data = []
+        for oi in order.items:
+            items_data.append({
+                "id": str(oi.id),
+                "name": oi.menu_item.name if oi.menu_item else "Unknown Dish",
+                "quantity": oi.quantity,
+                "price_at_order": float(oi.price_at_order)
+            })
+            
+        response_data.append({
+            "id": str(order.id),
+            "status": order.status,
+            "total_price": float(order.total_price),
+            "created_at": order.created_at,
+            "items": items_data
+        })
+        
+    return response_data
 
 @app.get("/merchants/{merchant_id}/orders")
 async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Order)
+        .options(selectinload(Order.customer))
         .where(Order.merchant_id == merchant_id)
         .order_by(Order.created_at.desc())
     )
-    return result.scalars().all()
+    orders = result.scalars().all()
+    
+    response_data = []
+    for order in orders:
+        response_data.append({
+            "id": str(order.id),
+            "status": order.status,
+            "total_price": float(order.total_price),
+            "created_at": order.created_at,
+            "customer_name": order.customer.name if order.customer else "Unknown Customer"
+        })
+        
+    return response_data
 
 @app.patch("/orders/{order_id}/status")
 async def update_order_status(
@@ -1059,6 +1117,35 @@ async def list_all_rental_bookings(
 
 # --- NEW ADMIN ROUTES FOR EDIT / DELETE USERS ---
 
+@app.get("/admin/users")
+async def admin_list_users(
+    role: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Access denied. Admin privileges required.")
+    
+    query = select(User).order_by(User.name)
+    
+    if role and role.lower() != "all":
+        query = query.where(User.role == role.lower())
+        
+    result = await db.execute(query)
+    users = result.scalars().all()
+    
+    response_data = []
+    for u in users:
+        response_data.append({
+            "id": str(u.id),
+            "name": u.name,
+            "email": u.email,
+            "phone_number": u.phone_number,
+            "role": u.role
+        })
+    return response_data
+
+
 @app.delete("/admin/users/{user_id}")
 async def admin_delete_user(
     user_id: UUID,
@@ -1076,7 +1163,6 @@ async def admin_delete_user(
         raise HTTPException(status_code=400, detail="You cannot delete your own admin account.")
 
     try:
-        # 1. Find and delete all orders (and their items) associated with this user
         orders_result = await db.execute(select(Order).where(Order.customer_id == user_id))
         orders = orders_result.scalars().all()
         
@@ -1084,7 +1170,6 @@ async def admin_delete_user(
             await db.execute(delete(OrderItem).where(OrderItem.order_id == order.id))
             await db.delete(order)
 
-        # 2. Delete the user
         await db.delete(user_to_delete)
         await db.commit()
         return {"message": "User deleted successfully"}

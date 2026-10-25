@@ -28,6 +28,7 @@ interface Order {
   total_price: number;
   created_at: string;
   customer_id: string;
+  customer_name: string; // <-- Added customer name field from backend
 }
 
 interface PickupSlotProfile {
@@ -483,7 +484,11 @@ export default function MerchantDashboard() {
               {orders.map((order) => (
                 <div key={order.id} className="p-4 rounded-xl border border-gray-200 bg-gray-50 flex justify-between items-center">
                   <div>
-                    <p className="text-xs text-gray-400 font-mono">ID: {order.id}</p>
+                    {/* --- DISPLAY CUSTOMER NAME HERE --- */}
+                    <p className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                      <span>👤</span> Customer: <span className="text-orange-600">{order.customer_name || "Guest Customer"}</span>
+                    </p>
+                    <p className="text-xs text-gray-400 font-mono mt-0.5">ID: {order.id}</p>
                     <p className="font-bold text-gray-900 mt-1">Total: RM {Number(order.total_price).toFixed(2)}</p>
                     <span className={`inline-block mt-2 text-xs font-semibold px-2.5 py-1 rounded-md uppercase ${
                       order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :

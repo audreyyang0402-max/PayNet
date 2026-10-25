@@ -15,9 +15,10 @@ interface UserProfile {
 
 interface OrderItem {
   id: string;
+  name: string; // <-- Added dish name from the backend
   quantity: number;
   price_at_order: number;
-  menu_item_id: string;
+  menu_item_id?: string;
 }
 
 interface OrderWithItems {
@@ -326,15 +327,21 @@ export default function ProfilePage() {
                       </span>
                     </div>
 
-                    {/* Itemized Receipt breakdown */}
+                    {/* Itemized Receipt breakdown with dish name & quantity */}
                     <div className="border-t border-gray-200 pt-3 space-y-1">
                       <p className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Receipt Items:</p>
-                      {order.items.Item ? null : order.items.map((item, idx) => (
-                        <div key={idx} className="flex justify-between text-xs text-gray-600">
-                          <span>Item ID: {item.menu_item_id.slice(0, 8)}... (x{item.quantity})</span>
-                          <span>RM {Number(item.price_at_order * item.quantity).toFixed(2)}</span>
-                        </div>
-                      ))}
+                      {!order.items || order.items.length === 0 ? (
+                        <p className="text-xs text-gray-400">No items found.</p>
+                      ) : (
+                        order.items.map((item, idx) => (
+                          <div key={idx} className="flex justify-between text-xs text-gray-700 py-1">
+                            <span className="font-medium">
+                              {item.name} <span className="text-gray-500 font-normal">x{item.quantity}</span>
+                            </span>
+                            <span>RM {Number(item.price_at_order * item.quantity).toFixed(2)}</span>
+                          </div>
+                        ))
+                      )}
                     </div>
 
                     <div className="border-t border-gray-200 pt-3 flex justify-between items-center font-bold text-gray-900">
