@@ -186,6 +186,14 @@ export default function ProfilePage() {
                 Go to Vendor Dashboard
               </Link>
             )}
+            {user?.role === "customer" && (
+              <Link
+                href="/customer/analytics"
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm font-semibold rounded-xl transition-all"
+              >
+                View My Analytics
+              </Link>
+            )}
             <button
               onClick={handleLogout}
               className="px-4 py-2 bg-white border border-gray-200 hover:border-red-300 text-gray-600 hover:text-red-600 text-sm font-medium rounded-xl transition-colors cursor-pointer"
