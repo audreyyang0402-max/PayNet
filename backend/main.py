@@ -17,7 +17,7 @@ from typing import List, Optional, Literal
 from uuid import UUID
 
 from database import engine, get_db
-from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem, BoulevardStall, RentalBooking
+from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem, BoulevardStall, RentalBooking, Event, EventMerchant
 
 # --- NEW AUTH IMPORTS ---
 from auth import hash_password, verify_password, create_access_token, get_current_user
@@ -132,6 +132,22 @@ class RentalStatusUpdate(BaseModel):
 
 class OrderStatusUpdate(BaseModel):
     status: Literal["pending", "preparing", "ready", "completed"]
+
+
+# NEW: Schemas for Events
+class EventCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    location: str
+    event_date: date
+    start_time: datetime
+    end_time: datetime
+    banner_image_url: Optional[str] = None
+    merchant_ids: List[UUID] = []
+
+class EventMerchantAdd(BaseModel):
+    merchant_id: UUID
+    stall_number: Optional[str] = None
 
 
 # --- ROUTES ---
@@ -1015,3 +1031,178 @@ async def update_rental_status(
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+
+# --- EVENT ENDPOINTS ---
+
+@app.post("/events", response_model=dict)
+async def create_event(
+    event_data: EventCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Create a new event (admin only)"""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can create events.")
+    
+    new_event = Event(
+        name=event_data.name,
+        description=event_data.description,
+        location=event_data.location,
+        event_date=event_data.event_date,
+        start_time=event_data.start_time,
+        end_time=event_data.end_time,
+        banner_image_url=event_data.banner_image_url
+    )
+    db.add(new_event)
+    await db.flush()
+    
+    for merchant_id in event_data.merchant_ids:
+        event_merchant = EventMerchant(event_id=new_event.id, merchant_id=merchant_id)
+        db.add(event_merchant)
+    
+    await db.commit()
+    await db.refresh(new_event)
+    return {"id": str(new_event.id), "name": new_event.name, "message": "Event created successfully"}
+
+
+@app.get("/events")
+async def list_events(db: AsyncSession = Depends(get_db)):
+    """Get all active events"""
+    result = await db.execute(
+        select(Event).where(Event.is_active == True).order_by(Event.event_date.desc())
+    )
+    events = result.scalars().all()
+    return [
+        {
+            "id": str(e.id),
+            "name": e.name,
+            "description": e.description,
+            "location": e.location,
+            "event_date": e.event_date,
+            "start_time": e.start_time,
+            "end_time": e.end_time,
+            "banner_image_url": e.banner_image_url,
+            "created_at": e.created_at
+        }
+        for e in events
+    ]
+
+
+@app.get("/events/{event_id}")
+async def get_event(event_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Get a specific event with all merchants"""
+    event = await db.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    
+    result = await db.execute(
+        select(EventMerchant).where(EventMerchant.event_id == event_id).where(EventMerchant.is_active == True)
+    )
+    event_merchants = result.scalars().all()
+    merchant_ids = [em.merchant_id for em in event_merchants]
+    
+    merchants = []
+    for merchant_id in merchant_ids:
+        merchant = await db.get(Merchant, merchant_id)
+        if merchant:
+            merchants.append({
+                "id": str(merchant.id),
+                "name": merchant.name,
+                "description": merchant.description,
+                "location": merchant.location
+            })
+    
+    return {
+        "id": str(event.id),
+        "name": event.name,
+        "description": event.description,
+        "location": event.location,
+        "event_date": event.event_date,
+        "start_time": event.start_time,
+        "end_time": event.end_time,
+        "banner_image_url": event.banner_image_url,
+        "merchants": merchants,
+        "created_at": event.created_at
+    }
+
+
+@app.get("/events/{event_id}/merchants")
+async def get_event_merchants(event_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Get all merchants for an event with their menu items"""
+    event = await db.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    
+    result = await db.execute(
+        select(EventMerchant).where(EventMerchant.event_id == event_id).where(EventMerchant.is_active == True)
+    )
+    event_merchants = result.scalars().all()
+    
+    merchants_with_items = []
+    for em in event_merchants:
+        merchant = await db.get(Merchant, em.merchant_id)
+        if merchant:
+            items_result = await db.execute(
+                select(MenuItem).where(MenuItem.merchant_id == merchant.id)
+            )
+            items = items_result.scalars().all()
+            
+            merchants_with_items.append({
+                "id": str(merchant.id),
+                "name": merchant.name,
+                "description": merchant.description,
+                "location": merchant.location,
+                "stall_number": em.stall_number,
+                "items": [
+                    {
+                        "id": str(item.id),
+                        "name": item.name,
+                        "description": item.description,
+                        "price": float(item.price),
+                        "image_url": item.image_url,
+                        "is_available": item.is_available
+                    }
+                    for item in items
+                ]
+            })
+    
+    return merchants_with_items
+
+
+@app.post("/events/{event_id}/merchants")
+async def add_merchant_to_event(
+    event_id: UUID,
+    merchant_data: EventMerchantAdd,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Add a merchant to an event (admin only)"""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can manage event merchants.")
+    
+    event = await db.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    
+    merchant = await db.get(Merchant, merchant_data.merchant_id)
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant not found.")
+    
+    existing = await db.execute(
+        select(EventMerchant).where(
+            (EventMerchant.event_id == event_id) & (EventMerchant.merchant_id == merchant_data.merchant_id)
+        )
+    )
+    if existing.scalars().first():
+        raise HTTPException(status_code=400, detail="Merchant already added to this event.")
+    
+    event_merchant = EventMerchant(
+        event_id=event_id,
+        merchant_id=merchant_data.merchant_id,
+        stall_number=merchant_data.stall_number
+    )
+    db.add(event_merchant)
+    await db.commit()
+    
+    return {"message": "Merchant added to event successfully"}

@@ -122,6 +122,38 @@ class RentalBooking(Base):
     stall = relationship("BoulevardStall", back_populates="rental_bookings")
 
 
+class Event(Base):
+    __tablename__ = "events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    description = Column(Text)
+    location = Column(String, nullable=False)
+    event_date = Column(Date, nullable=False)
+    start_time = Column(DateTime(timezone=True), nullable=False)
+    end_time = Column(DateTime(timezone=True), nullable=False)
+    is_active = Column(Boolean, default=True)
+    banner_image_url = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    merchants = relationship("EventMerchant", back_populates="event")
+
+
+class EventMerchant(Base):
+    __tablename__ = "event_merchants"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id"), nullable=False)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    stall_number = Column(String)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    event = relationship("Event", back_populates="merchants")
+
+
 class SDGMetric(Base):
     __tablename__ = "sdg_metrics"
 
