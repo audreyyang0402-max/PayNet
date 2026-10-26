@@ -1,4 +1,3 @@
-// frontend/src/app/event/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -137,7 +136,6 @@ export default function EventsPage() {
 
     setCheckingOut(true);
     try {
-      // For now, show a message since multi-vendor event checkout requires more setup
       alert("Event checkout requires additional setup for multi-vendor orders. Please use the regular merchants section for now.");
     } catch (err: any) {
       alert(err.message || "Checkout failed");
@@ -148,26 +146,39 @@ export default function EventsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen bg-[#fffcef] flex items-center justify-center">
         Loading events...
       </div>
     );
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <main className="min-h-screen bg-[#fffcef] relative p-8 overflow-hidden">
+      {/* Background Watermark Logo - Changed opacity to 20% (80% transparent) */}
+      <div 
+        className="fixed inset-0 pointer-events-none z-0 opacity-20 bg-[url('/payvolution-events.png')] bg-center bg-no-repeat bg-[length:60%_auto] sm:bg-[length:40%_auto]"
+        aria-hidden="true"
+      />
+
+      <div className="max-w-6xl mx-auto space-y-6 relative z-10">
         {/* Header */}
-        <header className="flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">🎉 Payvolution Events</h1>
-            <p className="text-gray-500 text-sm">Browse all vendors at special events and festivals.</p>
+        <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-6 rounded-2xl shadow-sm border border-gray-200 gap-4">
+          <div className="flex items-center gap-4">
+            <img 
+              src="/payvolution-events.png" 
+              alt="Payvolution Events Logo" 
+              className="h-14 w-auto object-contain"
+            />
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 hidden sm:block">Payvolution Events</h1>
+              <p className="text-gray-500 text-sm">Browse all vendors at special events and festivals.</p>
+            </div>
           </div>
           <Link
             href="/"
-            className="bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-semibold px-4 py-2.5 rounded-xl transition-all"
+            className="bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-semibold px-4 py-2.5 rounded-xl transition-all whitespace-nowrap"
           >
-            ← Back to Merchants
+            Back to Merchants
           </Link>
         </header>
 
@@ -204,14 +215,14 @@ export default function EventsPage() {
           <div className="lg:col-span-2 space-y-6">
             {/* Event Info */}
             {selectedEventId && events.find((e) => e.id === selectedEventId) && (
-              <div className="bg-gradient-to-r from-orange-500 to-orange-400 text-white p-6 rounded-2xl">
+              <div className="bg-gradient-to-r from-orange-500 to-orange-400 text-white p-6 rounded-2xl shadow-sm">
                 <h2 className="text-xl font-bold mb-2">
                   {events.find((e) => e.id === selectedEventId)?.name}
                 </h2>
                 <p className="text-sm opacity-90 mb-3">
                   {events.find((e) => e.id === selectedEventId)?.description}
                 </p>
-                <div className="text-xs opacity-80">
+                <div className="text-xs opacity-80 flex flex-col gap-1">
                   <p>📍 {events.find((e) => e.id === selectedEventId)?.location}</p>
                   <p>
                     🕐{" "}
@@ -258,7 +269,7 @@ export default function EventsPage() {
                               {merchant.description}
                             </p>
                             {merchant.stall_number && (
-                              <p className="text-xs opacity-80 mt-1">
+                              <p className="text-xs opacity-80 mt-1 font-medium bg-white/20 inline-block px-2 py-0.5 rounded">
                                 Stall: {merchant.stall_number}
                               </p>
                             )}
@@ -350,7 +361,7 @@ export default function EventsPage() {
                             <div className="flex items-center space-x-2">
                               <button
                                 onClick={() => removeFromCart(cartKey)}
-                                className="w-6 h-6 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold cursor-pointer"
+                                className="w-6 h-6 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold cursor-pointer flex items-center justify-center"
                               >
                                 -
                               </button>
@@ -367,7 +378,7 @@ export default function EventsPage() {
                                     },
                                   }))
                                 }
-                                className="w-6 h-6 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold cursor-pointer"
+                                className="w-6 h-6 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold cursor-pointer flex items-center justify-center"
                               >
                                 +
                               </button>
