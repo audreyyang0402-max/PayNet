@@ -11,6 +11,7 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
     phone_number = Column(String, nullable=True)
+    telegram_chat_id = Column(String, nullable=True)  # set when the customer connects Telegram
     email = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="customer")
