@@ -1,17 +1,16 @@
 // src/app/vendor/dashboard/page.tsx
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
 
 interface MerchantProfile {
   id: string;
   name: string;
   location: string;
   description: string;
-  is_temporary?: boolean;
+  is_temporary?: boolean; // Optional flag for pop-up vendors
 }
 
 interface MenuItem {
@@ -29,8 +28,6 @@ interface Order {
   total_price: number;
   created_at: string;
   customer_id: string;
-  customer_name: string;
-  merchant_id: string;
 }
 
 interface PickupSlotProfile {
@@ -49,9 +46,6 @@ export default function MerchantDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Real-time notification banner state
-  const [newOrderAlert, setNewOrderAlert] = useState<string | null>(null);
-
   // Edit Merchant Profile States
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editStoreName, setEditStoreName] = useState("");
@@ -61,9 +55,6 @@ export default function MerchantDashboard() {
   const [editPhone, setEditPhone] = useState("");
   const [editPassword, setEditPassword] = useState("");
   const [profileUpdateSuccess, setProfileUpdateSuccess] = useState("");
-
-  // Edit Pickup Slot Modal State
-  const [editingSlot, setEditingSlot] = useState<PickupSlotProfile | null>(null);
 
   // Form state for adding a new item
   const [newItem, setNewItem] = useState({
@@ -78,44 +69,6 @@ export default function MerchantDashboard() {
     time_slot: "",
     max_capacity: "10",
   });
-
-  // 🔊 Programmatic Web Audio Beep Generator
-  const playBeep = async () => {
-    try {
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContext) return;
-      const ctx = new AudioContext();
-
-      if (ctx.state === "suspended") {
-        await ctx.resume();
-      }
-
-      const playTone = (frequency: number, startTime: number, duration: number) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        
-        osc.type = "sine";
-        osc.frequency.value = frequency;
-        
-        gain.gain.setValueAtTime(0.1, ctx.currentTime + startTime);
-        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + startTime + duration);
-        
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        
-        osc.start(ctx.currentTime + startTime);
-        osc.stop(ctx.currentTime + startTime + duration);
-      };
-
-      playTone(587.33, 0, 0.15); // D5 note
-      playTone(880, 0.18, 0.25); // A5 note
-    } catch (err) {
-      console.log("Audio playback prevented by browser policy:", err);
-    }
-  };
-
-  // Use useRef to avoid asynchronous race conditions with the real-time listener
-  const merchantIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -135,9 +88,7 @@ export default function MerchantDashboard() {
         if (!profileRes.ok) throw new Error("Could not load merchant profile.");
         const profileData = await profileRes.json();
         
-        // Save ID to ref immediately
-        merchantIdRef.current = profileData.id;
-        
+        // Check if this merchant has a boulevard booking or is temporary
         const bookingsRes = await fetch("http://127.0.0.1:8000/boulevard/my-bookings", {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -154,6 +105,7 @@ export default function MerchantDashboard() {
         setEditLocation(profileData.location || "");
         setEditDescription(profileData.description || "");
 
+        // Fetch user auth info for email/phone
         const userRes = await fetch("http://127.0.0.1:8000/auth/me", {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -163,18 +115,21 @@ export default function MerchantDashboard() {
           setEditPhone(userData.phone_number || "");
         }
 
+        // Fetch menu items
         const menuRes = await fetch(`http://127.0.0.1:8000/merchants/${profileData.id}/items`);
         if (menuRes.ok) {
           const menuData = await menuRes.json();
           setMenuItems(menuData);
         }
 
+        // Fetch incoming orders for this merchant
         const ordersRes = await fetch(`http://127.0.0.1:8000/merchants/${profileData.id}/orders`);
         if (ordersRes.ok) {
           const ordersData = await ordersRes.json();
           setOrders(ordersData);
         }
 
+        // Fetch pickup slots for this merchant
         const slotsRes = await fetch(`http://127.0.0.1:8000/merchants/${profileData.id}/pickup-slots`);
         if (slotsRes.ok) {
           const slotsData = await slotsRes.json();
@@ -188,54 +143,6 @@ export default function MerchantDashboard() {
     }
 
     loadDashboardData();
-
-    // ⚡ Upgraded Realtime Subscription for Orders & Menu Items
-    const channel = supabase
-      .channel("merchant-dashboard-realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "orders" },
-        async (payload: any) => {
-          const merchantId = merchantIdRef.current;
-          if (!merchantId) return;
-
-          const row = payload.new || payload.old;
-          if (row && row.merchant_id === merchantId) {
-            // Play sound & show toast only for brand new orders
-            if (payload.eventType === "INSERT") {
-              playBeep();
-              setNewOrderAlert(`New incoming order received! (Total: RM ${Number(row.total_price).toFixed(2)})`);
-            }
-
-            // Automatically refresh orders list for ANY change (INSERT, UPDATE, DELETE)
-            const ordersRes = await fetch(`http://127.0.0.1:8000/merchants/${merchantId}/orders`);
-            if (ordersRes.ok) {
-              const ordersData = await ordersRes.json();
-              setOrders(ordersData);
-            }
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "menu_items" },
-        async (payload: any) => {
-          const merchantId = merchantIdRef.current;
-          if (!merchantId) return;
-
-          // Automatically refresh the menu list if an item is added, updated, or deleted
-          const menuRes = await fetch(`http://127.0.0.1:8000/merchants/${merchantId}/items`);
-          if (menuRes.ok) {
-            const menuData = await menuRes.json();
-            setMenuItems(menuData);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, [router]);
 
   const handleUpdateMerchantProfile = async (e: React.FormEvent) => {
@@ -337,37 +244,6 @@ export default function MerchantDashboard() {
     }
   };
 
-  const handleUpdateSlot = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingSlot) return;
-
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/merchants/pickup-slots/${editingSlot.id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          time_slot: editingSlot.time_slot,
-          max_capacity: Number(editingSlot.max_capacity),
-        }),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || "Failed to update pickup slot.");
-      }
-
-      const updatedSlot = await res.json();
-      setSlots(slots.map((s) => (s.id === updatedSlot.id ? updatedSlot : s)));
-      setEditingSlot(null);
-    } catch (err: any) {
-      alert(err.message);
-    }
-  };
-
   const handleDeleteSlot = async (slotId: string) => {
     if (!confirm("Are you sure you want to delete this pickup slot?")) return;
 
@@ -375,10 +251,7 @@ export default function MerchantDashboard() {
       const res = await fetch(`http://127.0.0.1:8000/merchants/pickup-slots/${slotId}`, {
         method: "DELETE",
       });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || "Failed to delete pickup slot.");
-      }
+      if (!res.ok) throw new Error("Failed to delete pickup slot.");
 
       setSlots(slots.filter((s) => s.id !== slotId));
     } catch (err: any) {
@@ -426,14 +299,8 @@ export default function MerchantDashboard() {
 
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/orders/${orderId}/status`, {
+      const res = await fetch(`http://127.0.0.1:8000/orders/${orderId}/status?status=${newStatus}`, {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ status: newStatus }),
       });
       if (!res.ok) throw new Error("Failed to update order status.");
 
@@ -450,6 +317,7 @@ export default function MerchantDashboard() {
     router.push("/vendor/login" as any);
   };
 
+  // Calculate Sales Summary metrics
   const totalRevenue = orders.reduce((sum, order) => sum + Number(order.total_price), 0);
   const completedOrdersCount = orders.filter(
     (o) => o.status.toLowerCase() === 'completed' || o.status.toLowerCase() === 'ready'
@@ -459,46 +327,9 @@ export default function MerchantDashboard() {
   if (error) return <div className="p-8 text-red-600 bg-red-50 text-center m-8 rounded-xl">{error}</div>;
 
   return (
-    <main className="min-h-screen bg-gray-50 p-8 relative">
-      
-      {/* 🔔 Floating Real-time Order Notification Toast */}
-      {newOrderAlert && (
-        <div className="fixed bottom-6 right-6 z-50 max-w-sm p-4 bg-gray-900 border border-orange-500/50 text-white rounded-2xl shadow-2xl flex items-start space-x-3 animate-bounce">
-          <span className="text-2xl">🔔</span>
-          <div className="flex-1">
-            <p className="text-xs font-bold uppercase tracking-wider text-orange-400">New Order Alert</p>
-            <p className="text-sm font-medium mt-0.5">{newOrderAlert}</p>
-          </div>
-          <button
-            onClick={() => setNewOrderAlert(null)}
-            className="text-gray-400 hover:text-white font-bold px-1.5 py-0.5 cursor-pointer text-sm"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
+    <main className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-5xl mx-auto space-y-8">
         
-        {/* 🔔 Prominent Top Banner Alert for New Orders */}
-        {newOrderAlert && (
-          <div className="p-4 bg-orange-600 text-white rounded-2xl flex justify-between items-center shadow-lg animate-bounce">
-            <div className="flex items-center space-x-3">
-              <span className="text-2xl">🔔</span>
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-orange-200">New Order Alert</p>
-                <p className="text-sm font-bold">{newOrderAlert}</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setNewOrderAlert(null)}
-              className="text-white hover:text-orange-200 font-bold px-3 py-1 rounded-xl bg-orange-700 cursor-pointer text-sm transition-colors"
-            >
-              Dismiss ✕
-            </button>
-          </div>
-        )}
-
         {/* Header Section */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
           <div className="flex justify-between items-start">
@@ -519,6 +350,7 @@ export default function MerchantDashboard() {
               <Link href="/vendor/analytics" className="px-3.5 py-2 text-xs font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-xl transition-colors">
                 Analytics
               </Link>
+              {/* Conditional Boulevard Rental Link for Temporary Pop-up Vendors */}
               {merchant?.is_temporary && (
                 <Link
                   href="/vendor/rental"
@@ -651,10 +483,7 @@ export default function MerchantDashboard() {
               {orders.map((order) => (
                 <div key={order.id} className="p-4 rounded-xl border border-gray-200 bg-gray-50 flex justify-between items-center">
                   <div>
-                    <p className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
-                      <span>👤</span> Customer: <span className="text-orange-600">{order.customer_name || "Guest Customer"}</span>
-                    </p>
-                    <p className="text-xs text-gray-400 font-mono mt-0.5">ID: {order.id}</p>
+                    <p className="text-xs text-gray-400 font-mono">ID: {order.id}</p>
                     <p className="font-bold text-gray-900 mt-1">Total: RM {Number(order.total_price).toFixed(2)}</p>
                     <span className={`inline-block mt-2 text-xs font-semibold px-2.5 py-1 rounded-md uppercase ${
                       order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
@@ -846,20 +675,12 @@ export default function MerchantDashboard() {
                     </p>
                     <p className="text-xs text-gray-500 mt-1">Bookings: {slot.current_bookings} / {slot.max_capacity}</p>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={() => setEditingSlot(slot)}
-                      className="text-gray-700 hover:text-gray-900 text-xs font-medium cursor-pointer transition-colors px-2 py-1 bg-white border border-gray-200 rounded-lg"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDeleteSlot(slot.id)}
-                      className="text-gray-400 hover:text-red-600 text-xs font-medium cursor-pointer transition-colors px-2 py-1 bg-white border border-gray-200 rounded-lg"
-                    >
-                      Delete
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => handleDeleteSlot(slot.id)}
+                    className="text-gray-400 hover:text-red-600 text-xs font-medium cursor-pointer transition-colors px-2 py-1 bg-white border border-gray-200 rounded-lg"
+                  >
+                    Delete
+                  </button>
                 </div>
               ))}
             </div>
@@ -867,55 +688,6 @@ export default function MerchantDashboard() {
         </div>
 
       </div>
-
-      {/* Edit Pickup Slot Modal */}
-      {editingSlot && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-xl">
-            <h3 className="text-lg font-bold text-gray-900">Edit Pickup Slot</h3>
-            
-            <form onSubmit={handleUpdateSlot} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Time Slot</label>
-                <input
-                  type="datetime-local"
-                  required
-                  value={editingSlot.time_slot ? editingSlot.time_slot.slice(0, 16) : ""}
-                  onChange={(e) => setEditingSlot({ ...editingSlot, time_slot: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Max Capacity</label>
-                <input
-                  type="number"
-                  required
-                  value={editingSlot.max_capacity}
-                  onChange={(e) => setEditingSlot({ ...editingSlot, max_capacity: parseInt(e.target.value) || 0 })}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                />
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="submit"
-                  className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2.5 rounded-xl text-sm transition-all cursor-pointer"
-                >
-                  Save Changes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingSlot(null)}
-                  className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-xl text-sm transition-all cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </main>
   );
 }

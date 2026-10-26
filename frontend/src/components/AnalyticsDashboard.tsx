@@ -20,27 +20,29 @@ type Analytics = {
 const API_URL = "http://127.0.0.1:8000";
 const money = (amount: number) => `RM ${amount.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export default function AnalyticsDashboard({ audience }: { audience: "admin" | "merchant" }) {
+export default function AnalyticsDashboard({ audience }: { audience: "admin" | "merchant" | "customer" }) {
   const router = useRouter();
   const [days, setDays] = useState(30);
   const [data, setData] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isAdmin = audience === "admin";
+  const isCustomer = audience === "customer";
+  const loginPath = isAdmin ? "/admin/login" : isCustomer ? "/login" : "/vendor/login";
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       const token = window.localStorage.getItem("token");
-      const expectedRole = isAdmin ? "admin" : "merchant";
+      const expectedRole = isAdmin ? "admin" : isCustomer ? "customer" : "merchant";
       if (!token || window.localStorage.getItem("userRole") !== expectedRole) {
-        router.replace(isAdmin ? "/admin/login" : "/vendor/login");
+        router.replace(loginPath);
         return;
       }
       setLoading(true);
       setError(null);
       try {
-        const endpoint = isAdmin ? "/admin/analytics" : "/merchants/me/analytics";
+        const endpoint = isAdmin ? "/admin/analytics" : isCustomer ? "/users/me/analytics" : "/merchants/me/analytics";
         const response = await fetch(`${API_URL}${endpoint}?days=${days}`, {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
@@ -48,7 +50,7 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
         if (response.status === 401 || response.status === 403) {
           window.localStorage.removeItem("token");
           window.localStorage.removeItem("userRole");
-          router.replace(isAdmin ? "/admin/login" : "/vendor/login");
+          router.replace(loginPath);
           return;
         }
         if (!response.ok) {
@@ -65,7 +67,7 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
     }
     load();
     return () => { cancelled = true; };
-  }, [days, isAdmin, router]);
+  }, [days, isAdmin, isCustomer, loginPath, router]);
 
   const maxRevenue = Math.max(1, ...(data?.revenue_trend.map((point) => point.revenue) ?? [0]));
   const maxOrders = Math.max(1, ...(data?.revenue_trend.map((point) => point.orders) ?? [0]));
@@ -86,12 +88,12 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
         <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <Link href={isAdmin ? "/admin/rentals" : "/vendor/dashboard"} className="text-sm font-medium text-orange-700 hover:underline">
-                ← Back to {isAdmin ? "admin" : "vendor"} dashboard
+              <Link href={isAdmin ? "/admin/rentals" : isCustomer ? "/orders" : "/vendor/dashboard"} className="text-sm font-medium text-orange-700 hover:underline">
+                ← Back to {isCustomer ? "order history" : `${isAdmin ? "admin" : "vendor"} dashboard`}
               </Link>
               <p className="mt-4 text-xs font-bold uppercase tracking-[0.18em] text-orange-700">Phase 7 · Analytics</p>
-              <h1 className="mt-1 text-3xl font-bold text-slate-900">{isAdmin ? "Platform analytics" : "Store analytics"}</h1>
-              <p className="mt-2 text-sm text-slate-500">Sales and order activity from the selected period.</p>
+              <h1 className="mt-1 text-3xl font-bold text-slate-900">{isAdmin ? "Platform analytics" : isCustomer ? "Your spending" : "Store analytics"}</h1>
+              <p className="mt-2 text-sm text-slate-500">{isCustomer ? "Your completed purchases and order activity from the selected period." : "Sales and order activity from the selected period."}</p>
             </div>
             <label className="text-sm font-medium text-slate-700">
               Date range
@@ -108,12 +110,17 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
         {loading && <div className="rounded-xl border border-slate-200 bg-white p-8 text-slate-500">Loading analytics…</div>}
         {!loading && data && <>
           <section aria-label="Key metrics" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {[
+            {(isCustomer ? [
+              { label: "Total spent", value: money(data.summary.total_revenue), detail: `${data.summary.completed_orders} completed orders` },
+              { label: "Orders placed", value: data.summary.total_orders.toLocaleString(), detail: `In the last ${days} days` },
+              { label: "Active orders", value: data.summary.active_orders.toLocaleString(), detail: "Currently in progress" },
+              { label: "Average completed order", value: money(data.summary.completed_orders ? data.summary.total_revenue / data.summary.completed_orders : 0), detail: "Completed orders only" },
+            ] : [
               { label: "Completed sales", value: money(data.summary.total_revenue), detail: `${data.summary.completed_orders} completed orders` },
               { label: "All orders", value: data.summary.total_orders.toLocaleString(), detail: `${data.summary.active_orders} active now` },
               { label: "Customers", value: data.summary.customers.toLocaleString(), detail: `In the last ${days} days` },
               { label: "Average order", value: money(data.summary.completed_orders ? data.summary.total_revenue / data.summary.completed_orders : 0), detail: "Completed orders only" },
-            ].map((metric) => <article key={metric.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            ]).map((metric) => <article key={metric.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-sm font-medium text-slate-500">{metric.label}</p>
               <p className="mt-3 text-2xl font-bold text-slate-900">{metric.value}</p>
               <p className="mt-2 text-xs text-slate-500">{metric.detail}</p>
@@ -123,11 +130,11 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
           <section className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
             <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div><h2 className="font-bold text-slate-900">Daily revenue</h2><p className="mt-1 text-xs text-slate-500">Completed orders · MYR</p></div>
+                <div><h2 className="font-bold text-slate-900">{isCustomer ? "Daily spending" : "Daily revenue"}</h2><p className="mt-1 text-xs text-slate-500">Completed orders · MYR</p></div>
                 <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">{days} days</span>
               </div>
               <div className="mt-5 overflow-hidden">
-                <svg viewBox="0 0 700 245" role="img" aria-label="Line chart of daily completed sales revenue" className="h-64 w-full">
+                <svg viewBox="0 0 700 245" role="img" aria-label={isCustomer ? "Line chart of daily customer spending" : "Line chart of daily completed sales revenue"} className="h-64 w-full">
                   {[25, 85, 145, 210].map((y) => <line key={y} x1="0" x2="700" y1={y} y2={y} stroke="#e2e8f0" strokeDasharray="4 5" />)}
                   {revenuePoints && <polyline points={revenuePoints} fill="none" stroke="#ea580c" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" />}
                 </svg>
@@ -136,7 +143,7 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
             </article>
 
             <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-              <div><h2 className="font-bold text-slate-900">Order frequency</h2><p className="mt-1 text-xs text-slate-500">Orders placed each day</p></div>
+              <div><h2 className="font-bold text-slate-900">{isCustomer ? "Your order frequency" : "Order frequency"}</h2><p className="mt-1 text-xs text-slate-500">Orders placed each day</p></div>
               <div className="mt-5 overflow-hidden">
                 <svg viewBox="0 0 700 245" role="img" aria-label="Line chart of daily order counts" className="h-64 w-full">
                   {[25, 85, 145, 210].map((y) => <line key={y} x1="0" x2="700" y1={y} y2={y} stroke="#e2e8f0" strokeDasharray="4 5" />)}
@@ -148,11 +155,11 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-            <div className="mb-5"><h2 className="font-bold text-slate-900">Top-selling items</h2><p className="mt-1 text-xs text-slate-500">Ranked by quantities in completed orders</p></div>
-            {data.top_items.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">No completed item sales in this period yet.</p> : <div className="space-y-4">
+            <div className="mb-5"><h2 className="font-bold text-slate-900">{isCustomer ? "Your most ordered items" : "Top-selling items"}</h2><p className="mt-1 text-xs text-slate-500">{isCustomer ? "Items from your completed orders" : "Ranked by quantities in completed orders"}</p></div>
+            {data.top_items.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">{isCustomer ? "No completed purchases in this period yet." : "No completed item sales in this period yet."}</p> : <div className="space-y-4">
               {data.top_items.map((item, index) => <div key={item.id} className="grid grid-cols-[2rem_1fr_auto] items-center gap-3">
                 <span className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-50 text-xs font-bold text-orange-800">{index + 1}</span>
-                <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-800">{item.name}</p><p className="text-xs text-slate-500">{item.quantity} sold</p></div>
+                <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-800">{item.name}</p><p className="text-xs text-slate-500">{item.quantity} {isCustomer ? "ordered" : "sold"}</p></div>
                 <p className="text-sm font-semibold text-slate-800">{money(item.revenue)}</p>
               </div>)}
             </div>}

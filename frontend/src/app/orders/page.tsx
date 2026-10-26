@@ -51,7 +51,12 @@ export default function OrdersPage() {
           ← Back to Home
         </Link>
 
-        <h1 className="text-3xl font-bold text-gray-900 mb-6">My Order History</h1>
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-3xl font-bold text-gray-900">My Order History</h1>
+          <Link href="/customer/analytics" className="rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-700">
+            View My Analytics
+          </Link>
+        </div>
 
         {loading && <p className="text-gray-500">Loading your orders...</p>}
         {error && <div className="bg-red-50 text-red-600 p-4 rounded-xl mb-4 border border-red-100">{error}</div>}

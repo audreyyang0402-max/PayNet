@@ -9,10 +9,10 @@ from fastapi_offline import FastAPIOffline
 from fastapi import FastAPI, Depends, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import case, func, delete
+from sqlalchemy import case, func
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload  # <--- Added import for eager loading relationships
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Literal
 from uuid import UUID
 
@@ -59,10 +59,6 @@ class UserUpdate(BaseModel):
     phone_number: Optional[str] = None
     password: Optional[str] = None
 
-# NEW: Schema for updating user role (Admin)
-class UserRoleUpdate(BaseModel):
-    role: str
-
 # NEW: Schema for updating merchant profile & store details
 class MerchantProfileUpdate(BaseModel):
     email: Optional[EmailStr] = None
@@ -108,7 +104,7 @@ class MenuItemCreate(BaseModel):
 
 class OrderItemCreate(BaseModel):
     menu_item_id: UUID
-    quantity: int = 1
+    quantity: int = Field(default=1, ge=1)
 
 class OrderCreate(BaseModel):
     # customer_id: UUID  <-- REMOVED: We now get this securely from the JWT token
@@ -119,11 +115,6 @@ class OrderCreate(BaseModel):
 class PickupSlotCreate(BaseModel):
     time_slot: datetime
     max_capacity: int = 10
-
-# NEW: Schema for updating pickup slots
-class PickupSlotUpdate(BaseModel):
-    time_slot: datetime
-    max_capacity: int
 
 class ForgotPasswordRequest(BaseModel):
     email: str
@@ -141,12 +132,6 @@ class RentalStatusUpdate(BaseModel):
 
 class OrderStatusUpdate(BaseModel):
     status: Literal["pending", "preparing", "ready", "completed"]
-
-class StallCreate(BaseModel):
-    stall_number: str
-    location: str
-    size: str
-    rental_rate: float
 
 
 # --- ROUTES ---
@@ -408,12 +393,14 @@ async def get_me(current_user: User = Depends(get_current_user)):
         "role": current_user.role
     }
 
-async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID | None = None):
-    """Aggregate order data for a date range, optionally scoped to one merchant."""
+async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID | None = None, customer_id: UUID | None = None):
+    """Aggregate order data for a date range, scoped to the requested account."""
     start = datetime.now(timezone.utc) - timedelta(days=days - 1)
     filters = [Order.created_at >= start]
     if merchant_id is not None:
         filters.append(Order.merchant_id == merchant_id)
+    if customer_id is not None:
+        filters.append(Order.customer_id == customer_id)
 
     summary_result = await db.execute(
         select(
@@ -427,6 +414,8 @@ async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID |
     active_filters = [Order.status.in_(["pending", "preparing", "ready"])]
     if merchant_id is not None:
         active_filters.append(Order.merchant_id == merchant_id)
+    if customer_id is not None:
+        active_filters.append(Order.customer_id == customer_id)
     active_result = await db.execute(select(func.count(Order.id)).where(*active_filters))
     active_orders = active_result.scalar_one()
 
@@ -451,6 +440,9 @@ async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID |
     item_filters = [Order.created_at >= start, Order.status == "completed"]
     if merchant_id is not None:
         item_filters.append(Order.merchant_id == merchant_id)
+        item_filters.append(MenuItem.merchant_id == merchant_id)
+    if customer_id is not None:
+        item_filters.append(Order.customer_id == customer_id)
     item_result = await db.execute(
         select(
             MenuItem.id,
@@ -504,6 +496,17 @@ async def get_merchant_analytics(
     if not merchant:
         raise HTTPException(status_code=404, detail="No merchant profile found for this user.")
     return await build_order_analytics(db, days, merchant.id)
+
+
+@app.get("/users/me/analytics")
+async def get_customer_analytics(
+    days: int = Query(default=30, ge=7, le=90),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "customer":
+        raise HTTPException(status_code=403, detail="Customer privileges required.")
+    return await build_order_analytics(db, days, customer_id=current_user.id)
 
 @app.post("/merchants")
 async def create_merchant(merchant_data: MerchantCreate, db: AsyncSession = Depends(get_db)):
@@ -610,41 +613,11 @@ async def list_pickup_slots(merchant_id: UUID, db: AsyncSession = Depends(get_db
     result = await db.execute(select(PickupSlot).where(PickupSlot.merchant_id == merchant_id))
     return result.scalars().all()
 
-@app.put("/merchants/pickup-slots/{slot_id}")
-async def update_pickup_slot(slot_id: UUID, slot_data: PickupSlotUpdate, db: AsyncSession = Depends(get_db)):
-    slot = await db.get(PickupSlot, slot_id)
-    if not slot:
-        raise HTTPException(status_code=404, detail="Pickup slot not found.")
-    
-    if slot_data.max_capacity < slot.current_bookings:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Cannot reduce max capacity below current bookings ({slot.current_bookings})."
-        )
-
-    slot.time_slot = slot_data.time_slot
-    slot.max_capacity = slot_data.max_capacity
-
-    try:
-        await db.commit()
-        await db.refresh(slot)
-        return slot
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
-
 @app.delete("/merchants/pickup-slots/{slot_id}")
 async def delete_pickup_slot(slot_id: UUID, db: AsyncSession = Depends(get_db)):
     slot = await db.get(PickupSlot, slot_id)
     if not slot:
         raise HTTPException(status_code=404, detail="Pickup slot not found.")
-    
-    # --- PREVENT DELETION IF THERE ARE BOOKINGS ---
-    if slot.current_bookings > 0:
-        raise HTTPException(
-            status_code=400, 
-            detail="Cannot delete this pickup slot because customers have already booked orders in it."
-        )
     
     try:
         await db.delete(slot)
@@ -668,6 +641,8 @@ async def create_order(
     slot = await db.get(PickupSlot, order_data.pickup_slot_id)
     if not slot:
         raise HTTPException(status_code=404, detail="Pickup slot not found.")
+    if slot.merchant_id != order_data.merchant_id:
+        raise HTTPException(status_code=400, detail="Pickup slot does not belong to this merchant.")
     if slot.current_bookings >= slot.max_capacity:
         raise HTTPException(status_code=400, detail="This pickup slot is fully booked.")
 
@@ -677,6 +652,8 @@ async def create_order(
         item = await db.get(MenuItem, line.menu_item_id)
         if not item:
             raise HTTPException(status_code=404, detail=f"Menu item {line.menu_item_id} not found.")
+        if item.merchant_id != order_data.merchant_id:
+            raise HTTPException(status_code=400, detail="Menu item does not belong to this merchant.")
         if not item.is_available:
             raise HTTPException(status_code=400, detail=f"'{item.name}' is currently unavailable.")
         line_total = float(item.price) * line.quantity
@@ -711,35 +688,12 @@ async def create_order(
 
 @app.get("/orders/{order_id}")
 async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Order)
-        .options(selectinload(Order.items).selectinload(OrderItem.menu_item))
-        .where(Order.id == order_id)
-    )
-    order = result.scalars().first()
-    
+    order = await db.get(Order, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
-        
-    items_data = []
-    for oi in order.items:
-        items_data.append({
-            "id": str(oi.id),
-            "menu_item_id": str(oi.menu_item_id),
-            "name": oi.menu_item.name if oi.menu_item else "Unknown Dish",
-            "quantity": oi.quantity,
-            "price_at_order": float(oi.price_at_order)
-        })
-
-    return {
-        "order": {
-            "id": str(order.id),
-            "status": order.status,
-            "total_price": float(order.total_price),
-            "created_at": order.created_at
-        },
-        "items": items_data
-    }
+    items_result = await db.execute(select(OrderItem).where(OrderItem.order_id == order_id))
+    items = items_result.scalars().all()
+    return {"order": order, "items": items}
 
 @app.get("/users/me/orders")
 async def list_customer_orders(
@@ -748,66 +702,41 @@ async def list_customer_orders(
 ):
     result = await db.execute(
         select(Order)
-        .options(selectinload(Order.items).selectinload(OrderItem.menu_item))
         .where(Order.customer_id == current_user.id)
         .order_by(Order.created_at.desc())
     )
-    orders = result.scalars().all()
-    
-    response_data = []
-    for order in orders:
-        items_data = []
-        for oi in order.items:
-            items_data.append({
-                "id": str(oi.id),
-                "name": oi.menu_item.name if oi.menu_item else "Unknown Dish",
-                "quantity": oi.quantity,
-                "price_at_order": float(oi.price_at_order)
-            })
-            
-        response_data.append({
-            "id": str(order.id),
-            "status": order.status,
-            "total_price": float(order.total_price),
-            "created_at": order.created_at,
-            "items": items_data
-        })
-        
-    return response_data
+    return result.scalars().all()
 
 @app.get("/merchants/{merchant_id}/orders")
 async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Order)
-        .options(selectinload(Order.customer))
         .where(Order.merchant_id == merchant_id)
         .order_by(Order.created_at.desc())
     )
-    orders = result.scalars().all()
-    
-    response_data = []
-    for order in orders:
-        response_data.append({
-            "id": str(order.id),
-            "status": order.status,
-            "total_price": float(order.total_price),
-            "created_at": order.created_at,
-            "customer_name": order.customer.name if order.customer else "Unknown Customer"
-        })
-        
-    return response_data
+    return result.scalars().all()
 
 @app.patch("/orders/{order_id}/status")
 async def update_order_status(
     order_id: UUID,
     status_update: OrderStatusUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)    # optional but recommended
+    current_user: User = Depends(get_current_user)   # optional but recommended
 ):
     order = await db.get(Order, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
 
+    if current_user.role != "merchant":
+        raise HTTPException(status_code=403, detail="Only merchants can update order status.")
+    merchant_result = await db.execute(
+        select(Merchant).where(
+            Merchant.id == order.merchant_id,
+            Merchant.user_id == current_user.id,
+        )
+    )
+    if not merchant_result.scalars().first():
+        raise HTTPException(status_code=403, detail="You can only update orders for your own merchant account.")
     order.status = status_update.status
     try:
         await db.commit()
@@ -901,142 +830,7 @@ async def hitpay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 @app.get("/boulevard/stalls")
 async def list_boulevard_stalls(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(BoulevardStall))
-    stalls = result.scalars().all()
-    
-    stall_list = []
-    for stall in stalls:
-        # Check if there is an active approved and paid booking for this stall
-        booking_res = await db.execute(
-            select(RentalBooking).where(
-                RentalBooking.stall_id == stall.id,
-                RentalBooking.status == "approved",
-                RentalBooking.deposit_paid == True
-            )
-        )
-        active_booking = booking_res.scalars().first()
-        
-        stall_list.append({
-            "id": str(stall.id),
-            "stall_number": stall.stall_number,
-            "location": stall.location,
-            "size": stall.size,
-            "rental_rate": stall.rental_rate,
-            "is_occupied": active_booking is not None,
-            "is_available": getattr(stall, 'is_available', True)
-        })
-        
-    return stall_list
-
-@app.post("/boulevard/stalls")
-async def create_stall(
-    stall_data: StallCreate,
-    db: AsyncSession = Depends(get_db)
-):
-    new_stall = BoulevardStall(
-        stall_number=stall_data.stall_number,
-        location=stall_data.location,
-        size=stall_data.size,
-        rental_rate=stall_data.rental_rate,
-        is_available=True
-    )
-    db.add(new_stall)
-    try:
-        await db.commit()
-        await db.refresh(new_stall)
-        return new_stall
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
-
-@app.put("/boulevard/stalls/{stall_id}")
-async def update_stall(
-    stall_id: UUID,
-    stall_data: StallCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin privileges required.")
-    
-    stall = await db.get(BoulevardStall, stall_id)
-    if not stall:
-        raise HTTPException(status_code=404, detail="Stall not found.")
-    
-    stall.stall_number = stall_data.stall_number
-    stall.location = stall_data.location
-    stall.size = stall_data.size
-    stall.rental_rate = stall_data.rental_rate
-
-    try:
-        await db.commit()
-        await db.refresh(stall)
-        return stall
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
-
-@app.patch("/boulevard/stalls/{stall_id}/toggle-availability")
-async def toggle_stall_availability(
-    stall_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin privileges required.")
-    
-    stall = await db.get(BoulevardStall, stall_id)
-    if not stall:
-        raise HTTPException(status_code=404, detail="Stall not found.")
-    
-    current_status = getattr(stall, 'is_available', True)
-    stall.is_available = not current_status
-
-    try:
-        await db.commit()
-        await db.refresh(stall)
-
-        booking_res = await db.execute(
-            select(RentalBooking).where(
-                RentalBooking.stall_id == stall.id,
-                RentalBooking.status == "approved",
-                RentalBooking.deposit_paid == True
-            )
-        )
-        active_booking = booking_res.scalars().first()
-
-        return {
-            "id": str(stall.id),
-            "stall_number": stall.stall_number,
-            "location": stall.location,
-            "size": stall.size,
-            "rental_rate": stall.rental_rate,
-            "is_occupied": active_booking is not None,
-            "is_available": stall.is_available
-        }
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
-
-@app.delete("/boulevard/stalls/{stall_id}")
-async def delete_stall(
-    stall_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin privileges required.")
-    
-    stall = await db.get(BoulevardStall, stall_id)
-    if not stall:
-        raise HTTPException(status_code=404, detail="Stall not found.")
-    
-    try:
-        await db.delete(stall)
-        await db.commit()
-        return {"message": "Stall deleted successfully"}
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+    return result.scalars().all()
 
 @app.post("/boulevard/bookings")
 async def create_rental_booking(
@@ -1048,6 +842,7 @@ async def create_rental_booking(
     if not stall:
         raise HTTPException(status_code=404, detail="Stall not found.")
 
+    # Find if user has a merchant profile, or link later upon approval
     merchant_res = await db.execute(select(Merchant).where(Merchant.user_id == current_user.id))
     merchant = merchant_res.scalars().first()
     merchant_id = merchant.id if merchant else None
@@ -1088,7 +883,7 @@ async def create_rental_payment(booking_id: UUID, db: AsyncSession = Depends(get
         raise HTTPException(status_code=404, detail="Rental booking not found.")
     
     stall = await db.get(BoulevardStall, booking.stall_id)
-    price = stall.rental_rate if stall and hasattr(stall, 'rental_rate') else 350.00
+    price = stall.price if stall and hasattr(stall, 'price') else 350.00
 
     async with httpx_client.AsyncClient() as client:
         response = await client.post(
@@ -1112,6 +907,7 @@ async def check_rental_payment_status(booking_id: UUID, db: AsyncSession = Depen
     if not booking:
         raise HTTPException(status_code=404, detail="Rental booking not found.")
 
+    # Permanently mark deposit as paid when verified upon return
     booking.deposit_paid = True
     await db.commit()
 
@@ -1150,20 +946,14 @@ async def list_all_rental_bookings(
     return response_data
 
 @app.get("/admin/users")
-async def admin_list_users(
-    role: Optional[str] = Query(default=None),
+async def list_all_users(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Access denied. Admin privileges required.")
     
-    query = select(User).order_by(User.name)
-    
-    if role and role.lower() != "all":
-        query = query.where(User.role == role.lower())
-        
-    result = await db.execute(query)
+    result = await db.execute(select(User).order_by(User.created_at.desc()))
     users = result.scalars().all()
     
     response_data = []
@@ -1172,80 +962,11 @@ async def admin_list_users(
             "id": str(u.id),
             "name": u.name,
             "email": u.email,
-            "phone_number": u.phone_number,
-            "role": u.role
+            "phone_number": u.phone_number or "N/A",
+            "role": u.role,
+            "created_at": u.created_at.isoformat() if u.created_at else None
         })
     return response_data
-
-
-@app.delete("/admin/users/{user_id}")
-async def admin_delete_user(
-    user_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Access denied. Admin privileges required.")
-    
-    user_to_delete = await db.get(User, user_id)
-    if not user_to_delete:
-        raise HTTPException(status_code=404, detail="User not found.")
-    
-    if user_to_delete.id == current_user.id:
-        raise HTTPException(status_code=400, detail="You cannot delete your own admin account.")
-
-    try:
-        orders_result = await db.execute(select(Order).where(Order.customer_id == user_id))
-        orders = orders_result.scalars().all()
-        
-        for order in orders:
-            await db.execute(delete(OrderItem).where(OrderItem.order_id == order.id))
-            await db.delete(order)
-
-        await db.delete(user_to_delete)
-        await db.commit()
-        return {"message": "User deleted successfully"}
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
-
-@app.put("/admin/users/{user_id}/role")
-async def admin_update_user_role(
-    user_id: UUID,
-    role_data: UserRoleUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Access denied. Admin privileges required.")
-    
-    user_to_update = await db.get(User, user_id)
-    if not user_to_update:
-        raise HTTPException(status_code=404, detail="User not found.")
-    
-    user_to_update.role = role_data.role.lower()
-
-    if user_to_update.role == "merchant":
-        existing_merchant = await db.execute(
-            select(Merchant).where(Merchant.user_id == user_to_update.id)
-        )
-        merchant = existing_merchant.scalars().first()
-        if not merchant:
-            new_merchant = Merchant(
-                user_id=user_to_update.id,
-                name=f"{user_to_update.name}'s Store",
-                description="Campus Merchant",
-                location="Sunway Campus"
-            )
-            db.add(new_merchant)
-
-    try:
-        await db.commit()
-        await db.refresh(user_to_update)
-        return {"message": "User role updated successfully", "role": user_to_update.role}
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
 
 @app.patch("/boulevard/bookings/{booking_id}/status")
 async def update_rental_status(
@@ -1263,6 +984,7 @@ async def update_rental_status(
 
     booking.status = status_data.status
 
+    # If approved, automatically ensure they have a merchant profile and role
     if status_data.status == "approved":
         vendor_user = await db.get(User, booking.vendor_user_id)
         if vendor_user:
