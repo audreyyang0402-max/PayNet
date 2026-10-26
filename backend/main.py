@@ -1156,9 +1156,9 @@ async def create_event(
 
 @app.get("/events")
 async def list_events(db: AsyncSession = Depends(get_db)):
-    """Get all active events"""
+    """Get all events"""
     result = await db.execute(
-        select(Event).where(Event.is_active == True).order_by(Event.event_date.desc())
+        select(Event).order_by(Event.event_date.desc())
     )
     events = result.scalars().all()
     return [
@@ -1185,7 +1185,7 @@ async def get_event(event_id: UUID, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Event not found.")
     
     result = await db.execute(
-        select(EventMerchant).where(EventMerchant.event_id == event_id).where(EventMerchant.is_active == True)
+        select(EventMerchant).where(EventMerchant.event_id == event_id)
     )
     event_merchants = result.scalars().all()
     merchant_ids = [em.merchant_id for em in event_merchants]
@@ -1223,7 +1223,7 @@ async def get_event_merchants(event_id: UUID, db: AsyncSession = Depends(get_db)
         raise HTTPException(status_code=404, detail="Event not found.")
     
     result = await db.execute(
-        select(EventMerchant).where(EventMerchant.event_id == event_id).where(EventMerchant.is_active == True)
+        select(EventMerchant).where(EventMerchant.event_id == event_id)
     )
     event_merchants = result.scalars().all()
     
@@ -1241,7 +1241,7 @@ async def get_event_merchants(event_id: UUID, db: AsyncSession = Depends(get_db)
                 "name": merchant.name,
                 "description": merchant.description,
                 "location": merchant.location,
-                "stall_number": em.stall_number,
+                "stall_number": getattr(em, "stall_number", None),
                 "items": [
                     {
                         "id": str(item.id),

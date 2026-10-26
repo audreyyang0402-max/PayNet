@@ -142,7 +142,7 @@ class Event(Base):
 
 
 class EventMerchant(Base):
-    __tablename__ = "event_merchants"
+    __tablename__ = "event_vendors"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     event_id = Column(UUID(as_uuid=True), ForeignKey("events.id"), nullable=False)
