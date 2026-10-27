@@ -6,16 +6,14 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 
 interface OrderDetail {
-  order: {
-    id: string;
-    status: string;
-    total_price: number;
-    created_at: string;
-    pickup_slot_id: string;
-  };
+  id: string;
+  merchant_id: string;
+  status: string;
+  total_price: number;
+  created_at: string;
   items: Array<{
     id: string;
-    menu_item_id: string;
+    name: string; // Dish name from backend
     quantity: number;
     price_at_order: number;
   }>;
@@ -74,17 +72,17 @@ export default function OrderReceiptPage() {
             <div className="flex justify-between items-start border-b border-gray-100 pb-6">
               <div>
                 <p className="text-xs text-gray-400 font-mono">Order ID</p>
-                <p className="text-sm font-semibold text-gray-900">{data.order.id}</p>
+                <p className="text-sm font-semibold text-gray-900">{data.id}</p>
                 <p className="text-xs text-gray-500 mt-1">
-                  {new Date(data.order.created_at).toLocaleString()}
+                  {new Date(data.created_at).toLocaleString()}
                 </p>
               </div>
               <span className={`px-3 py-1 rounded-full text-xs font-semibold uppercase ${
-                data.order.status === 'completed' 
+                data.status === 'completed' 
                   ? 'bg-green-100 text-green-700' 
                   : 'bg-yellow-100 text-yellow-700'
               }`}>
-                {data.order.status}
+                {data.status}
               </span>
             </div>
 
@@ -94,7 +92,7 @@ export default function OrderReceiptPage() {
                 {data.items.map((item, index) => (
                   <div key={index} className="flex justify-between items-center text-sm">
                     <div>
-                      <span className="font-medium text-gray-900">Item ID: {item.menu_item_id.slice(0, 8)}...</span>
+                      <span className="font-medium text-gray-900">{item.name}</span>
                       <span className="text-gray-500 ml-2">x{item.quantity}</span>
                     </div>
                     <span className="font-medium text-gray-900">
@@ -108,7 +106,7 @@ export default function OrderReceiptPage() {
             <div className="border-t border-gray-100 pt-6 flex justify-between items-center">
               <span className="text-base font-bold text-gray-900">Total Paid</span>
               <span className="text-2xl font-bold text-blue-600">
-                RM {Number(data.order.total_price).toFixed(2)}
+                RM {Number(data.total_price).toFixed(2)}
               </span>
             </div>
           </div>

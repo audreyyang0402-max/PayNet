@@ -905,12 +905,33 @@ async def create_order(
 
 @app.get("/orders/{order_id}")
 async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
-    order = await db.get(Order, order_id)
+    result = await db.execute(
+        select(Order)
+        .where(Order.id == order_id)
+        .options(selectinload(Order.items).selectinload(OrderItem.menu_item))
+    )
+    order = result.scalars().first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
-    items_result = await db.execute(select(OrderItem).where(OrderItem.order_id == order_id))
-    items = items_result.scalars().all()
-    return {"order": order, "items": items}
+    
+    items_data = [
+        {
+            "id": str(item.id),
+            "name": item.menu_item.name if item.menu_item else "Unknown Dish",
+            "quantity": item.quantity,
+            "price_at_order": float(item.price_at_order)
+        }
+        for item in order.items
+    ]
+    
+    return {
+        "id": str(order.id),
+        "merchant_id": str(order.merchant_id),
+        "status": order.status,
+        "total_price": float(order.total_price),
+        "created_at": order.created_at.isoformat() if order.created_at else None,
+        "items": items_data
+    }
 
 @app.get("/users/me/orders")
 async def list_customer_orders(
@@ -920,18 +941,68 @@ async def list_customer_orders(
     result = await db.execute(
         select(Order)
         .where(Order.customer_id == current_user.id)
+        .options(
+            selectinload(Order.items).selectinload(OrderItem.menu_item)
+        )
         .order_by(Order.created_at.desc())
     )
-    return result.scalars().all()
+    orders = result.scalars().all()
+    
+    response = []
+    for order in orders:
+        items_data = []
+        for item in order.items:
+            item_name = item.menu_item.name if item.menu_item else "Dish"
+            items_data.append({
+                "id": str(item.id),
+                "name": item_name,
+                "quantity": item.quantity,
+                "price_at_order": float(item.price_at_order)
+            })
+        response.append({
+            "id": str(order.id),
+            "merchant_id": str(order.merchant_id),
+            "status": order.status,
+            "total_price": float(order.total_price),
+            "created_at": order.created_at.isoformat() if order.created_at else None,
+            "items": items_data
+        })
+    return response
 
 @app.get("/merchants/{merchant_id}/orders")
 async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Order)
         .where(Order.merchant_id == merchant_id)
+        .options(
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+            selectinload(Order.customer)
+        )
         .order_by(Order.created_at.desc())
     )
-    return result.scalars().all()
+    orders = result.scalars().all()
+    
+    response = []
+    for order in orders:
+        items_data = []
+        for item in order.items:
+            item_name = item.menu_item.name if item.menu_item else "Dish"
+            items_data.append({
+                "id": str(item.id),
+                "name": item_name,
+                "quantity": item.quantity,
+                "price_at_order": float(item.price_at_order)
+            })
+        response.append({
+            "id": str(order.id),
+            "customer_id": str(order.customer_id),
+            "customer_name": order.customer.name if order.customer else "Customer",
+            "status": order.status,
+            "total_price": float(order.total_price),
+            "created_at": order.created_at.isoformat() if order.created_at else None,
+            "items": items_data
+        })
+    return response
 
 @app.patch("/orders/{order_id}/status")
 async def update_order_status(
