@@ -16,6 +16,9 @@ SECRET_KEY = os.getenv("SECRET_KEY", "sunway-express-lane-super-secret-key-2026"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days expiration
 
+# Deleted accounts are anonymized to an email on this domain; their old tokens are rejected.
+DELETED_EMAIL_DOMAIN = "deleted.invalid"
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 
@@ -68,6 +71,6 @@ async def get_current_user(
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalars().first()
     
-    if user is None:
+    if user is None or user.email.endswith("@" + DELETED_EMAIL_DOMAIN):
         raise credentials_exception
     return user

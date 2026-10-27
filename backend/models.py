@@ -155,6 +155,19 @@ class EventMerchant(Base):
     event = relationship("Event", back_populates="merchants")
 
 
+class EmailVerification(Base):
+    """Temporary one-time codes sent by email (registration / password reset)."""
+    __tablename__ = "email_verifications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String, nullable=False, index=True)
+    purpose = Column(String, nullable=False)  # "register" or "reset"
+    code_hash = Column(String, nullable=False)  # the code itself is never stored
+    attempts = Column(Integer, nullable=False, default=0)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class SDGMetric(Base):
     __tablename__ = "sdg_metrics"
 

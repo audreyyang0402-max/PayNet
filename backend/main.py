@@ -1,6 +1,7 @@
 import os
 import hmac
 import hashlib
+import secrets
 from datetime import datetime, date, timedelta, timezone
 import httpx as httpx_client  # aliased since you might already have httpx elsewhere
 from fastapi import Request
@@ -9,7 +10,7 @@ from fastapi_offline import FastAPIOffline
 from fastapi import FastAPI, Depends, HTTPException, Query, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_, update
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload  # <--- Added import for eager loading relationships
 from pydantic import BaseModel, EmailStr, Field
@@ -20,7 +21,18 @@ from database import engine, get_db
 from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem, BoulevardStall, RentalBooking, Event, EventMerchant
 
 # --- NEW AUTH IMPORTS ---
-from auth import hash_password, verify_password, create_access_token, get_current_user
+from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN
+from email_verification import issue_code, check_code, send_verification_email
+
+from email_service import send_verification_email, generate_verification_code, hash_code, get_expiration_time
+from auth_endpoints import (
+    SendVerificationRequest,
+    VerifyCodeRequest,
+    DeleteAccountRequest,
+    send_verification,
+    verify_code,
+    delete_account,
+)
 
 # --- TELEGRAM NOTIFICATION IMPORTS ---
 from html import escape as html_escape
@@ -64,6 +76,7 @@ class UserCreate(BaseModel):
     phone_number: str | None = None
     email: EmailStr
     password: str  # UPDATED: Changed from password_hash since client sends plain text
+    verification_code: str  # 6-digit code emailed via /auth/send-code
     role: str = "customer"
 
 # NEW: Schema for updating user profile
@@ -89,6 +102,7 @@ class MerchantRegisterRequest(BaseModel):
     store_name: str
     location: Optional[str] = None
     description: Optional[str] = None
+    verification_code: str  # 6-digit code emailed via /auth/send-code
     role: str = "merchant"
 
 class LoginRequest(BaseModel):
@@ -132,6 +146,14 @@ class PickupSlotCreate(BaseModel):
 class ForgotPasswordRequest(BaseModel):
     email: str
     new_password: str
+    verification_code: str  # 6-digit code emailed via /auth/send-code
+
+class SendCodeRequest(BaseModel):
+    email: EmailStr
+    purpose: Literal["register", "reset"]
+
+class DeleteAccountRequest(BaseModel):
+    password: str  # re-enter password to confirm deletion
 
 # NEW: Schemas for Boulevard Rental Bookings
 class RentalBookingCreate(BaseModel):
@@ -205,6 +227,7 @@ async def create_user(user_data: UserCreate, db: AsyncSession = Depends(get_db))
     existing_user = await db.execute(select(User).where(User.email == user_data.email))
     if existing_user.scalars().first():
         raise HTTPException(status_code=400, detail="Email already registered.")
+    await check_code(db, user_data.email, "register", user_data.verification_code)
 
     new_user = User(
         name=user_data.name,
@@ -256,6 +279,62 @@ async def update_my_profile(
             "phone_number": current_user.phone_number,
             "role": current_user.role
         }
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+
+
+# --- DELETE ACCOUNT (everyone except admin) ---
+
+@app.delete("/users/me")
+async def delete_my_account(
+    payload: DeleteAccountRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role == "admin":
+        raise HTTPException(status_code=403, detail="Admin accounts cannot be deleted.")
+    if not verify_password(payload.password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="Incorrect password.")
+
+    merchant_result = await db.execute(select(Merchant).where(Merchant.user_id == current_user.id))
+    merchant_ids = [m.id for m in merchant_result.scalars().all()]
+
+    # Don't let someone vanish while food is being made or waiting for pickup
+    involved = Order.customer_id == current_user.id
+    if merchant_ids:
+        involved = or_(involved, Order.merchant_id.in_(merchant_ids))
+    active_count = (await db.execute(
+        select(func.count(Order.id)).where(involved, Order.status.in_(["preparing", "ready"]))
+    )).scalar_one()
+    if active_count:
+        raise HTTPException(
+            status_code=400,
+            detail=f"You still have {active_count} order(s) being prepared or waiting for pickup. Please finish them first."
+        )
+
+    # Take the store and its menu off the marketplace (order history keeps pointing at them)
+    if merchant_ids:
+        await db.execute(update(Merchant).where(Merchant.id.in_(merchant_ids)).values(is_active=False))
+        await db.execute(update(MenuItem).where(MenuItem.merchant_id.in_(merchant_ids)).values(is_available=False))
+
+    # Cancel any stall rental requests still open
+    await db.execute(
+        update(RentalBooking)
+        .where(RentalBooking.vendor_user_id == current_user.id, RentalBooking.status.in_(["pending", "approved"]))
+        .values(status="cancelled")
+    )
+
+    # Erase personal data. The row itself stays so past orders / analytics keep working.
+    current_user.name = "Deleted User"
+    current_user.email = f"deleted-{current_user.id}@{DELETED_EMAIL_DOMAIN}"
+    current_user.phone_number = None
+    current_user.telegram_chat_id = None
+    current_user.password_hash = hash_password(secrets.token_urlsafe(32))
+
+    try:
+        await db.commit()
+        return {"message": "Account deleted successfully."}
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
@@ -315,8 +394,27 @@ async def update_my_merchant_profile(
         raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
 
 
+@app.post("/auth/send-code")
+async def send_verification_code(payload: SendCodeRequest, db: AsyncSession = Depends(get_db)):
+    """Email a 6-digit verification code (for registering or resetting a password)."""
+    existing = await db.execute(select(User).where(User.email == payload.email))
+    user_exists = existing.scalars().first() is not None
+
+    if payload.purpose == "register" and user_exists:
+        raise HTTPException(status_code=400, detail="Email already registered.")
+    if payload.purpose == "reset" and not user_exists:
+        # Same reply as success, so nobody can probe which emails have accounts.
+        return {"message": "If that email is registered, a verification code has been sent."}
+
+    code = await issue_code(db, payload.email, payload.purpose)
+    if not await send_verification_email(payload.email, code, payload.purpose):
+        raise HTTPException(status_code=502, detail="Could not send the email. Please try again later.")
+    return {"message": "Verification code sent."}
+
+
 @app.post("/auth/forgot-password")
 async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+    await check_code(db, payload.email, "reset", payload.verification_code)
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalars().first()
     
@@ -338,6 +436,7 @@ async def register_merchant(data: MerchantRegisterRequest, db: AsyncSession = De
     existing_user = await db.execute(select(User).where(User.email == data.email))
     if existing_user.scalars().first():
         raise HTTPException(status_code=400, detail="Email already registered.")
+    await check_code(db, data.email, "register", data.verification_code)
 
     new_user = User(
         name=data.name,
@@ -437,6 +536,32 @@ async def create_telegram_link(current_user: User = Depends(get_current_user)):
         "url": f"https://t.me/{username}?start={token}",
         "expires_in_seconds": LINK_TOKEN_TTL_SECONDS,
     }
+
+# ===== EMAIL VERIFICATION & ACCOUNT DELETION ENDPOINTS =====
+
+@app.post("/auth/send-verification")
+async def send_verification_endpoint(
+    req: SendVerificationRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    return await send_verification(req, db)
+
+
+@app.post("/auth/verify-code")
+async def verify_code_endpoint(
+    req: VerifyCodeRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    return await verify_code(req, db)
+
+
+@app.delete("/users/me/account")
+async def delete_account_endpoint(
+    req: DeleteAccountRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    return await delete_account(req, current_user, db)
 
 
 @app.delete("/users/me/telegram")
@@ -619,7 +744,7 @@ async def create_merchant(merchant_data: MerchantCreate, db: AsyncSession = Depe
 
 @app.get("/merchants")
 async def list_merchants(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Merchant))
+    result = await db.execute(select(Merchant).where(Merchant.is_active.is_not(False)))
     merchants = result.scalars().all()
     return merchants
 
@@ -1193,7 +1318,7 @@ async def get_event(event_id: UUID, db: AsyncSession = Depends(get_db)):
     merchants = []
     for merchant_id in merchant_ids:
         merchant = await db.get(Merchant, merchant_id)
-        if merchant:
+        if merchant and merchant.is_active is not False:
             merchants.append({
                 "id": str(merchant.id),
                 "name": merchant.name,
@@ -1230,7 +1355,7 @@ async def get_event_merchants(event_id: UUID, db: AsyncSession = Depends(get_db)
     merchants_with_items = []
     for em in event_merchants:
         merchant = await db.get(Merchant, em.merchant_id)
-        if merchant:
+        if merchant and merchant.is_active is not False:
             items_result = await db.execute(
                 select(MenuItem).where(MenuItem.merchant_id == merchant.id)
             )
