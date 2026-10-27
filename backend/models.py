@@ -11,15 +11,19 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
     phone_number = Column(String, nullable=True)
-    telegram_chat_id = Column(String, nullable=True)  # set when the customer connects Telegram
+    telegram_chat_id = Column(String, nullable=True)
     email = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="customer")
+    
+    # ADD THESE 3 FIELDS:
+    email_verified = Column(Boolean, default=False)
+    is_deleted = Column(Boolean, default=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
-    # Add backref for rentals if needed
     rental_bookings = relationship("RentalBooking", back_populates="vendor_user")
-    # Added backref for orders placed by this user as a customer
     orders = relationship("Order", back_populates="customer")
 
 

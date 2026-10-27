@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import DeleteAccountButton from "@/components/DeleteAccountButton";
 
 interface UserProfile {
   id: string;
