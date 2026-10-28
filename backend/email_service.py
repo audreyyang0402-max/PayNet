@@ -3,10 +3,16 @@ import os
 import secrets
 import hashlib
 from datetime import datetime, timedelta, timezone
-import resend
+import boto3
+from botocore.exceptions import ClientError
 
-# Initialize Resend
-resend.api_key = os.getenv("RESEND_API_KEY", "")
+# Initialize AWS SES client
+ses_client = boto3.client(
+    'ses',
+    region_name=os.getenv('AWS_REGION', 'us-east-1'),
+    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+)
 
 def generate_verification_code() -> str:
     """Generate a secure 6-digit code"""
@@ -18,7 +24,7 @@ def hash_code(code: str) -> str:
 
 async def send_verification_email(to_email: str, code: str, purpose: str = "register") -> bool:
     """
-    Send verification email via Resend
+    Send verification email via AWS SES
     
     Args:
         to_email: Recipient email
@@ -29,6 +35,7 @@ async def send_verification_email(to_email: str, code: str, purpose: str = "regi
         True if sent successfully, False otherwise
     """
     try:
+        sender_email = os.getenv('SES_SENDER_EMAIL', 'noreply@paynet.my')
         subject = "Verify Your Email - PayNet" if purpose == "register" else "Reset Your Password - PayNet"
         
         html_content = f"""
@@ -47,17 +54,24 @@ async def send_verification_email(to_email: str, code: str, purpose: str = "regi
         </div>
         """
         
-        params = {
-            "from": "onboarding@resend.dev",  # Use test email during development
-            "to": [to_email],
-            "subject": subject,
-            "html": html_content,
-        }
+        # Send email via AWS SES
+        response = ses_client.send_email(
+            Source=sender_email,
+            Destination={'ToAddresses': [to_email]},
+            Message={
+                'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+                'Body': {'Html': {'Data': html_content, 'Charset': 'UTF-8'}}
+            }
+        )
         
-        response = resend.Emails.send(params)
+        print(f"Email sent successfully. Message ID: {response['MessageId']}")
         return True
+        
+    except ClientError as e:
+        print(f"Failed to send verification email to {to_email}: {e.response['Error']['Message']}")
+        return False
     except Exception as e:
-        print(f"Failed to send verification email to {to_email}: {e}")
+        print(f"Unexpected error sending email to {to_email}: {e}")
         return False
 
 def get_expiration_time() -> datetime:
