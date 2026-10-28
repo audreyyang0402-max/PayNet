@@ -16,7 +16,6 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="customer")
     
-    # ADD THESE 3 FIELDS:
     email_verified = Column(Boolean, default=False)
     is_deleted = Column(Boolean, default=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
@@ -35,6 +34,7 @@ class Merchant(Base):
     name = Column(String, nullable=False)
     description = Column(Text)
     location = Column(String)
+    duitnow_qr_url = Column(Text, nullable=True)  # <--- ADDED: Store vendor's static DuitNow QR image URL
     is_active = Column(Boolean, default=True)
     is_temporary = Column(Boolean, default=False)
     active_from = Column(Date)
@@ -72,14 +72,20 @@ class Order(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     customer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
-    status = Column(String, nullable=False, default="pending")  # pending, preparing, ready, completed
+    
+    # Statuses: pending_verification, preparing, ready, completed, cancelled_timeout
+    status = Column(String, nullable=False, default="pending_verification") 
     total_price = Column(Numeric(10, 2), nullable=False)
+    
+    transaction_ref = Column(String, nullable=True)  # <--- ADDED: Bank reference code entered by the student
+    order_number = Column(String, nullable=True)
+    
     pickup_slot_id = Column(UUID(as_uuid=True), ForeignKey("pickup_slots.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # --- RELATIONSHIPS ---
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
-    customer = relationship("User", back_populates="orders")  # <--- Added customer relationship
+    customer = relationship("User", back_populates="orders")
 
 
 class OrderItem(Base):
@@ -141,7 +147,6 @@ class Event(Base):
     banner_image_url = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # Relationships
     merchants = relationship("EventMerchant", back_populates="event")
 
 
@@ -155,18 +160,16 @@ class EventMerchant(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # Relationships
     event = relationship("Event", back_populates="merchants")
 
 
 class EmailVerification(Base):
-    """Temporary one-time codes sent by email (registration / password reset)."""
     __tablename__ = "email_verifications"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String, nullable=False, index=True)
-    purpose = Column(String, nullable=False)  # "register" or "reset"
-    code_hash = Column(String, nullable=False)  # the code itself is never stored
+    purpose = Column(String, nullable=False) 
+    code_hash = Column(String, nullable=False) 
     attempts = Column(Integer, nullable=False, default=0)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

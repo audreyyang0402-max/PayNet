@@ -31,6 +31,30 @@ interface OrderWithItems {
   items: OrderItem[];
 }
 
+// Programmatic notification sound (no external file needed)
+function playNotificationSound() {
+  try {
+    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5 note
+    osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15); // A5 note
+
+    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+
+    osc.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.5);
+  } catch (e) {
+    console.error("Audio playback blocked or not supported", e);
+  }
+}
+
 export default function ProfilePage() {
   const router = useRouter();
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -100,7 +124,19 @@ export default function ProfilePage() {
               })
             );
 
-            setOrders(detailedOrders);
+            // Check if any order newly transitioned to 'ready' to play notification sound
+            setOrders((prevOrders) => {
+              detailedOrders.forEach((newOrder: OrderWithItems) => {
+                const oldOrder = prevOrders.find((o) => o.id === newOrder.id);
+                if (
+                  newOrder.status.toLowerCase() === "ready" &&
+                  (!oldOrder || oldOrder.status.toLowerCase() !== "ready")
+                ) {
+                  playNotificationSound();
+                }
+              });
+              return detailedOrders;
+            });
           }
         }
       } catch (err: any) {

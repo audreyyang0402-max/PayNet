@@ -244,23 +244,8 @@ export default function Home() {
       const orderData = await orderRes.json();
       const orderId = orderData.id;
 
-      const payRes = await fetch(`http://127.0.0.1:8000/orders/${orderId}/pay`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!payRes.ok) {
-        throw new Error("Failed to initialize payment gateway.");
-      }
-
-      const payData = await payRes.json();
-      if (payData.url) {
-        window.location.href = payData.url;
-      } else {
-        throw new Error("Invalid payment gateway response.");
-      }
+      // Redirect straight to our DuitNow QR verification page
+      window.location.href = `/checkout/success/${orderId}`;
     } catch (err: any) {
       alert(err.message || "Checkout failed.");
     } finally {
@@ -528,7 +513,7 @@ export default function Home() {
                   disabled={checkingOut || pickupSlots.length === 0}
                   className="w-full rounded-xl bg-orange-600 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {checkingOut ? "Redirecting to payment…" : "Pay with HitPay"}
+                  {checkingOut ? "Redirecting to DuitNow..." : "Proceed to DuitNow Payment"}
                 </button>
               </div>
             )}

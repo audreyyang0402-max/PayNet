@@ -10,6 +10,7 @@ interface MerchantProfile {
   name: string;
   location: string;
   description: string;
+  duitnow_qr_url?: string;
   is_temporary?: boolean;
 }
 
@@ -22,11 +23,13 @@ interface OrderItem {
 
 interface Order {
   id: string;
+  order_number?: string;
   status: string;
   total_price: number;
   created_at: string;
   customer_id: string;
   customer_name?: string;
+  transaction_ref?: string;
   items?: OrderItem[];
 }
 
@@ -46,6 +49,11 @@ export default function MerchantDashboard() {
   const [editPhone, setEditPhone] = useState("");
   const [editPassword, setEditPassword] = useState("");
   const [profileUpdateSuccess, setProfileUpdateSuccess] = useState("");
+
+  // DuitNow QR Management States (File Upload)
+  const [qrUrl, setQrUrl] = useState("");
+  const [qrUpdating, setQrUpdating] = useState(false);
+  const [qrUpdateMessage, setQrUpdateMessage] = useState("");
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -80,6 +88,7 @@ export default function MerchantDashboard() {
         setEditStoreName(profileData.name || "");
         setEditLocation(profileData.location || "");
         setEditDescription(profileData.description || "");
+        setQrUrl(profileData.duitnow_qr_url || "");
 
         const userRes = await fetch("http://127.0.0.1:8000/auth/me", {
           headers: { Authorization: `Bearer ${token}` },
@@ -147,12 +156,60 @@ export default function MerchantDashboard() {
     }
   };
 
+  const handleUploadQR = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const fileInput = document.getElementById("merchant-qr-file") as HTMLInputElement;
+    if (!fileInput?.files?.[0]) {
+      alert("Please select a QR code image file.");
+      return;
+    }
+
+    setQrUpdating(true);
+    setQrUpdateMessage("");
+    try {
+      const token = localStorage.getItem("token");
+      const formData = new FormData();
+      formData.append("qr_file", fileInput.files[0]);
+
+      const res = await fetch("http://127.0.0.1:8000/merchants/me/qr-upload", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setQrUpdateMessage("DuitNow QR uploaded successfully!");
+        setMerchant((prev) => prev ? { ...prev, duitnow_qr_url: data.duitnow_qr_url } : null);
+        setQrUrl(data.duitnow_qr_url);
+      } else {
+        alert("Failed to upload QR code.");
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setQrUpdating(false);
+    }
+  };
+
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
     try {
-      const res = await fetch(`http://127.0.0.1:8000/orders/${orderId}/status?status=${newStatus}`, {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`http://127.0.0.1:8000/orders/${orderId}/status`, {
         method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ status: newStatus }),
       });
-      if (!res.ok) throw new Error("Failed to update order status.");
+      
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Failed to update order status.");
+      }
 
       setOrders(orders.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
     } catch (err: any) {
@@ -306,6 +363,52 @@ export default function MerchantDashboard() {
           )}
         </div>
 
+        {/* DuitNow QR Code Management Section */}
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+          <h2 className="text-lg font-bold text-gray-900 mb-1">DuitNow QR Management</h2>
+          <p className="text-xs text-gray-500 mb-4">
+            Upload your static DuitNow QR image file so customers can scan it during checkout.
+          </p>
+
+          <form onSubmit={handleUploadQR} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">
+                Upload QR Image File
+              </label>
+              <input
+                id="merchant-qr-file"
+                type="file"
+                accept="image/*"
+                required
+                className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-orange-50 file:text-orange-700 hover:file:bg-orange-100"
+              />
+            </div>
+
+            {qrUrl && (
+              <div className="text-center py-3 bg-gray-50 rounded-xl border border-gray-100 max-w-xs">
+                <p className="text-xs font-semibold text-gray-600 mb-2">Current QR Code:</p>
+                <img 
+                  src={qrUrl.startsWith("http") ? qrUrl : `http://localhost:8000${qrUrl}`} 
+                  alt="DuitNow QR Preview" 
+                  className="w-36 h-36 mx-auto object-contain bg-white rounded-lg border p-1" 
+                />
+              </div>
+            )}
+
+            {qrUpdateMessage && (
+              <p className="text-xs font-semibold text-green-600">{qrUpdateMessage}</p>
+            )}
+
+            <button
+              type="submit"
+              disabled={qrUpdating}
+              className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-sm"
+            >
+              {qrUpdating ? "Uploading..." : "Upload QR Code"}
+            </button>
+          </form>
+        </div>
+
         {/* Sales Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
@@ -335,11 +438,14 @@ export default function MerchantDashboard() {
                 <div key={order.id} className="p-5 rounded-xl border border-gray-200 bg-gray-50 space-y-3">
                   <div className="flex justify-between items-start">
                     <div>
-                      <p className="text-xs text-gray-400 font-mono">Order ID: {order.id}</p>
+                      <p className="text-xs font-bold text-blue-600 font-mono">
+                        {order.order_number || `#EX-${order.id.slice(0, 6)}`}
+                      </p>
                       <p className="text-xs font-semibold text-gray-800 mt-0.5">👤 Customer: {order.customer_name || "Customer"}</p>
                       <p className="text-xs text-gray-500">Placed on: {new Date(order.created_at).toLocaleString()}</p>
                     </div>
                     <span className={`text-xs font-semibold px-2.5 py-1 rounded-md uppercase ${
+                      order.status === 'pending_verification' ? 'bg-yellow-100 text-yellow-800' :
                       order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
                       order.status === 'preparing' ? 'bg-blue-100 text-blue-800' :
                       order.status === 'ready' ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-800'
@@ -347,6 +453,25 @@ export default function MerchantDashboard() {
                       {order.status}
                     </span>
                   </div>
+
+                  {/* Display Student's Uploaded Payment Receipt Screenshot */}
+                  {order.transaction_ref && (
+                    <div className="bg-white p-3 rounded-lg border border-yellow-200 space-y-2">
+                      <p className="text-xs font-semibold text-gray-700">Student Uploaded Payment Receipt:</p>
+                      <a 
+                        href={`http://localhost:8000${order.transaction_ref}`} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                      >
+                        <img 
+                          src={`http://localhost:8000${order.transaction_ref}`} 
+                          alt="Payment Receipt Screenshot" 
+                          className="w-32 h-32 object-cover rounded-lg border hover:opacity-90 transition cursor-pointer"
+                        />
+                      </a>
+                      <p className="text-[10px] text-gray-400">Click image to view full size</p>
+                    </div>
+                  )}
 
                   {/* Itemized Dish Breakdown */}
                   <div className="border-t border-gray-200 pt-2 space-y-1">
@@ -371,10 +496,18 @@ export default function MerchantDashboard() {
                       <span className="text-orange-600 text-sm">RM {Number(order.total_price).toFixed(2)}</span>
                     </div>
                     <div className="space-x-2">
+                      {order.status === 'pending_verification' && (
+                        <button
+                          onClick={() => handleUpdateOrderStatus(order.id, 'preparing')}
+                          className="bg-green-600 hover:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all shadow-sm"
+                        >
+                          Verify & Accept ✓
+                        </button>
+                      )}
                       {order.status === 'pending' && (
                         <button
                           onClick={() => handleUpdateOrderStatus(order.id, 'preparing')}
-                          className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all"
+                          className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all"
                         >
                           Start Preparing
                         </button>
@@ -382,7 +515,7 @@ export default function MerchantDashboard() {
                       {order.status === 'preparing' && (
                         <button
                           onClick={() => handleUpdateOrderStatus(order.id, 'ready')}
-                          className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all"
+                          className="bg-green-600 hover:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all"
                         >
                           Mark Ready
                         </button>
