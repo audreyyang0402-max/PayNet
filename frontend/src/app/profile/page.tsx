@@ -12,7 +12,6 @@ interface UserProfile {
   email: string;
   role: string;
   phone_number?: string;
-  telegram_connected?: boolean;
 }
 
 interface OrderItem {
@@ -68,7 +67,6 @@ export default function ProfilePage() {
   const [editPhone, setEditPhone] = useState("");
   const [editPassword, setEditPassword] = useState("");
   const [updateSuccess, setUpdateSuccess] = useState("");
-  const [telegramError, setTelegramError] = useState("");
   
   // Track permanently dismissed order IDs in local storage permanently
   const [dismissedOrderIds, setDismissedOrderIds] = useState<string[]>(() => {
@@ -192,40 +190,6 @@ export default function ProfilePage() {
     }
   };
 
-  const handleConnectTelegram = async () => {
-    setTelegramError("");
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/users/me/telegram-link", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || "Could not create Telegram link.");
-      }
-      const data = await res.json();
-      // Opens Telegram; the customer just presses START. The 10s poll below picks up the connection.
-      window.open(data.url, "_blank", "noopener,noreferrer");
-    } catch (err: any) {
-      setTelegramError(err.message);
-    }
-  };
-
-  const handleDisconnectTelegram = async () => {
-    setTelegramError("");
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/users/me/telegram", {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error("Could not disconnect Telegram.");
-      setUser((prev) => (prev ? { ...prev, telegram_connected: false } : null));
-    } catch (err: any) {
-      setTelegramError(err.message);
-    }
-  };
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -353,39 +317,6 @@ export default function ProfilePage() {
           )}
         </div>
 
-        {/* Telegram Notifications (customers only) */}
-        {user?.role === "customer" && (
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex items-center justify-between gap-4">
-            <div>
-              <h2 className="text-sm font-bold text-gray-900">📲 Order alerts on Telegram</h2>
-              {user.telegram_connected ? (
-                <p className="text-xs text-green-700 mt-1">
-                  Connected. We'll message you as soon as your food is ready, so you don't need to keep this page open.
-                </p>
-              ) : (
-                <p className="text-xs text-gray-500 mt-1">
-                  Get a Telegram message when your order is ready for pickup.
-                </p>
-              )}
-              {telegramError && <p className="text-xs text-red-600 mt-1">{telegramError}</p>}
-            </div>
-            {user.telegram_connected ? (
-              <button
-                onClick={handleDisconnectTelegram}
-                className="px-3.5 py-2 text-xs font-semibold text-gray-600 bg-white border border-gray-200 hover:border-red-300 hover:text-red-600 rounded-xl transition-colors cursor-pointer whitespace-nowrap"
-              >
-                Disconnect
-              </button>
-            ) : (
-              <button
-                onClick={handleConnectTelegram}
-                className="px-3.5 py-2 text-xs font-semibold text-white bg-orange-600 hover:bg-orange-700 rounded-xl transition-all cursor-pointer whitespace-nowrap"
-              >
-                Connect Telegram
-              </button>
-            )}
-          </div>
-        )}
 
         {/* Individual Notification Banners for Each Ready Order */}
         {readyOrders.map((order) => (
