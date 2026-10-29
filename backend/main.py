@@ -8,12 +8,8 @@ from fastapi import Request, UploadFile, File, Form
 import shutil
 
 from fastapi_offline import FastAPIOffline
-<<<<<<< HEAD
 from fastapi import FastAPI, Depends, HTTPException, Query, status, BackgroundTasks
 from fastapi.staticfiles import StaticFiles  # <--- Added import for serving static upload files
-=======
-from fastapi import FastAPI, Depends, HTTPException, Query, status
->>>>>>> 723ff3aa453153fcc79c8e5367c4d2c1b60723ec
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import case, func, or_, update
@@ -40,6 +36,18 @@ from auth_endpoints import (
     delete_account,
 )
 
+# --- TELEGRAM NOTIFICATION IMPORTS ---
+from html import escape as html_escape
+from notifications import (
+    bot_token as telegram_bot_token,
+    bot_username as telegram_bot_username,
+    webhook_secret as telegram_webhook_secret,
+    create_link_token,
+    verify_link_token,
+    send_telegram_message,
+    notify_order_ready,
+    LINK_TOKEN_TTL_SECONDS,
+)
 
 from contextlib import asynccontextmanager
 
@@ -310,6 +318,7 @@ async def delete_my_account(
     current_user.name = "Deleted User"
     current_user.email = f"deleted-{current_user.id}@{DELETED_EMAIL_DOMAIN}"
     current_user.phone_number = None
+    current_user.telegram_chat_id = None
     current_user.password_hash = hash_password(secrets.token_urlsafe(32))
 
     try:
@@ -527,11 +536,11 @@ async def get_me(current_user: User = Depends(get_current_user)):
         "name": current_user.name,
         "email": current_user.email,
         "phone_number": current_user.phone_number,
-        "role": current_user.role
+        "role": current_user.role,
+        "telegram_connected": bool(current_user.telegram_chat_id)
     }
 
 
-<<<<<<< HEAD
 @app.post("/users/me/telegram-link")
 async def create_telegram_link(current_user: User = Depends(get_current_user)):
     username = telegram_bot_username()
@@ -543,9 +552,6 @@ async def create_telegram_link(current_user: User = Depends(get_current_user)):
         "expires_in_seconds": LINK_TOKEN_TTL_SECONDS,
     }
 
-=======
-# ===== EMAIL VERIFICATION & ACCOUNT DELETION ENDPOINTS =====
->>>>>>> 723ff3aa453153fcc79c8e5367c4d2c1b60723ec
 
 @app.post("/auth/send-verification")
 async def send_verification_endpoint(req: SendVerificationRequest, db: AsyncSession = Depends(get_db)):
@@ -562,7 +568,6 @@ async def delete_account_endpoint(req: DeleteAccountRequest, current_user: User 
     return await delete_account(req, current_user, db)
 
 
-<<<<<<< HEAD
 @app.delete("/users/me/telegram")
 async def disconnect_telegram(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     current_user.telegram_chat_id = None
@@ -603,8 +608,6 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db))
     )
     return {"ok": True}
 
-=======
->>>>>>> 723ff3aa453153fcc79c8e5367c4d2c1b60723ec
 
 async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID | None = None, customer_id: UUID | None = None):
     start = datetime.now(timezone.utc) - timedelta(days=days - 1)
@@ -1057,6 +1060,7 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
 async def update_order_status(
     order_id: UUID,
     status_update: OrderStatusUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -1075,25 +1079,19 @@ async def update_order_status(
     merchant = merchant_result.scalars().first()
     if not merchant:
         raise HTTPException(status_code=403, detail="You can only update orders for your own merchant account.")
-<<<<<<< HEAD
     
     previous_status = order.status
-=======
->>>>>>> 723ff3aa453153fcc79c8e5367c4d2c1b60723ec
     order.status = status_update.status
     try:
         await db.commit()
         await db.refresh(order)
 
-<<<<<<< HEAD
         if status_update.status == "ready" and previous_status != "ready":
             customer = await db.get(User, order.customer_id)
             if customer and customer.telegram_chat_id:
                 background_tasks.add_task(
                     notify_order_ready, customer.telegram_chat_id, merchant.name, order.id
                 )
-=======
->>>>>>> 723ff3aa453153fcc79c8e5367c4d2c1b60723ec
 
         return {
             "message": "Order status updated successfully",
