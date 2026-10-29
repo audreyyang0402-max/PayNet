@@ -514,6 +514,16 @@ async def login(login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
     }
 
 
+@app.get("/auth/me")
+async def get_me(current_user: User = Depends(get_current_user)):
+    return {
+        "id": str(current_user.id),
+        "name": current_user.name,
+        "email": current_user.email,
+        "phone_number": current_user.phone_number,
+        "role": current_user.role
+    }
+
 
 @app.post("/auth/send-verification")
 async def send_verification_endpoint(req: SendVerificationRequest, db: AsyncSession = Depends(get_db)):
@@ -1004,7 +1014,6 @@ async def update_order_status(
     try:
         await db.commit()
         await db.refresh(order)
-
 
         return {
             "message": "Order status updated successfully",
