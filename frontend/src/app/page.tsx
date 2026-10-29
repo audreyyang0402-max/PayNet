@@ -297,7 +297,6 @@ export default function Home() {
         <header className="flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Sunway Express Lane</h1>
-            <p className="text-gray-500 text-sm">Preorder campus meals, find a stall you love, and skip the queue.</p>
           </div>
           <div className="flex items-center space-x-3">
             <Link 
