@@ -48,19 +48,13 @@ app = FastAPIOffline(lifespan=lifespan)
 # --- MOUNT STATIC UPLOADS DIRECTORY ---
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# --- NEW CORS CONFIGURATION ---
+# --- FULLY OPEN CORS CONFIGURATION (FIXES ALL VERCEL HASH URLS) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        origin.strip().rstrip("/")
-        for origin in os.getenv(
-            "CORS_ALLOWED_ORIGINS",
-            "http://localhost:3000,http://127.0.0.1:3000,https://pay-net-iota.vercel.app"
-        ).split(",") if origin.strip()
-    ], 
+    allow_origins=["*"],  # Allows all origins, ensuring any Vercel preview/production URL connects successfully
     allow_credentials=True,
-    allow_methods=["*"], 
-    allow_headers=["*"], 
+    allow_methods=["*"],  # Allows all HTTP methods (GET, POST, PUT, DELETE, PATCH, OPTIONS)
+    allow_headers=["*"],  # Allows all headers
 )
 
 # Pydantic Schemas for validation
