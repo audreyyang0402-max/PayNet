@@ -1,6 +1,7 @@
 // src/components/EmailCodeField.tsx
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 
 interface EmailCodeFieldProps {
@@ -52,7 +53,7 @@ export default function EmailCodeField({
     }
     setSending(true);
     try {
-      const res = await fetch("http://127.0.0.1:8000/auth/send-code", {
+      const res = await fetch(`${BACKEND_URL}/auth/send-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, purpose }),

@@ -1,5 +1,6 @@
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -17,7 +18,7 @@ export default function ForgotPasswordPage() {
     setMessage("");
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/auth/forgot-password", {
+      const res = await fetch(`${BACKEND_URL}/auth/forgot-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, new_password: newPassword }),

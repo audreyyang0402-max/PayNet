@@ -1,5 +1,6 @@
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
@@ -52,7 +53,7 @@ export default function EventsPage() {
   useEffect(() => {
     async function loadEvents() {
       try {
-        const res = await fetch("http://127.0.0.1:8000/events");
+        const res = await fetch(`${BACKEND_URL}/events`);
         if (res.ok) {
           const data = await res.json();
           setEvents(data);
@@ -75,7 +76,7 @@ export default function EventsPage() {
     async function loadEventMerchants() {
       try {
         const res = await fetch(
-          `http://127.0.0.1:8000/events/${selectedEventId}/merchants`
+          `${BACKEND_URL}/events/${selectedEventId}/merchants`
         );
         if (res.ok) {
           const data = await res.json();

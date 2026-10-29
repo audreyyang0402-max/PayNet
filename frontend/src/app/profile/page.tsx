@@ -1,6 +1,7 @@
 // src/app/profile/page.tsx
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -87,7 +88,7 @@ export default function ProfilePage() {
         }
 
         // 1. Fetch current user info
-        const userRes = await fetch("http://127.0.0.1:8000/auth/me", {
+        const userRes = await fetch(`${BACKEND_URL}/auth/me`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 
@@ -99,7 +100,7 @@ export default function ProfilePage() {
 
         // 2. Fetch customer orders and line items (if they are a customer)
         if (userData.role === "customer") {
-          const ordersRes = await fetch("http://127.0.0.1:8000/users/me/orders", {
+          const ordersRes = await fetch(`${BACKEND_URL}/users/me/orders`, {
             headers: { Authorization: `Bearer ${token}` },
           });
           
@@ -110,7 +111,7 @@ export default function ProfilePage() {
             const detailedOrders = await Promise.all(
               baseOrders.map(async (order: any) => {
                 try {
-                  const detailRes = await fetch(`http://127.0.0.1:8000/orders/${order.id}`);
+                  const detailRes = await fetch(`${BACKEND_URL}/orders/${order.id}`);
                   if (detailRes.ok) {
                     const detailData = await detailRes.json();
                     return { ...order, items: detailData.items || [] };
@@ -166,7 +167,7 @@ export default function ProfilePage() {
         payload.password = editPassword;
       }
 
-      const res = await fetch("http://127.0.0.1:8000/users/me", {
+      const res = await fetch(`${BACKEND_URL}/users/me`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",

@@ -1,6 +1,7 @@
 // frontend/src/app/vendor/register/page.tsx
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -27,7 +28,7 @@ export default function VendorRegisterPage() {
     setError("");
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/auth/send-verification", {
+      const res = await fetch(`${BACKEND_URL}/auth/send-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -65,7 +66,7 @@ export default function VendorRegisterPage() {
     setError("");
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/auth/verify-code", {
+      const res = await fetch(`${BACKEND_URL}/auth/verify-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -110,7 +111,7 @@ export default function VendorRegisterPage() {
   const handleResend = async () => {
     setResending(true);
     try {
-      const res = await fetch("http://127.0.0.1:8000/auth/send-verification", {
+      const res = await fetch(`${BACKEND_URL}/auth/send-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

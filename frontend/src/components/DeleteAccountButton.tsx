@@ -1,6 +1,7 @@
 // frontend/src/components/DeleteAccountButton.tsx
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -27,7 +28,7 @@ export default function DeleteAccountButton() {
         return;
       }
 
-      const res = await fetch("http://127.0.0.1:8000/users/me/account", {
+      const res = await fetch(`${BACKEND_URL}/users/me/account`, {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",

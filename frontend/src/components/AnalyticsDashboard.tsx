@@ -1,5 +1,6 @@
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -17,7 +18,7 @@ type Analytics = {
   top_items: { id: string; name: string; quantity: number; revenue: number }[];
 };
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = `${BACKEND_URL}`;
 const money = (amount: number) => `RM ${amount.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function AnalyticsDashboard({ audience }: { audience: "admin" | "merchant" | "customer" }) {

@@ -1,6 +1,7 @@
 // src/app/admin/rentals/page.tsx
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -59,10 +60,10 @@ export default function AdminRentalsPage() {
       }
 
       const [bookingsRes, stallsRes] = await Promise.all([
-        fetch("http://127.0.0.1:8000/admin/boulevard/bookings", {
+        fetch(`${BACKEND_URL}/admin/boulevard/bookings`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch("http://127.0.0.1:8000/boulevard/stalls")
+        fetch(`${BACKEND_URL}/boulevard/stalls`)
       ]);
 
       if (!bookingsRes.ok) {
@@ -93,7 +94,7 @@ export default function AdminRentalsPage() {
     setError(null);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/boulevard/bookings/${bookingId}/status`, {
+      const res = await fetch(`${BACKEND_URL}/boulevard/bookings/${bookingId}/status`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -121,7 +122,7 @@ export default function AdminRentalsPage() {
     setError(null);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/boulevard/stalls", {
+      const res = await fetch(`${BACKEND_URL}/boulevard/stalls`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -159,7 +160,7 @@ export default function AdminRentalsPage() {
     setSuccessMessage(null);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/boulevard/stalls/${stallId}`, {
+      const res = await fetch(`${BACKEND_URL}/boulevard/stalls/${stallId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -178,7 +179,7 @@ export default function AdminRentalsPage() {
     setSuccessMessage(null);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/boulevard/stalls/${stallId}/toggle-availability`, {
+      const res = await fetch(`${BACKEND_URL}/boulevard/stalls/${stallId}/toggle-availability`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -201,7 +202,7 @@ export default function AdminRentalsPage() {
 
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/boulevard/stalls/${editingStall.id}`, {
+      const res = await fetch(`${BACKEND_URL}/boulevard/stalls/${editingStall.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

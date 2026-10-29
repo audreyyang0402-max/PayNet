@@ -1,6 +1,7 @@
 // src/app/vendor/rental/content.tsx
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -60,21 +61,21 @@ export default function RentalContent() {
 
         // If redirected back from HitPay with success and a reference ID, update payment status on backend
         if (paymentStatus === "success" && referenceId) {
-          await fetch(`http://127.0.0.1:8000/boulevard/bookings/${referenceId}/check-payment`, {
+          await fetch(`${BACKEND_URL}/boulevard/bookings/${referenceId}/check-payment`, {
             headers: { Authorization: `Bearer ${token}` },
           });
           setPaymentSuccessMsg("Rental payment completed successfully via HitPay!");
         }
 
         // 1. Fetch all Boulevard stalls
-        const stallsRes = await fetch("http://127.0.0.1:8000/boulevard/stalls");
+        const stallsRes = await fetch(`${BACKEND_URL}/boulevard/stalls`);
         if (stallsRes.ok) {
           const stallsData = await stallsRes.json();
           setStalls(stallsData);
         }
 
         // 2. Fetch vendor's existing bookings
-        const bookingsRes = await fetch("http://127.0.0.1:8000/boulevard/my-bookings", {
+        const bookingsRes = await fetch(`${BACKEND_URL}/boulevard/my-bookings`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (bookingsRes.ok) {
@@ -98,7 +99,7 @@ export default function RentalContent() {
 
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/boulevard/bookings", {
+      const res = await fetch(`${BACKEND_URL}/boulevard/bookings`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -130,7 +131,7 @@ export default function RentalContent() {
   const handlePayRental = async (bookingId: string) => {
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/boulevard/bookings/${bookingId}/pay`, {
+      const res = await fetch(`${BACKEND_URL}/boulevard/bookings/${bookingId}/pay`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,

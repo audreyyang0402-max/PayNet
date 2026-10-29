@@ -1,6 +1,7 @@
 // src/app/vendor/dashboard/page.tsx
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -66,14 +67,14 @@ export default function MerchantDashboard() {
           return;
         }
 
-        const profileRes = await fetch("http://127.0.0.1:8000/merchants/me/profile", {
+        const profileRes = await fetch(`${BACKEND_URL}/merchants/me/profile`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 
         if (!profileRes.ok) throw new Error("Could not load merchant profile.");
         const profileData = await profileRes.json();
         
-        const bookingsRes = await fetch("http://127.0.0.1:8000/boulevard/my-bookings", {
+        const bookingsRes = await fetch(`${BACKEND_URL}/boulevard/my-bookings`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         let hasActiveRentals = false;
@@ -90,7 +91,7 @@ export default function MerchantDashboard() {
         setEditDescription(profileData.description || "");
         setQrUrl(profileData.duitnow_qr_url || "");
 
-        const userRes = await fetch("http://127.0.0.1:8000/auth/me", {
+        const userRes = await fetch(`${BACKEND_URL}/auth/me`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (userRes.ok) {
@@ -99,7 +100,7 @@ export default function MerchantDashboard() {
           setEditPhone(userData.phone_number || "");
         }
 
-        const ordersRes = await fetch(`http://127.0.0.1:8000/merchants/${profileData.id}/orders`);
+        const ordersRes = await fetch(`${BACKEND_URL}/merchants/${profileData.id}/orders`);
         if (ordersRes.ok) {
           const ordersData = await ordersRes.json();
           setOrders(ordersData);
@@ -132,7 +133,7 @@ export default function MerchantDashboard() {
         payload.password = editPassword;
       }
 
-      const res = await fetch("http://127.0.0.1:8000/merchants/me", {
+      const res = await fetch(`${BACKEND_URL}/merchants/me`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -171,7 +172,7 @@ export default function MerchantDashboard() {
       const formData = new FormData();
       formData.append("qr_file", fileInput.files[0]);
 
-      const res = await fetch("http://127.0.0.1:8000/merchants/me/qr-upload", {
+      const res = await fetch(`${BACKEND_URL}/merchants/me/qr-upload`, {
         method: "PATCH",
         headers: {
           Authorization: `Bearer ${token}`
@@ -197,7 +198,7 @@ export default function MerchantDashboard() {
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/orders/${orderId}/status`, {
+      const res = await fetch(`${BACKEND_URL}/orders/${orderId}/status`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -388,7 +389,7 @@ export default function MerchantDashboard() {
               <div className="text-center py-3 bg-gray-50 rounded-xl border border-gray-100 max-w-xs">
                 <p className="text-xs font-semibold text-gray-600 mb-2">Current QR Code:</p>
                 <img 
-                  src={qrUrl.startsWith("http") ? qrUrl : `http://localhost:8000${qrUrl}`} 
+                  src={qrUrl.startsWith("http") ? qrUrl : `${BACKEND_URL}${qrUrl}`} 
                   alt="DuitNow QR Preview" 
                   className="w-36 h-36 mx-auto object-contain bg-white rounded-lg border p-1" 
                 />
@@ -459,12 +460,12 @@ export default function MerchantDashboard() {
                     <div className="bg-white p-3 rounded-lg border border-yellow-200 space-y-2">
                       <p className="text-xs font-semibold text-gray-700">Student Uploaded Payment Receipt:</p>
                       <a 
-                        href={`http://localhost:8000${order.transaction_ref}`} 
+                        href={`${BACKEND_URL}${order.transaction_ref}`} 
                         target="_blank" 
                         rel="noopener noreferrer"
                       >
                         <img 
-                          src={`http://localhost:8000${order.transaction_ref}`} 
+                          src={`${BACKEND_URL}${order.transaction_ref}`} 
                           alt="Payment Receipt Screenshot" 
                           className="w-32 h-32 object-cover rounded-lg border hover:opacity-90 transition cursor-pointer"
                         />

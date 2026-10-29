@@ -1,6 +1,7 @@
 // src/app/orders/[id]/page.tsx
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
@@ -35,7 +36,7 @@ export default function OrderReceiptPage() {
         const token = localStorage.getItem("token");
         if (!token) throw new Error("You must be logged in to view this receipt.");
 
-        const res = await fetch(`http://127.0.0.1:8000/orders/${orderId}`, {
+        const res = await fetch(`${BACKEND_URL}/orders/${orderId}`, {
           headers: {
             "Authorization": `Bearer ${token}`
           }

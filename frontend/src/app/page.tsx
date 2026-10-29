@@ -1,6 +1,7 @@
 // frontend/src/app/page.tsx
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import RecommendationWidget from "@/components/RecommendationWidget";
@@ -77,7 +78,7 @@ export default function Home() {
   useEffect(() => {
     async function loadMerchants() {
       try {
-        const res = await fetch("http://127.0.0.1:8000/merchants");
+        const res = await fetch(`${BACKEND_URL}/merchants`);
         if (res.ok) {
           const data = await res.json();
           const eventMerchant: Merchant = {
@@ -119,7 +120,7 @@ export default function Home() {
           return;
         }
 
-        const response = await fetch(`http://127.0.0.1:8000/merchants/${selectedMerchantId}/pickup-slots`);
+        const response = await fetch(`${BACKEND_URL}/merchants/${selectedMerchantId}/pickup-slots`);
         if (response.ok) {
           const slots: PickupSlot[] = await response.json();
           if (!cancelled) {
@@ -147,7 +148,7 @@ export default function Home() {
       setMenusLoading(true);
       const entries = await Promise.all(backendMerchants.map(async (merchant) => {
         try {
-          const response = await fetch(`http://127.0.0.1:8000/merchants/${merchant.id}/items`);
+          const response = await fetch(`${BACKEND_URL}/merchants/${merchant.id}/items`);
           return [merchant.id, response.ok ? await response.json() : []] as const;
         } catch {
           return [merchant.id, []] as const;
@@ -227,7 +228,7 @@ export default function Home() {
         })),
       };
 
-      const orderRes = await fetch("http://127.0.0.1:8000/orders", {
+      const orderRes = await fetch(`${BACKEND_URL}/orders`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

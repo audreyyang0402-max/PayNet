@@ -1,6 +1,7 @@
 // src/app/checkout/success/[id]/page.tsx (or your equivalent file path)
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
@@ -19,13 +20,13 @@ export default function OrderVerificationPage() {
     localStorage.removeItem("cart");
 
     // 1. Fetch order details from FastAPI
-    fetch(`http://localhost:8000/orders/${orderId}`)
+    fetch(`${BACKEND_URL}/orders/${orderId}`)
       .then((res) => res.json())
       .then((data) => {
         setOrder(data);
         // 2. Once order is fetched, fetch the merchant's DuitNow QR URL
         if (data.merchant_id) {
-          fetch("http://localhost:8000/merchants")
+          fetch(`${BACKEND_URL}/merchants`)
             .then((res) => res.json())
             .then((merchants) => {
               const found = merchants.find((m: any) => m.id === data.merchant_id);
@@ -50,7 +51,7 @@ export default function OrderVerificationPage() {
       const formData = new FormData();
       formData.append("receipt_file", fileInput.files[0]);
 
-      const res = await fetch(`http://localhost:8000/orders/${orderId}/submit-receipt`, {
+      const res = await fetch(`${BACKEND_URL}/orders/${orderId}/submit-receipt`, {
         method: "PATCH",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -104,7 +105,7 @@ export default function OrderVerificationPage() {
               Vendor DuitNow QR ({merchant?.name || "Stall"}):
             </p>
             <img 
-              src={merchant?.duitnow_qr_url?.startsWith("http") ? merchant.duitnow_qr_url : `http://localhost:8000${merchant?.duitnow_qr_url}` || "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=DuitNow-QR-Placeholder"} 
+              src={merchant?.duitnow_qr_url?.startsWith("http") ? merchant.duitnow_qr_url : `${BACKEND_URL}${merchant?.duitnow_qr_url}` || "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=DuitNow-QR-Placeholder"} 
               alt="Vendor DuitNow QR" 
               className="w-48 h-48 mx-auto rounded-lg border object-contain bg-white p-1"
             />

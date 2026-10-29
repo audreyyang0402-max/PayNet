@@ -1,6 +1,7 @@
 // src/app/orders/page.tsx
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
@@ -24,7 +25,7 @@ export default function OrdersPage() {
           throw new Error("You must be logged in to view your orders.");
         }
 
-        const res = await fetch("http://127.0.0.1:8000/users/me/orders", {
+        const res = await fetch(`${BACKEND_URL}/users/me/orders`, {
           headers: {
             "Authorization": `Bearer ${token}`
           }

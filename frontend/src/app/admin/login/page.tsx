@@ -1,6 +1,7 @@
 // src/app/admin/login/page.tsx
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -17,7 +18,7 @@ export default function AdminLoginPage() {
     setLoading(true);
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/auth/login", {
+      const res = await fetch(`${BACKEND_URL}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),

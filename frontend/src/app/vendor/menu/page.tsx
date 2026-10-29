@@ -1,6 +1,7 @@
 // src/app/vendor/menu/page.tsx
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -61,7 +62,7 @@ export default function MerchantMenuPage() {
           return;
         }
 
-        const profileRes = await fetch("http://127.0.0.1:8000/merchants/me/profile", {
+        const profileRes = await fetch(`${BACKEND_URL}/merchants/me/profile`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 
@@ -70,14 +71,14 @@ export default function MerchantMenuPage() {
         setMerchant(profileData);
 
         // Fetch menu items
-        const menuRes = await fetch(`http://127.0.0.1:8000/merchants/${profileData.id}/items`);
+        const menuRes = await fetch(`${BACKEND_URL}/merchants/${profileData.id}/items`);
         if (menuRes.ok) {
           const menuData = await menuRes.json();
           setMenuItems(menuData);
         }
 
         // Fetch pickup slots
-        const slotsRes = await fetch(`http://127.0.0.1:8000/merchants/${profileData.id}/pickup-slots`);
+        const slotsRes = await fetch(`${BACKEND_URL}/merchants/${profileData.id}/pickup-slots`);
         if (slotsRes.ok) {
           const slotsData = await slotsRes.json();
           setSlots(slotsData);
@@ -97,7 +98,7 @@ export default function MerchantMenuPage() {
     if (!merchant) return;
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/merchants/${merchant.id}/items`, {
+      const res = await fetch(`${BACKEND_URL}/merchants/${merchant.id}/items`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -124,7 +125,7 @@ export default function MerchantMenuPage() {
     if (!merchant) return;
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/merchants/${merchant.id}/pickup-slots`, {
+      const res = await fetch(`${BACKEND_URL}/merchants/${merchant.id}/pickup-slots`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -153,7 +154,7 @@ export default function MerchantMenuPage() {
     if (!confirm("Are you sure you want to delete this pickup slot?")) return;
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/merchants/pickup-slots/${slotId}`, {
+      const res = await fetch(`${BACKEND_URL}/merchants/pickup-slots/${slotId}`, {
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Failed to delete pickup slot.");
@@ -168,7 +169,7 @@ export default function MerchantMenuPage() {
     if (!confirm("Are you sure you want to delete this menu item?")) return;
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/merchants/items/${itemId}`, {
+      const res = await fetch(`${BACKEND_URL}/merchants/items/${itemId}`, {
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Failed to delete item.");
@@ -181,7 +182,7 @@ export default function MerchantMenuPage() {
 
   const handleToggleAvailability = async (item: MenuItem) => {
     try {
-      const res = await fetch(`http://127.0.0.1:8000/merchants/items/${item.id}`, {
+      const res = await fetch(`${BACKEND_URL}/merchants/items/${item.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

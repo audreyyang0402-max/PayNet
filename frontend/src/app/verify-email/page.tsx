@@ -1,7 +1,8 @@
 // frontend/src/app/verify-email/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { BACKEND_URL } from "@/lib/backend-url";
+import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
@@ -12,7 +13,7 @@ interface RegisterData {
   password: string;
 }
 
-export default function VerifyEmailPage() {
+function VerifyEmailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const email = searchParams.get("email") || "";
@@ -37,7 +38,7 @@ export default function VerifyEmailPage() {
     setError("");
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/auth/verify-code", {
+      const res = await fetch(`${BACKEND_URL}/auth/verify-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -77,7 +78,7 @@ export default function VerifyEmailPage() {
     setResending(true);
     setResendMessage("");
     try {
-      const res = await fetch("http://127.0.0.1:8000/auth/send-verification", {
+      const res = await fetch(`${BACKEND_URL}/auth/send-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -167,4 +168,8 @@ export default function VerifyEmailPage() {
       </div>
     </main>
   );
+}
+
+export default function VerifyEmailPage() {
+  return <Suspense fallback={<p>Loading verification...</p>}><VerifyEmailContent /></Suspense>;
 }

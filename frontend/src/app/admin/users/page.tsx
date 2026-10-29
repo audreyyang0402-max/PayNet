@@ -1,5 +1,6 @@
 "use client";
 
+import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -28,7 +29,7 @@ export default function AdminUsersPage() {
         return;
       }
 
-      const res = await fetch("http://127.0.0.1:8000/admin/users", {
+      const res = await fetch(`${BACKEND_URL}/admin/users`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -56,7 +57,7 @@ export default function AdminUsersPage() {
 
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/admin/users/${userId}`, {
+      const res = await fetch(`${BACKEND_URL}/admin/users/${userId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -80,7 +81,7 @@ export default function AdminUsersPage() {
 
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/admin/users/${userId}/role`, {
+      const res = await fetch(`${BACKEND_URL}/admin/users/${userId}/role`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

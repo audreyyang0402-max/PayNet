@@ -1,6 +1,7 @@
+import { BACKEND_URL } from "@/lib/backend-url";
 // frontend/src/lib/api.ts
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = `${BACKEND_URL}`;
 
 export interface Merchant {
   id: string;
