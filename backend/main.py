@@ -1,14 +1,12 @@
 import os
-import hmac
-import hashlib
 import secrets
 from datetime import datetime, date, timedelta, timezone
 import httpx as httpx_client  # aliased since you might already have httpx elsewhere
-from fastapi import Request, UploadFile, File, Form
+from fastapi import UploadFile, File, Form
 import shutil
 
 from fastapi_offline import FastAPIOffline
-from fastapi import FastAPI, Depends, HTTPException, Query, status, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, Query, status
 from fastapi.staticfiles import StaticFiles  # <--- Added import for serving static upload files
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,18 +34,6 @@ from auth_endpoints import (
     delete_account,
 )
 
-# --- TELEGRAM NOTIFICATION IMPORTS ---
-from html import escape as html_escape
-from notifications import (
-    bot_token as telegram_bot_token,
-    bot_username as telegram_bot_username,
-    webhook_secret as telegram_webhook_secret,
-    create_link_token,
-    verify_link_token,
-    send_telegram_message,
-    notify_order_ready,
-    LINK_TOKEN_TTL_SECONDS,
-)
 
 from contextlib import asynccontextmanager
 
@@ -324,7 +310,6 @@ async def delete_my_account(
     current_user.name = "Deleted User"
     current_user.email = f"deleted-{current_user.id}@{DELETED_EMAIL_DOMAIN}"
     current_user.phone_number = None
-    current_user.telegram_chat_id = None
     current_user.password_hash = hash_password(secrets.token_urlsafe(32))
 
     try:
@@ -543,19 +528,6 @@ async def get_me(current_user: User = Depends(get_current_user)):
         "email": current_user.email,
         "phone_number": current_user.phone_number,
         "role": current_user.role,
-        "telegram_connected": bool(current_user.telegram_chat_id)
-    }
-
-
-@app.post("/users/me/telegram-link")
-async def create_telegram_link(current_user: User = Depends(get_current_user)):
-    username = telegram_bot_username()
-    if not username or not telegram_bot_token():
-        raise HTTPException(status_code=503, detail="Telegram notifications are not configured on the server.")
-    token = create_link_token(current_user.id)
-    return {
-        "url": f"https://t.me/{username}?start={token}",
-        "expires_in_seconds": LINK_TOKEN_TTL_SECONDS,
     }
 
 
@@ -572,47 +544,6 @@ async def verify_code_endpoint(req: VerifyCodeRequest, db: AsyncSession = Depend
 @app.delete("/users/me/account")
 async def delete_account_endpoint(req: DeleteAccountRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     return await delete_account(req, current_user, db)
-
-
-@app.delete("/users/me/telegram")
-async def disconnect_telegram(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    current_user.telegram_chat_id = None
-    await db.commit()
-    return {"message": "Telegram notifications disconnected."}
-
-
-@app.post("/webhooks/telegram")
-async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db)):
-    secret = telegram_webhook_secret()
-    received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-    if not secret or not hmac.compare_digest(received.encode(), secret.encode()):
-        raise HTTPException(status_code=403, detail="Invalid webhook secret.")
-
-    update_data = await request.json()
-    message = update_data.get("message") or {}
-    text = (message.get("text") or "").strip()
-    chat_id = (message.get("chat") or {}).get("id")
-    if chat_id is None or not text.startswith("/start"):
-        return {"ok": True}
-
-    parts = text.split(maxsplit=1)
-    user_id = verify_link_token(parts[1]) if len(parts) == 2 else None
-    user = await db.get(User, user_id) if user_id else None
-
-    if not user:
-        await send_telegram_message(
-            chat_id,
-            "Hi! To get order alerts here, open your PayNet profile and tap <b>Connect Telegram</b>. ",
-        )
-        return {"ok": True}
-
-    user.telegram_chat_id = str(chat_id)
-    await db.commit()
-    await send_telegram_message(
-        chat_id,
-        f"✅ Connected! Hi {html_escape(user.name)}, I'll message you here as soon as your order is ready for pickup.",
-    )
-    return {"ok": True}
 
 
 async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID | None = None, customer_id: UUID | None = None):
@@ -1066,7 +997,6 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
 async def update_order_status(
     order_id: UUID,
     status_update: OrderStatusUpdate,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -1086,18 +1016,11 @@ async def update_order_status(
     if not merchant:
         raise HTTPException(status_code=403, detail="You can only update orders for your own merchant account.")
     
-    previous_status = order.status
     order.status = status_update.status
     try:
         await db.commit()
         await db.refresh(order)
 
-        if status_update.status == "ready" and previous_status != "ready":
-            customer = await db.get(User, order.customer_id)
-            if customer and customer.telegram_chat_id:
-                background_tasks.add_task(
-                    notify_order_ready, customer.telegram_chat_id, merchant.name, order.id
-                )
 
         return {
             "message": "Order status updated successfully",
