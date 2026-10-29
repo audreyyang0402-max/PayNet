@@ -1,175 +1,125 @@
-// frontend/src/app/verify-email/page.tsx
-"use client";
+'use client';
 
-import { BACKEND_URL } from "@/lib/backend-url";
-import { Suspense, useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
+import { BACKEND_URL } from '@/lib/backend-url';
 
-interface RegisterData {
-  name: string;
-  email: string;
-  phone?: string;
-  password: string;
-}
+import React, { Suspense, useState, useEffect } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 
-function VerifyEmailContent() {
-  const router = useRouter();
+function VerifyEmailForm() {
   const searchParams = useSearchParams();
-  const email = searchParams.get("email") || "";
-  const [code, setCode] = useState("");
+  const router = useRouter();
+  
+  const emailParam = searchParams.get('email') || '';
+  const purposeParam = (searchParams.get('purpose') as 'register' | 'reset') || 'register';
+
+  const [email, setEmail] = useState(emailParam);
+  const [purpose, setPurpose] = useState<'register' | 'reset'>(purposeParam);
+  const [code, setCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [resending, setResending] = useState(false);
-  const [resendMessage, setResendMessage] = useState("");
-  const [registerData, setRegisterData] = useState<RegisterData | null>(null);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
-    // Get registration data from sessionStorage
-    const stored = sessionStorage.getItem("registerData");
-    if (stored) {
-      setRegisterData(JSON.parse(stored));
-    }
-  }, []);
+    if (emailParam) setEmail(emailParam);
+    if (purposeParam) setPurpose(purposeParam);
+  }, [emailParam, purposeParam]);
 
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError("");
+    setMessage(null);
 
     try {
-      const res = await fetch(`${BACKEND_URL}/auth/verify-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          code,
-          purpose: "register",
-          name: registerData?.name,
-          password: registerData?.password,
-          phone_number: registerData?.phone,
-        }),
+      const response = await fetch(`${BACKEND_URL}/auth/verify-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, purpose, code }),
       });
 
-      const data = await res.json();
+      const data = await response.json();
 
-      if (!res.ok) {
-        setError(data.detail || "Verification failed");
-        return;
+      if (!response.ok) {
+        throw new Error(data.detail || 'Verification failed.');
       }
 
-      // Save token and user info
-      localStorage.setItem("token", data.access_token);
-      localStorage.setItem("user_id", data.user_id);
+      setMessage({ type: 'success', text: 'Email verified successfully!' });
       
-      // Clear registration data from sessionStorage
-      sessionStorage.removeItem("registerData");
-      
-      // Redirect to home
-      router.push("/");
+      if (purpose === 'register') {
+        setTimeout(() => router.push('/login'), 1500);
+      }
     } catch (err: any) {
-      setError(err.message || "An error occurred");
+      setMessage({ type: 'error', text: err.message || 'An error occurred.' });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleResend = async () => {
-    setResending(true);
-    setResendMessage("");
-    try {
-      const res = await fetch(`${BACKEND_URL}/auth/send-verification`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          purpose: "register",
-        }),
-      });
-
-      if (res.ok) {
-        setResendMessage("Code resent to your email!");
-      } else {
-        setResendMessage("Failed to resend code");
-      }
-    } catch (err) {
-      setResendMessage("Error resending code");
-    } finally {
-      setResending(false);
-    }
-  };
-
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-purple-100 p-4">
-      <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-md">
-        <div className="text-center mb-8">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+      <div className="max-w-md w-full bg-white rounded-xl shadow-lg p-8 space-y-6">
+        <div className="text-center">
           <h1 className="text-2xl font-bold text-gray-900">Verify Your Email</h1>
-          <p className="text-gray-600 text-sm mt-2">
-            We sent a 6-digit code to <span className="font-semibold">{email}</span>
+          <p className="text-sm text-gray-600 mt-1">
+            Enter the 6-digit code sent to <span className="font-semibold">{email || 'your email'}</span>
           </p>
         </div>
 
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm mb-6">
-            {error}
+        {message && (
+          <div className={`p-4 rounded-lg text-sm ${message.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+            {message.text}
           </div>
         )}
 
-        {resendMessage && (
-          <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm mb-6">
-            {resendMessage}
-          </div>
-        )}
-
-        <form onSubmit={handleVerify} className="space-y-6">
+        <form onSubmit={handleVerify} className="space-y-4">
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Verification Code
-            </label>
+            <label className="block text-sm font-medium text-gray-700">Email Address</label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-orange-500 focus:border-orange-500"
+              placeholder="name@example.com"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Verification Code</label>
             <input
               type="text"
+              required
               maxLength={6}
-              placeholder="000000"
               value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-              className="w-full px-4 py-3 text-center text-2xl font-bold tracking-widest border-2 border-purple-200 rounded-lg focus:outline-none focus:border-purple-500 transition-all"
+              onChange={(e) => setCode(e.target.value)}
+              className="mt-1 block w-full px-3 py-2 tracking-widest text-center text-xl font-bold border border-gray-300 rounded-lg shadow-sm focus:ring-orange-500 focus:border-orange-500"
+              placeholder="123456"
             />
-            <p className="text-xs text-gray-500 mt-2">Code expires in 5 minutes</p>
           </div>
 
           <button
             type="submit"
-            disabled={loading || code.length !== 6}
-            className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={loading}
+            className="w-full py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-white bg-orange-600 hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 font-medium transition-colors disabled:opacity-50"
           >
-            {loading ? "Verifying..." : "Verify"}
+            {loading ? 'Verifying...' : 'Verify Code'}
           </button>
         </form>
 
-        <div className="mt-6 pt-6 border-t border-gray-200">
-          <p className="text-sm text-gray-600 text-center mb-4">Didn't receive the code?</p>
-          <button
-            onClick={handleResend}
-            disabled={resending}
-            className="w-full text-purple-600 hover:text-purple-700 font-semibold text-sm py-2 disabled:opacity-50"
-          >
-            {resending ? "Sending..." : "Resend Code"}
-          </button>
-        </div>
-
-        <div className="mt-6 text-center text-sm text-gray-600">
-          <p>
-            Wrong email?{" "}
-            <Link href="/register" className="text-purple-600 hover:text-purple-700 font-semibold">
-              Go back
-            </Link>
-          </p>
+        <div className="text-center text-sm">
+          <Link href="/login" className="text-orange-600 hover:text-orange-500 font-medium">
+            Back to Login
+          </Link>
         </div>
       </div>
-    </main>
+    </div>
   );
 }
 
 export default function VerifyEmailPage() {
-  return <Suspense fallback={<p>Loading verification...</p>}><VerifyEmailContent /></Suspense>;
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-500">Loading verification page...</div>}>
+      <VerifyEmailForm />
+    </Suspense>
+  );
 }
