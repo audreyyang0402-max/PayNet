@@ -62,10 +62,10 @@ app = FastAPIOffline(lifespan=lifespan)
 # --- MOUNT STATIC UPLOADS DIRECTORY ---
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# --- UPDATED CORS CONFIGURATION (FIXES VERCEL CONNECTION ERROR) ---
+# --- FULLY OPEN CORS CONFIGURATION (FIXES ALL VERCEL HASH URLS) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows requests from your Vercel frontend and any origin
+    allow_origins=["*"],  # Allows all origins, ensuring any Vercel preview/production URL connects successfully
     allow_credentials=True,
     allow_methods=["*"],  # Allows all HTTP methods (GET, POST, PUT, DELETE, PATCH, OPTIONS)
     allow_headers=["*"],  # Allows all headers
