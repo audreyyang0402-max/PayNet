@@ -48,10 +48,17 @@ app = FastAPIOffline(lifespan=lifespan)
 # --- MOUNT STATIC UPLOADS DIRECTORY ---
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# --- FULLY OPEN CORS CONFIGURATION (FIXES ALL VERCEL HASH URLS) ---
+# --- EXPLICIT CORS CONFIGURATION (FIXES VERCEL PRODUCTION CORS BLOCKING) ---
+origins = [
+    "https://payvolution.app",
+    "https://www.payvolution.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins, ensuring any Vercel preview/production URL connects successfully
+    allow_origins=origins,  # Explicitly allow your domain and local testing
     allow_credentials=True,
     allow_methods=["*"],  # Allows all HTTP methods (GET, POST, PUT, DELETE, PATCH, OPTIONS)
     allow_headers=["*"],  # Allows all headers
