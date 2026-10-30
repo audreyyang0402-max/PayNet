@@ -1,10 +1,23 @@
 @import "tailwindcss";
 
+/* ============================================================
+   PayNet / Sunway Express Lane — Global Styles
+   ============================================================ */
+
+/* ── Brand colour palette ──────────────────────────────────── */
 :root {
-  --background: #ffffff;
+  --background: #fffcef;
   --foreground: #171717;
+
+  --brand-cream: #fffcef;
+  --brand-orange: #F04B14;
+  --brand-orange-dark: #C73A0D;
+  --brand-purple: #7C3AED;
+  --brand-green: #059669;
+  --brand-amber: #D97706;
 }
 
+/* ── Tailwind theme tokens ─────────────────────────────────── */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -12,15 +25,72 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* ── Body ──────────────────────────────────────────────────── */
+body {
+  background-color: var(--brand-cream);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+  position: relative;
+}
+
+/* Subtle background image at 20 % opacity — fixed, full-cover,
+   placed behind all content so it never hurts readability.      */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: url("/payvolution-events.png") center / cover no-repeat fixed;
+  opacity: 0.2;
+  pointer-events: none;
+}
+
+/* ── Scrollbar hide utility ────────────────────────────────── */
+.hide-scrollbar {
+  -ms-overflow-style: none;   /* IE / Edge */
+  scrollbar-width: none;      /* Firefox   */
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;              /* Chrome, Safari, Opera */
+}
+
+/* ── Keyframes ─────────────────────────────────────────────── */
+
+/* Cart icon bounce — plays when an item is added */
+@keyframes cart-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-6px);
+  }
+  50% {
+    transform: translateY(0);
+  }
+  70% {
+    transform: translateY(-3px);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Toast slide-up entrance */
+@keyframes slide-up {
+  0% {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Animation utility classes ─────────────────────────────── */
+.animate-cart-bounce {
+  animation: cart-bounce 0.45s ease-in-out;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out forwards;
 }

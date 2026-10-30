@@ -1,6 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
+
+// ---------------------------------------------------------------------------
+// Types – kept compatible with the existing props contract
+// ---------------------------------------------------------------------------
 
 interface RecommendationItem {
   id: string;
@@ -17,126 +21,327 @@ interface RecommendationMerchant {
   name: string;
 }
 
-type Preference = "budget" | "not-spicy" | "deals";
+interface RecommendationWidgetProps {
+  items: RecommendationItem[];
+  merchants: RecommendationMerchant[];
+  onAddToCart: (item: RecommendationItem) => void;
+  loading: boolean;
+}
 
-const OPTIONS: { id: Preference; label: string; helper: string }[] = [
-  { id: "budget", label: "Budget friendly", helper: "RM 12 or less" },
-  { id: "not-spicy", label: "Not spicy", helper: "Avoid spicy menu words" },
-  { id: "deals", label: "Hot deals", helper: "Show the lowest-priced picks" },
+// ---------------------------------------------------------------------------
+// Tab definitions – each tab has a unique key, emoji, label, and helper text
+// ---------------------------------------------------------------------------
+
+type TabKey = "hot-deals" | "budget" | "rahmah" | "not-spicy" | "all";
+
+interface TabDefinition {
+  key: TabKey;
+  emoji: string;
+  label: string;
+  helper: string;
+}
+
+const TABS: TabDefinition[] = [
+  { key: "hot-deals", emoji: "🔥", label: "Hot Deals",       helper: "Best value picks" },
+  { key: "budget",    emoji: "💰", label: "Budget Friendly", helper: "Under RM 10" },
+  { key: "rahmah",    emoji: "🍚", label: "RM5 Rahmah",      helper: "Makanan Rahmah RM5 & below" },
+  { key: "not-spicy", emoji: "🌶️", label: "Not Spicy",       helper: "Mild & gentle flavours" },
+  { key: "all",       emoji: "⭐", label: "All Picks",       helper: "Everything available" },
 ];
+
+// ---------------------------------------------------------------------------
+// Spice-detection regex — matches common spicy keywords in Malay & English
+// ---------------------------------------------------------------------------
+
+const SPICY_PATTERN = /spicy|chili|chilli|sambal|pedas|hot\s*sauce/i;
+
+// Brand colour constant (PayNet orange)
+const BRAND_ORANGE = "#F04B14";
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 export default function RecommendationWidget({
   items,
   merchants,
   onAddToCart,
   loading,
-}: {
-  items: RecommendationItem[];
-  merchants: RecommendationMerchant[];
-  onAddToCart: (item: RecommendationItem) => void;
-  loading: boolean;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [preferences, setPreferences] = useState<Preference[]>([]);
+}: RecommendationWidgetProps) {
+  // Active tab – defaults to "hot-deals"
+  const [activeTab, setActiveTab] = useState<TabKey>("hot-deals");
 
-  const availableItems = items.filter((item) => item.is_available);
-  const prices = availableItems.map((item) => Number(item.price)).sort((a, b) => a - b);
-  const dealCutoff = prices.length === 0 ? 0 : prices[Math.max(0, Math.ceil(prices.length * 0.25) - 1)];
-  const matches = availableItems
-    .filter((item) => {
-      const details = `${item.name} ${item.description ?? ""}`.toLowerCase();
-      if (preferences.includes("budget") && Number(item.price) > 12) return false;
-      if (preferences.includes("not-spicy") && /spicy|chili|chilli|sambal|pedas|hot sauce/.test(details)) return false;
-      if (preferences.includes("deals") && Number(item.price) > dealCutoff) return false;
-      return true;
-    })
-    .sort((a, b) => Number(a.price) - Number(b.price))
-    .slice(0, 6);
+  // Ref for the tab bar so we can auto-scroll the active pill into view
+  const tabBarRef = useRef<HTMLDivElement>(null);
 
-  const togglePreference = (preference: Preference) => {
-    setPreferences((current) => current.includes(preference)
-      ? current.filter((item) => item !== preference)
-      : [...current, preference]);
+  // -------------------------------------------------------------------------
+  // Derived: only available items + price-sorted list for deal cutoff calc
+  // -------------------------------------------------------------------------
+
+  const availableItems = useMemo(
+    () => items.filter((item) => item.is_available),
+    [items],
+  );
+
+  // 25th-percentile price threshold for "Hot Deals"
+  const dealCutoff = useMemo(() => {
+    const sorted = availableItems
+      .map((item) => Number(item.price))
+      .sort((a, b) => a - b);
+    if (sorted.length === 0) return 0;
+    return sorted[Math.max(0, Math.ceil(sorted.length * 0.25) - 1)];
+  }, [availableItems]);
+
+  // -------------------------------------------------------------------------
+  // Filter logic keyed by active tab
+  // -------------------------------------------------------------------------
+
+  const filteredItems = useMemo(() => {
+    let result: RecommendationItem[];
+
+    switch (activeTab) {
+      case "hot-deals":
+        // Cheapest 25% of available items
+        result = availableItems.filter(
+          (item) => Number(item.price) <= dealCutoff,
+        );
+        break;
+
+      case "budget":
+        // Items under RM 10
+        result = availableItems.filter((item) => Number(item.price) < 10);
+        break;
+
+      case "rahmah":
+        // Rahmah Madani — RM 5 and below
+        result = availableItems.filter((item) => Number(item.price) <= 5);
+        break;
+
+      case "not-spicy":
+        // Exclude items whose name or description contains spicy keywords
+        result = availableItems.filter((item) => {
+          const text = `${item.name} ${item.description ?? ""}`.toLowerCase();
+          return !SPICY_PATTERN.test(text);
+        });
+        break;
+
+      case "all":
+      default:
+        // All available items, no filter
+        result = [...availableItems];
+        break;
+    }
+
+    // Always sort by price ascending
+    return result.sort((a, b) => Number(a.price) - Number(b.price));
+  }, [activeTab, availableItems, dealCutoff]);
+
+  // -------------------------------------------------------------------------
+  // Auto-scroll the active tab pill into view on mobile
+  // -------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (!tabBarRef.current) return;
+    const activeButton = tabBarRef.current.querySelector<HTMLButtonElement>(
+      `[data-tab="${activeTab}"]`,
+    );
+    activeButton?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "center",
+    });
+  }, [activeTab]);
+
+  // -------------------------------------------------------------------------
+  // Helper: look up merchant name by id
+  // -------------------------------------------------------------------------
+
+  const merchantName = (merchantId: string): string => {
+    return merchants.find((m) => m.id === merchantId)?.name ?? "Campus stall";
   };
+
+  // -------------------------------------------------------------------------
+  // Render
+  // -------------------------------------------------------------------------
 
   return (
     <section className="overflow-hidden rounded-2xl border border-orange-200 bg-white shadow-sm">
-      <button
-        type="button"
-        aria-expanded={isOpen}
-        aria-controls="recommendation-preferences"
-        onClick={() => setIsOpen((open) => !open)}
-        className="flex w-full items-center justify-between gap-4 bg-gradient-to-r from-orange-600 to-amber-500 px-5 py-4 text-left text-white transition hover:from-orange-700 hover:to-amber-600 sm:px-6"
+      {/* ================================================================
+          Header bar – warm gradient, always visible (NOT collapsible)
+          ================================================================ */}
+      <div className="bg-gradient-to-r from-orange-600 to-amber-500 px-5 py-4 sm:px-6">
+        <h2 className="text-lg font-bold text-white">✨ Recommended For You</h2>
+        <p className="mt-0.5 text-sm text-orange-50">
+          Tap a category to discover meals
+        </p>
+      </div>
+
+      {/* ================================================================
+          Horizontal scrollable tab bar
+          – Uses snap-x for smooth mobile scrolling
+          – Pills highlight in brand orange when active
+          ================================================================ */}
+      <div
+        ref={tabBarRef}
+        className="flex gap-2 overflow-x-auto scroll-smooth px-4 py-3 snap-x sm:px-6"
+        role="tablist"
+        aria-label="Recommendation categories"
       >
-        <span>
-          <span className="block text-lg font-bold">✨ Recommended For You</span>
-          <span className="mt-1 block text-sm text-orange-50">Tell us what you feel like eating today.</span>
-        </span>
-        <span className="shrink-0 rounded-full bg-white/20 px-4 py-2 text-sm font-semibold">
-          {isOpen ? "Close" : "Choose preferences"}
-        </span>
-      </button>
-
-      {isOpen && <div id="recommendation-preferences" className="space-y-5 p-5 sm:p-6">
-        <div>
-          <h2 className="font-bold text-slate-900">What are you looking for?</h2>
-          <p className="mt-1 text-sm text-slate-500">Choose one or more preferences to narrow your picks.</p>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          {OPTIONS.map((option) => {
-            const selected = preferences.includes(option.id);
-            return <button
-              key={option.id}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => togglePreference(option.id)}
-              className={`rounded-xl border px-4 py-3 text-left transition ${selected ? "border-orange-600 bg-orange-50 ring-2 ring-orange-100" : "border-slate-200 bg-white hover:border-orange-300"}`}
+        {TABS.map((tab) => {
+          const isActive = activeTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              data-tab={tab.key}
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => setActiveTab(tab.key)}
+              className={`
+                flex shrink-0 snap-start items-center gap-1.5 rounded-full
+                px-4 py-2 text-sm font-semibold whitespace-nowrap
+                transition-all duration-200
+                ${
+                  isActive
+                    ? "text-white shadow-md"
+                    : "border border-slate-200 bg-white text-slate-700 hover:border-orange-300 hover:bg-orange-50"
+                }
+              `}
+              style={isActive ? { backgroundColor: BRAND_ORANGE } : undefined}
             >
-              <span className="block text-sm font-semibold text-slate-900">{selected ? "✓ " : ""}{option.label}</span>
-              <span className="mt-1 block text-xs text-slate-500">{option.helper}</span>
-            </button>;
-          })}
-          {preferences.length > 0 && <button
-            type="button"
-            onClick={() => setPreferences([])}
-            className="px-3 py-2 text-sm font-medium text-slate-500 underline underline-offset-2 hover:text-slate-900"
-          >
-            Clear choices
-          </button>}
-        </div>
+              <span className="text-base">{tab.emoji}</span>
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
 
-        {preferences.includes("not-spicy") && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          Spice matching uses words in the item name and description. Please check with the stall if you have a serious spice sensitivity.
-        </p>}
-        {preferences.includes("deals") && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          The menu doesn’t currently store discount prices, so Hot deals highlights the lowest-priced quarter of available items.
-        </p>}
+      {/* Active tab helper text */}
+      <p className="px-5 pb-2 text-xs text-slate-500 sm:px-6">
+        {TABS.find((t) => t.key === activeTab)?.helper}
+      </p>
 
-        {loading ? <p className="rounded-xl bg-slate-50 p-5 text-center text-sm text-slate-500">Loading menu recommendations…</p> : matches.length === 0 ? <p className="rounded-xl bg-slate-50 p-5 text-center text-sm text-slate-500">
-          No items match those choices right now. Try clearing one preference.
-        </p> : <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {matches.map((item) => {
-            const merchant = merchants.find((store) => store.id === item.merchant_id);
-            return <article key={item.id} className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-slate-50 p-4">
-              {item.image_url && <img src={item.image_url} alt={item.name} className="mb-3 h-32 w-full rounded-lg object-cover" />}
-              <p className="text-xs font-medium text-orange-700">{merchant?.name ?? "Campus stall"}</p>
-              <h3 className="mt-1 font-bold text-slate-900">{item.name}</h3>
-              <p className="mt-1 line-clamp-2 min-h-9 text-xs text-slate-500">{item.description || "A fresh pick from your campus stalls."}</p>
-              <div className="mt-4 flex items-center justify-between gap-3">
-                <span className="font-bold text-slate-900">RM {Number(item.price).toFixed(2)}</span>
-                <button
-                  type="button"
-                  onClick={() => onAddToCart(item)}
-                  className="rounded-lg bg-orange-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-orange-700"
-                >
-                  Add to cart
-                </button>
-              </div>
-            </article>;
-          })}
-        </div>}
-      </div>}
+      {/* ================================================================
+          Content area – filtered item grid
+          ================================================================ */}
+      <div className="px-4 pb-5 sm:px-6 sm:pb-6">
+        {/* ----------------------------------------------------------
+            Contextual disclaimers / notes shown for specific tabs
+            ---------------------------------------------------------- */}
+        {activeTab === "not-spicy" && (
+          <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            🌶️ Spice matching uses keywords in the item name and description.
+            Please double-check with the stall if you have a serious spice
+            sensitivity.
+          </p>
+        )}
+
+        {activeTab === "rahmah" && (
+          <p className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+            🍚 <strong>Menu Rahmah Madani</strong> — Affordable meals at RM 5 &amp;
+            below, supporting the Malaysian government&apos;s initiative for
+            accessible food.
+          </p>
+        )}
+
+        {activeTab === "hot-deals" && availableItems.length > 0 && (
+          <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            🔥 Hot Deals highlights the cheapest 25% of available items (at or
+            below RM&nbsp;{dealCutoff.toFixed(2)}).
+          </p>
+        )}
+
+        {/* ----------------------------------------------------------
+            Loading state
+            ---------------------------------------------------------- */}
+        {loading && (
+          <div className="rounded-xl bg-slate-50 p-8 text-center">
+            {/* Simple pulsing loader */}
+            <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-4 border-orange-200 border-t-orange-600" />
+            <p className="text-sm text-slate-500">
+              Loading menu recommendations…
+            </p>
+          </div>
+        )}
+
+        {/* ----------------------------------------------------------
+            Empty state – no matching items
+            ---------------------------------------------------------- */}
+        {!loading && filteredItems.length === 0 && (
+          <div className="rounded-xl bg-slate-50 p-8 text-center">
+            <p className="text-3xl">🍽️</p>
+            <p className="mt-2 text-sm font-medium text-slate-700">
+              No items match this category right now
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Try another tab — there might be something tasty elsewhere!
+            </p>
+          </div>
+        )}
+
+        {/* ----------------------------------------------------------
+            Item grid
+            – 1 col on very small screens (<400px)
+            – 2 cols on mobile (≥400px)
+            – 3 cols on desktop (≥768px)
+            ---------------------------------------------------------- */}
+        {!loading && filteredItems.length > 0 && (
+          <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 md:grid-cols-3">
+            {filteredItems.map((item) => (
+              <article
+                key={item.id}
+                className="group flex min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md"
+              >
+                {/* Item image (optional) */}
+                {item.image_url && (
+                  <img
+                    src={item.image_url}
+                    alt={item.name}
+                    loading="lazy"
+                    className="h-32 w-full object-cover sm:h-36"
+                  />
+                )}
+
+                <div className="flex flex-1 flex-col p-3 sm:p-4">
+                  {/* Merchant name */}
+                  <p className="text-xs font-medium text-orange-700">
+                    {merchantName(item.merchant_id)}
+                  </p>
+
+                  {/* Item name */}
+                  <h3 className="mt-1 text-sm font-bold leading-snug text-slate-900">
+                    {item.name}
+                  </h3>
+
+                  {/* Description */}
+                  <p className="mt-1 line-clamp-2 min-h-[2rem] text-xs leading-relaxed text-slate-500">
+                    {item.description || "A fresh pick from your campus stalls."}
+                  </p>
+
+                  {/* Price + CTA row — pushed to bottom with mt-auto */}
+                  <div className="mt-auto flex items-center justify-between gap-2 pt-3">
+                    {/* Price badge */}
+                    <span className="text-sm font-bold text-slate-900">
+                      RM&nbsp;{Number(item.price).toFixed(2)}
+                    </span>
+
+                    {/* Available indicator (green dot) + Add to cart */}
+                    <button
+                      type="button"
+                      onClick={() => onAddToCart(item)}
+                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-white transition hover:opacity-90 active:scale-95"
+                      style={{ backgroundColor: BRAND_ORANGE }}
+                    >
+                      {/* Small green dot to indicate available */}
+                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400" />
+                      Add to cart
+                    </button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
