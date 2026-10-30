@@ -48,7 +48,6 @@ export default function MerchantDashboard() {
   const [editDescription, setEditDescription] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editPhone, setEditPhone] = useState("");
-  const [editPassword, setEditPassword] = useState("");
   const [profileUpdateSuccess, setProfileUpdateSuccess] = useState("");
 
   // DuitNow QR Management States (File Upload)
@@ -129,15 +128,11 @@ export default function MerchantDashboard() {
     try {
       const token = localStorage.getItem("token");
       const payload: any = {
-        email: editEmail,
         phone_number: editPhone,
         store_name: editStoreName,
         location: editLocation,
         description: editDescription,
       };
-      if (editPassword) {
-        payload.password = editPassword;
-      }
 
       const res = await fetch(`${BACKEND_URL}/merchants/me`, {
         method: "PATCH",
@@ -156,7 +151,6 @@ export default function MerchantDashboard() {
       const updated = await res.json();
       setMerchant((prev) => prev ? { ...prev, name: updated.store_name, location: updated.location, description: updated.description } : null);
       setProfileUpdateSuccess("Store profile updated successfully!");
-      setEditPassword("");
       setIsEditingProfile(false);
     } catch (err: any) {
       setError(err.message);
@@ -374,7 +368,7 @@ export default function MerchantDashboard() {
                     type="email"
                     required
                     value={editEmail}
-                    onChange={(e) => setEditEmail(e.target.value)}
+                    readOnly
                     className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
                   />
                 </div>
@@ -389,14 +383,9 @@ export default function MerchantDashboard() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">New Password</label>
-                  <input
-                    type="password"
-                    value={editPassword}
-                    onChange={(e) => setEditPassword(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                    placeholder="Leave blank to keep"
-                  />
+                  <a href="/forgot-password" className="text-sm text-orange-700 underline">
+                    Change password with an email code
+                  </a>
                 </div>
               </div>
               <button

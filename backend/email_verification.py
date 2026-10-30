@@ -1,158 +1,85 @@
+"""Supabase email OTP bridge for existing PayNet password accounts.
+
+Supabase verifies mailbox ownership; only PayNet issues application JWTs.
+No OTPs, provider sessions, or passwords are logged or returned to the browser.
 """
-Email verification (one-time codes) for PayNet.
-
-Flow:
-1. Frontend asks POST /auth/send-code with an email + purpose ("register" or "reset").
-2. issue_code() creates a random 6-digit code, stores only its HASH with a 10-minute
-   expiry, and send_verification_email() mails the plain code to the user.
-3. The user types the code; the register / reset endpoint calls check_code(), which
-   verifies it, limits wrong guesses, and deletes the code so it works only once.
-
-Environment variables (backend/.env) for sending real emails (Gmail example):
-    SMTP_HOST=smtp.gmail.com        (optional, default shown)
-    SMTP_PORT=587                   (optional, default shown)
-    SMTP_USER=youraddress@gmail.com
-    SMTP_PASSWORD=your-16-char-app-password
-    SMTP_FROM=PayNet <youraddress@gmail.com>   (optional)
-
-If SMTP_USER / SMTP_PASSWORD are not set, the code is printed in the backend
-terminal instead, which is handy while developing.
-"""
+import logging
 import os
-import hmac
-import hashlib
-import secrets
-import asyncio
-import smtplib
 from datetime import datetime, timedelta, timezone
-from email.message import EmailMessage
-
+import httpx
 from fastapi import HTTPException
-from sqlalchemy import delete
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-
-from auth import SECRET_KEY
+from sqlalchemy import delete, select, text
 from models import EmailVerification
 
-CODE_TTL = timedelta(minutes=10)         # how long a code stays valid
-RESEND_COOLDOWN = timedelta(seconds=60)  # minimum gap between codes for one email
-MAX_ATTEMPTS = 5                         # wrong guesses allowed per code
+logger = logging.getLogger(__name__)
+CODE_TTL = timedelta(minutes=10)
+MAX_ATTEMPTS = 5
+PROVIDER_MARKER = "supabase-email-otp-v1"
 
-
-def normalize_email(email: str) -> str:
+def normalize_email(email):
     return email.strip().lower()
 
+async def lock_email(db, email):
+    # Transaction-scoped PostgreSQL lock also serializes requests across workers.
+    await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:email, 0))"), {"email": normalize_email(email)})
 
-def _hash_code(email: str, purpose: str, code: str) -> str:
-    # Keyed hash: a leaked database row can't be reversed without SECRET_KEY.
-    message = f"{email}:{purpose}:{code}".encode()
-    return hmac.new(SECRET_KEY.encode(), message, hashlib.sha256).hexdigest()
-
-
-def _generate_code() -> str:
-    return f"{secrets.randbelow(1_000_000):06d}"  # cryptographically secure, 000000-999999
-
-
-async def _latest_record(db: AsyncSession, email: str, purpose: str):
-    result = await db.execute(
-        select(EmailVerification)
-        .where(EmailVerification.email == email, EmailVerification.purpose == purpose)
-        .order_by(EmailVerification.created_at.desc())
-    )
-    return result.scalars().first()
-
-
-async def issue_code(db: AsyncSession, email: str, purpose: str) -> str:
-    """Create and store a new code (replacing any older one). Returns the plain code."""
-    email = normalize_email(email)
-    now = datetime.now(timezone.utc)
-
-    existing = await _latest_record(db, email, purpose)
-    if existing and existing.created_at and now - existing.created_at < RESEND_COOLDOWN:
-        wait = int((RESEND_COOLDOWN - (now - existing.created_at)).total_seconds()) + 1
-        raise HTTPException(status_code=429, detail=f"Please wait {wait} seconds before requesting another code.")
-
-    await db.execute(
-        delete(EmailVerification).where(
-            EmailVerification.email == email, EmailVerification.purpose == purpose
-        )
-    )
-    code = _generate_code()
-    db.add(EmailVerification(
-        email=email,
-        purpose=purpose,
-        code_hash=_hash_code(email, purpose, code),
-        expires_at=now + CODE_TTL,
-    ))
-    await db.commit()
-    return code
-
-
-async def check_code(db: AsyncSession, email: str, purpose: str, code: str) -> None:
-    """Raise HTTP 400 unless `code` is the valid, unexpired code for this email + purpose.
-    On success the code is deleted so it can't be reused."""
-    email = normalize_email(email)
-    now = datetime.now(timezone.utc)
-    invalid = HTTPException(status_code=400, detail="Invalid or expired verification code.")
-
-    record = await _latest_record(db, email, purpose)
-    if record is None:
-        raise invalid
-    if record.expires_at < now:
-        await db.delete(record)
-        await db.commit()
-        raise invalid
-    if record.attempts >= MAX_ATTEMPTS:
-        raise HTTPException(status_code=400, detail="Too many incorrect attempts. Please request a new code.")
-
-    if not hmac.compare_digest(record.code_hash, _hash_code(email, purpose, code.strip())):
-        record.attempts += 1
-        await db.commit()  # persist the failed attempt even though we raise below
-        raise invalid
-
-    await db.delete(record)
-    await db.commit()
-
-
-# --- SENDING EMAIL ----------------------------------------------------------
-
-def _send_sync(to: str, subject: str, body: str) -> None:
-    host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    port = int(os.getenv("SMTP_PORT", "587"))
-    user = os.getenv("SMTP_USER")
-    password = os.getenv("SMTP_PASSWORD")
-
-    message = EmailMessage()
-    message["From"] = os.getenv("SMTP_FROM", user)
-    message["To"] = to
-    message["Subject"] = subject
-    message.set_content(body)
-
-    with smtplib.SMTP(host, port, timeout=15) as server:
-        server.starttls()
-        server.login(user, password)
-        server.send_message(message)
-
-
-async def send_email(to: str, subject: str, body: str) -> bool:
-    """Send an email without blocking the server. Returns False if sending failed."""
-    if not os.getenv("SMTP_USER") or not os.getenv("SMTP_PASSWORD"):
-        print(f"\n[DEV EMAIL - SMTP not configured]\nTo: {to}\nSubject: {subject}\n{body}\n")
-        return True
+async def provider_request(path, payload):
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_PUBLISHABLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url.startswith("https://") or not key:
+        logger.error("Email verification configuration missing: SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY")
+        raise HTTPException(503, "Email verification is not configured. Please contact support.")
     try:
-        await asyncio.to_thread(_send_sync, to, subject, body)
-        return True
-    except Exception as exc:
-        print(f"[email] failed to send to {to}: {exc}")
-        return False
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(f"{url}/auth/v1/{path}", headers={"apikey": key}, json=payload)
+    except httpx.RequestError:
+        logger.warning("Supabase Auth connection failed")
+        raise HTTPException(503, "Email service is temporarily unavailable. Please try again later.") from None
+    if response.is_error:
+        # Never log provider bodies: they may contain addresses or other private data.
+        logger.warning("Supabase Auth %s returned HTTP %s", path, response.status_code)
+        if response.status_code == 429:
+            raise HTTPException(429, "Too many email requests. Please wait before trying again.")
+        if path == "verify" and response.status_code in (400, 401, 403, 422):
+            raise HTTPException(400, "Invalid or expired verification code.")
+        raise HTTPException(502, "Could not send or verify the email. Please contact support if this continues.")
+    return response.json()
 
+async def issue_code(db, email, purpose):
+    email = normalize_email(email)
+    if purpose not in ("register", "reset"):
+        raise HTTPException(400, "Invalid verification purpose.")
+    await lock_email(db, email)
+    now = datetime.now(timezone.utc)
+    existing = (await db.execute(select(EmailVerification).where(EmailVerification.email == email).order_by(EmailVerification.created_at.desc()))).scalars().first()
+    if existing and now - existing.created_at < timedelta(seconds=60):
+        raise HTTPException(429, "Please wait 60 seconds before requesting another code.")
+    # One outstanding purpose per mailbox; Supabase has one email OTP per mailbox.
+    await provider_request("otp", {"email": email, "create_user": True})
+    await db.execute(delete(EmailVerification).where(EmailVerification.email == email))
+    db.add(EmailVerification(email=email, purpose=purpose, code_hash=PROVIDER_MARKER,
+                             attempts=0, expires_at=now + CODE_TTL, created_at=now))
+    await db.commit()
 
-async def send_verification_email(to: str, code: str, purpose: str) -> bool:
-    action = "reset your password" if purpose == "reset" else "create your account"
-    body = (
-        f"Your PayNet verification code is: {code}\n\n"
-        f"Enter this code to {action}. It expires in 10 minutes.\n"
-        "If you didn't request this, you can safely ignore this email."
-    )
-    return await send_email(to, "Your PayNet verification code", body)
+async def check_code(db, email, purpose, code):
+    email = normalize_email(email)
+    await lock_email(db, email)
+    record = (await db.execute(select(EmailVerification).where(EmailVerification.email == email, EmailVerification.purpose == purpose).with_for_update())).scalars().first()
+    if not record or record.code_hash != PROVIDER_MARKER or record.expires_at <= datetime.now(timezone.utc):
+        raise HTTPException(400, "Invalid or expired verification code. Please request a new code.")
+    if record.attempts >= MAX_ATTEMPTS:
+        raise HTTPException(429, "Too many incorrect attempts. Please request a new code.")
+    try:
+        if not code.isascii() or not code.isdigit() or not 6 <= len(code) <= 8:
+            raise HTTPException(400, "Enter the 6 to 8 digit code from your email.")
+        result = await provider_request("verify", {"email": email, "token": code, "type": "email"})
+        user = result.get("user") or {}
+        if normalize_email(user.get("email", "")) != email or not user.get("email_confirmed_at"):
+            raise HTTPException(400, "Email verification failed.")
+    except HTTPException as exc:
+        if exc.status_code == 400:
+            record.attempts += 1
+            await db.commit()
+        raise
+    await db.delete(record)
+    # Caller commits consumption together with account creation/password change.

@@ -21,10 +21,9 @@ from database import engine, get_db
 from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem, BoulevardStall, RentalBooking, Event, EventMerchant
 
 # --- NEW AUTH IMPORTS ---
-from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN
-from email_verification import issue_code, check_code, send_verification_email
+from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN, validate_password, password_stamp
+from email_verification import check_code, normalize_email
 
-from email_service import send_verification_email, generate_verification_code, hash_code, get_expiration_time
 from auth_endpoints import (
     SendVerificationRequest,
     VerifyCodeRequest,
@@ -217,9 +216,11 @@ async def get_recommended_items(
 # 1. Route to create a user first (Merchants need a user_id)
 @app.post("/users", response_model=dict)
 async def create_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
-    existing_user = await db.execute(select(User).where(User.email == user_data.email))
+    existing_user = await db.execute(select(User).where(func.lower(func.trim(User.email)) == normalize_email(user_data.email)))
     if existing_user.scalars().first():
         raise HTTPException(status_code=400, detail="Email already registered.")
+    validate_password(user_data.password)
+    user_data.email = normalize_email(user_data.email)
     await check_code(db, user_data.email, "register", user_data.verification_code)
 
     new_user = User(
@@ -227,7 +228,8 @@ async def create_user(user_data: UserCreate, db: AsyncSession = Depends(get_db))
         email=user_data.email,
         phone_number=user_data.phone_number,
         password_hash=hash_password(user_data.password),
-        role=user_data.role
+        role="customer",
+        email_verified=True
     )
     db.add(new_user)
     try:
@@ -245,6 +247,8 @@ async def update_my_profile(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    if update_data.email is not None and normalize_email(update_data.email) != normalize_email(current_user.email):
+        raise HTTPException(400, "Changing the account email is not available here. Please contact support.")
     if update_data.email is not None:
         existing = await db.execute(select(User).where(User.email == update_data.email))
         user_with_email = existing.scalars().first()
@@ -256,7 +260,7 @@ async def update_my_profile(
         current_user.phone_number = update_data.phone_number
 
     if update_data.password is not None and update_data.password.strip() != "":
-        current_user.password_hash = hash_password(update_data.password)
+        raise HTTPException(400, "Use the email verification password-reset page to change your password.")
 
     try:
         await db.commit()
@@ -381,6 +385,8 @@ async def update_my_merchant_profile(
     if current_user.role != "merchant":
         raise HTTPException(status_code=403, detail="Access denied. User is not a merchant.")
 
+    if update_data.email is not None and normalize_email(update_data.email) != normalize_email(current_user.email):
+        raise HTTPException(400, "Changing the account email is not available here. Please contact support.")
     if update_data.email is not None:
         existing = await db.execute(select(User).where(User.email == update_data.email))
         user_with_email = existing.scalars().first()
@@ -392,7 +398,7 @@ async def update_my_merchant_profile(
         current_user.phone_number = update_data.phone_number
 
     if update_data.password is not None and update_data.password.strip() != "":
-        current_user.password_hash = hash_password(update_data.password)
+        raise HTTPException(400, "Use the email verification password-reset page to change your password.")
 
     result = await db.execute(select(Merchant).where(Merchant.user_id == current_user.id))
     merchant = result.scalars().first()
@@ -459,51 +465,29 @@ async def upload_merchant_qr(
 
 @app.post("/auth/send-code")
 async def send_verification_code(payload: SendCodeRequest, db: AsyncSession = Depends(get_db)):
-    existing = await db.execute(select(User).where(User.email == payload.email))
-    user_exists = existing.scalars().first() is not None
-
-    if payload.purpose == "register" and user_exists:
-        raise HTTPException(status_code=400, detail="Email already registered.")
-    if payload.purpose == "reset" and not user_exists:
-        return {"message": "If that email is registered, a verification code has been sent."}
-
-    code = await issue_code(db, payload.email, payload.purpose)
-    if not await send_verification_email(payload.email, code, payload.purpose):
-        raise HTTPException(status_code=502, detail="Could not send the email. Please try again later.")
-    return {"message": "Verification code sent."}
+    return await send_verification(SendVerificationRequest(email=payload.email, purpose=payload.purpose), db)
 
 
 @app.post("/auth/forgot-password")
 async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
-    await check_code(db, payload.email, "reset", payload.verification_code)
-    result = await db.execute(select(User).where(User.email == payload.email))
-    user = result.scalars().first()
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="User with this email not found.")
-    
-    user.password_hash = hash_password(payload.new_password)
-    
-    try:
-        await db.commit()
-        return {"message": "Password updated successfully!"}
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+    return await verify_code(VerifyCodeRequest(email=payload.email, purpose="reset", code=payload.verification_code, password=payload.new_password), db)
 
 
 @app.post("/auth/register-merchant", response_model=dict)
 async def register_merchant(data: MerchantRegisterRequest, db: AsyncSession = Depends(get_db)):
-    existing_user = await db.execute(select(User).where(User.email == data.email))
+    existing_user = await db.execute(select(User).where(func.lower(func.trim(User.email)) == normalize_email(data.email)))
     if existing_user.scalars().first():
         raise HTTPException(status_code=400, detail="Email already registered.")
+    validate_password(data.password)
+    data.email = normalize_email(data.email)
     await check_code(db, data.email, "register", data.verification_code)
 
     new_user = User(
         name=data.name,
         email=data.email,
         password_hash=hash_password(data.password),
-        role="merchant"
+        role="merchant",
+        email_verified=True
     )
     db.add(new_user)
     await db.flush() 
@@ -549,10 +533,10 @@ async def get_my_merchant_profile(
 
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == login_data.email))
+    result = await db.execute(select(User).where(func.lower(func.trim(User.email)) == normalize_email(login_data.email)))
     user = result.scalars().first()
 
-    if not user or not verify_password(login_data.password, user.password_hash):
+    if not user or user.is_deleted or not verify_password(login_data.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -560,7 +544,7 @@ async def login(login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
         )
 
     access_token = create_access_token(
-        data={"sub": str(user.id), "role": user.role, "email": user.email}
+        data={"sub": str(user.id), "role": user.role, "email": user.email, "pwd": password_stamp(user.password_hash)}
     )
 
     return {

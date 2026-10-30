@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL").replace(
 
 engine = create_async_engine(
     DATABASE_URL,
-    echo=True,
+    echo=False,
     connect_args={"statement_cache_size": 0}
 )
 

@@ -28,6 +28,9 @@ export default function VendorRegisterPage() {
     setError("");
 
     try {
+      if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^a-zA-Z0-9\s]/.test(password)) {
+        throw new Error("Use at least 12 characters with uppercase, lowercase, a number and a symbol.");
+      }
       const res = await fetch(`${BACKEND_URL}/auth/send-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -43,16 +46,6 @@ export default function VendorRegisterPage() {
       }
 
       setStep("verification");
-      // Store details in sessionStorage
-      sessionStorage.setItem("registerData", JSON.stringify({ 
-        name, 
-        email, 
-        phoneNumber, 
-        password,
-        storeName,
-        location,
-        accountType
-      }));
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -76,6 +69,9 @@ export default function VendorRegisterPage() {
           name,
           password,
           phone_number: phoneNumber,
+          account_type: accountType,
+          store_name: storeName,
+          location,
         }),
       });
 
@@ -89,6 +85,8 @@ export default function VendorRegisterPage() {
       // Save token
       localStorage.setItem("token", data.access_token);
       localStorage.setItem("user_id", data.user_id);
+      localStorage.setItem("userRole", data.role);
+      localStorage.setItem("userName", data.name);
       
       // Clear sessionStorage
       sessionStorage.removeItem("registerData");
@@ -244,7 +242,7 @@ export default function VendorRegisterPage() {
             <div>
               <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Password</label>
               <input
-                type="password"
+                type="password" minLength={12} autoComplete="new-password" title="At least 12 characters with uppercase, lowercase, a number and a symbol"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -310,19 +308,19 @@ export default function VendorRegisterPage() {
               <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Verification Code</label>
               <input
                 type="text"
-                maxLength={6}
+                maxLength={8} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6,8}"
                 required
                 value={verificationCode}
-                onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
                 placeholder="000000"
                 className="w-full px-4 py-3 text-center text-2xl font-bold tracking-widest border-2 border-orange-200 rounded-lg focus:outline-none focus:border-orange-500"
               />
-              <p className="text-xs text-gray-500 mt-1">Code expires in 5 minutes</p>
+              <p className="text-xs text-gray-500 mt-1">Code expires in 10 minutes. Use the latest code from your email.</p>
             </div>
 
             <button
               type="submit"
-              disabled={loading || verificationCode.length !== 6}
+              disabled={loading || verificationCode.length < 6}
               className="w-full bg-orange-600 hover:bg-orange-700 text-white font-semibold py-3 rounded-xl text-sm transition-all cursor-pointer disabled:opacity-50"
             >
               {loading ? "Creating Account..." : "Verify & Create Account"}

@@ -85,7 +85,6 @@ export default function ProfilePage() {
 
   // ── Edit mode state ──
   const [isEditing, setIsEditing] = useState(false);
-  const [editPassword, setEditPassword] = useState("");
   const [updateSuccess, setUpdateSuccess] = useState("");
 
   // ── Profile picture (stored in localStorage as base64 DataURL) ──
@@ -234,28 +233,7 @@ export default function ProfilePage() {
       localStorage.setItem("preferredName", editPreferredName);
       setPreferredName(editPreferredName);
 
-      // Only call backend if user changed their password
-      if (editPassword) {
-        const token = localStorage.getItem("token");
-        const payload: any = { password: editPassword };
-
-        const res = await fetch(`${BACKEND_URL}/users/me`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(payload),
-        });
-
-        if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.detail || "Failed to update password.");
-        }
-      }
-
       setUpdateSuccess("Profile updated successfully!");
-      setEditPassword("");
       setIsEditing(false);
     } catch (err: any) {
       setError(err.message);
@@ -529,8 +507,7 @@ export default function ProfilePage() {
                   setIsEditing(!isEditing);
                   if (!isEditing) {
                     setEditPreferredName(preferredName);
-                    setEditPassword("");
-                  }
+                                }
                 }}
                 className="px-3.5 py-2 text-xs font-semibold text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-xl transition-colors cursor-pointer"
               >
@@ -578,19 +555,9 @@ export default function ProfilePage() {
                 </p>
               </div>
 
-              {/* Password */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">
-                  New Password (leave blank to keep current)
-                </label>
-                <input
-                  type="password"
-                  value={editPassword}
-                  onChange={(e) => setEditPassword(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                  placeholder="••••••••"
-                />
-              </div>
+              <a href="/forgot-password" className="text-orange-700 underline">
+                Change password with an email verification code
+              </a>
 
               {/* Submit */}
               <button

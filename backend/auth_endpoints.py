@@ -1,224 +1,83 @@
-# backend/auth_endpoints.py
-# Add these endpoints to your main.py FastAPI app
-
+from typing import Literal, Optional
 from datetime import datetime, timezone
 from fastapi import HTTPException, Depends, status
+from pydantic import BaseModel, EmailStr, field_validator
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from sqlalchemy import delete
-from pydantic import BaseModel, EmailStr
-from typing import Optional
-from uuid import UUID
-
+from sqlalchemy.exc import IntegrityError
 from database import get_db
-from models import User, EmailVerification
-from email_service import generate_verification_code, hash_code, send_verification_email, get_expiration_time
-from auth import hash_password, verify_password, create_access_token, get_current_user
+from models import User, Merchant
+from email_verification import issue_code, check_code, normalize_email
+from auth import hash_password, validate_password, verify_password, create_access_token, get_current_user, password_stamp
 
-
-# ============= PYDANTIC MODELS =============
-class SendVerificationRequest(BaseModel):
+class EmailRequest(BaseModel):
     email: EmailStr
-    purpose: str = "register"  # "register" or "reset"
+    @field_validator("email", mode="before")
+    @classmethod
+    def clean_email(cls, value):
+        return normalize_email(value)
 
+class SendVerificationRequest(EmailRequest):
+    purpose: Literal["register", "reset"] = "register"
 
-class VerifyCodeRequest(BaseModel):
-    email: EmailStr
+class VerifyCodeRequest(SendVerificationRequest):
     code: str
-    purpose: str = "register"
-    password: Optional[str] = None  # Only for reset purposes
-    name: Optional[str] = None  # Only for register purposes
-    phone_number: Optional[str] = None  # Only for register purposes
-
+    password: str
+    name: Optional[str] = None
+    phone_number: Optional[str] = None
+    account_type: Literal["customer", "merchant", "popup"] = "customer"
+    store_name: Optional[str] = None
+    location: Optional[str] = None
 
 class DeleteAccountRequest(BaseModel):
     password: str
 
+async def find_user(db, email):
+    return (await db.execute(select(User).where(func.lower(func.trim(User.email)) == normalize_email(email)))).scalars().first()
 
-# ============= ENDPOINTS (Add to main.py) =============
+async def send_verification(req, db):
+    user = await find_user(db, req.email)
+    if req.purpose == "register" and user:
+        raise HTTPException(400, "Email already registered. Please log in or reset your password.")
+    if req.purpose == "reset" and (not user or user.is_deleted):
+        return {"message": "If this account exists, a verification code has been sent."}
+    await issue_code(db, req.email, req.purpose)
+    return {"message": "If this account is eligible, a verification code has been sent."}
 
-# 1. SEND VERIFICATION CODE
-# POST /auth/send-verification
-async def send_verification(
-    req: SendVerificationRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """Send a 6-digit verification code to user's email"""
-    
+async def verify_code(req, db):
+    validate_password(req.password)
     if req.purpose == "register":
-        # Check if email already exists
-        result = await db.execute(select(User).where(User.email == req.email))
-        existing_user = result.scalars().first()
-        if existing_user and not existing_user.is_deleted:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
-            )
-    elif req.purpose == "reset":
-        # Check if user exists and is not deleted
-        result = await db.execute(select(User).where(User.email == req.email))
-        user = result.scalars().first()
-        if not user or user.is_deleted:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-    
-    # Generate code
-    code = generate_verification_code()
-    code_hash = hash_code(code)
-    
-    # Delete any previous codes for this email & purpose (FIXED SQLAlchemy 2.0 syntax)
-    await db.execute(
-        delete(EmailVerification).where(
-            (EmailVerification.email == req.email) &
-            (EmailVerification.purpose == req.purpose)
-        )
-    )
-    await db.commit()
-    
-    # Store new code
-    verification = EmailVerification(
-        email=req.email,
-        purpose=req.purpose,
-        code_hash=code_hash,
-        attempts=0,
-        expires_at=get_expiration_time()
-    )
-    db.add(verification)
-    await db.commit()
-    
-    # Send email
-    success = await send_verification_email(req.email, code, req.purpose)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to send verification email"
-        )
-    
-    return {"message": "Verification code sent to email"}
-
-
-# 2. VERIFY CODE & COMPLETE ACTION
-# POST /auth/verify-code
-async def verify_code(
-    req: VerifyCodeRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """Verify the code and complete registration or password reset"""
-    
-    # Find verification record
-    result = await db.execute(
-        select(EmailVerification).where(
-            (EmailVerification.email == req.email) &
-            (EmailVerification.purpose == req.purpose)
-        )
-    )
-    verification = result.scalars().first()
-    
-    if not verification:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No verification code found for this email"
-        )
-    
-    # Check expiration
-    if datetime.now(timezone.utc) > verification.expires_at:
-        await db.execute(delete(EmailVerification).where(EmailVerification.id == verification.id))
-        await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Verification code expired"
-        )
-    
-    # Check attempts (max 5)
-    if verification.attempts >= 5:
-        await db.execute(delete(EmailVerification).where(EmailVerification.id == verification.id))
-        await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many failed attempts. Please request a new code."
-        )
-    
-    # Verify code
-    if hash_code(req.code) != verification.code_hash:
-        verification.attempts += 1
-        await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid verification code"
-        )
-    
-    # Code is valid
+        if not req.name or not req.name.strip():
+            raise HTTPException(400, "Name is required.")
+        if req.account_type == "merchant" and not (req.store_name or "").strip():
+            raise HTTPException(400, "Store name is required.")
+    await check_code(db, req.email, req.purpose, req.code.strip())
+    user = await find_user(db, req.email)
     if req.purpose == "register":
-        # Create new user
-        if not req.name or not req.password:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Name and password required for registration"
-            )
-        
-        # Check if email already exists (shouldn't happen but double-check)
-        result = await db.execute(select(User).where(User.email == req.email))
-        if result.scalars().first():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
-            )
-        
-        new_user = User(
-            name=req.name,
-            email=req.email,
-            phone_number=req.phone_number,
-            password_hash=hash_password(req.password),
-            email_verified=True,
-            role="customer"
-        )
-        db.add(new_user)
-        await db.commit()
-        await db.refresh(new_user)
-        
-        # Delete verification record
-        await db.execute(delete(EmailVerification).where(EmailVerification.id == verification.id))
-        await db.commit()
-        
-        # Create access token
-        access_token = create_access_token(str(new_user.id))
-        
-        return {
-            "message": "Registration successful",
-            "user_id": str(new_user.id),
-            "access_token": access_token,
-            "token_type": "bearer"
-        }
-    
-    elif req.purpose == "reset":
-        # Reset password
-        if not req.password:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Password required for password reset"
-            )
-        
-        # Find user
-        result = await db.execute(select(User).where(User.email == req.email))
-        user = result.scalars().first()
+        if user:
+            raise HTTPException(400, "Email already registered.")
+        user = User(name=req.name.strip(), email=req.email, phone_number=req.phone_number,
+                    password_hash=hash_password(req.password), email_verified=True,
+                    role="customer" if req.account_type == "customer" else "merchant")
+        db.add(user)
+        await db.flush()
+        if req.account_type == "merchant":
+            db.add(Merchant(user_id=user.id, name=req.store_name.strip(), location=req.location))
+    else:
         if not user or user.is_deleted:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
-        # Update password
+            raise HTTPException(400, "Unable to reset this account.")
         user.password_hash = hash_password(req.password)
+        user.email_verified = True
+    try:
         await db.commit()
-        
-        # Delete verification record
-        await db.execute(delete(EmailVerification).where(EmailVerification.id == verification.id))
-        await db.commit()
-        
-        return {"message": "Password reset successful"}
-
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, "Account already exists. Please log in.") from None
+    if req.purpose == "reset":
+        return {"message": "Password reset successful. Please log in again."}
+    token = create_access_token({"sub": str(user.id), "role": user.role, "email": user.email, "pwd": password_stamp(user.password_hash)})
+    return {"message": "Registration successful", "access_token": token, "token_type": "bearer",
+            "user_id": str(user.id), "role": user.role, "name": user.name}
 
 # 3. DELETE ACCOUNT (SOFT DELETE)
 # DELETE /users/me/account
