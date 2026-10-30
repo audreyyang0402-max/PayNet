@@ -46,25 +46,23 @@ async def lifespan(app: FastAPIOffline):
 app = FastAPIOffline(lifespan=lifespan)
 
 # --- MOUNT STATIC UPLOADS DIRECTORY ---
+# Fresh deployments may not contain this runtime-created directory.
+os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# --- EXPLICIT CORS CONFIGURATION (FIXES VERCEL PRODUCTION CORS BLOCKING) ---
-origins = [
-    "https://payvolution.app",
-    "https://www.payvolution.app",
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3000",
-]
-
+# --- NEW CORS CONFIGURATION ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    # Covers all Vercel preview URLs (e.g. pay-cn53d2njn-audreyyang0402-1031.vercel.app)
-    allow_origin_regex=r"https://.*-audreyyang0402-1031\.vercel\.app",
+    allow_origins=[
+        origin.strip().rstrip("/")
+        for origin in os.getenv(
+            "CORS_ALLOWED_ORIGINS",
+            "http://localhost:3000,http://localhost:5000,http://127.0.0.1:3000,https://pay-net-iota.vercel.app,https://payvolution.app,https://www.payvolution.app"
+        ).split(",") if origin.strip()
+    ], 
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all HTTP methods (GET, POST, PUT, DELETE, PATCH, OPTIONS)
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"], 
+    allow_headers=["*"], 
 )
 
 # Pydantic Schemas for validation
@@ -581,7 +579,7 @@ async def get_me(current_user: User = Depends(get_current_user)):
         "name": current_user.name,
         "email": current_user.email,
         "phone_number": current_user.phone_number,
-        "role": current_user.role
+        "role": current_user.role,
     }
 
 
@@ -1074,6 +1072,7 @@ async def update_order_status(
     try:
         await db.commit()
         await db.refresh(order)
+
 
         return {
             "message": "Order status updated successfully",
