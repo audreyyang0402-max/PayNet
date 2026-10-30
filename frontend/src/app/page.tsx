@@ -574,7 +574,7 @@ export default function Home() {
                   className="h-8 w-8 sm:h-9 sm:w-9 rounded-xl bg-white/20 p-1.5 object-contain backdrop-blur-sm"
                 />
                 <div>
-                  <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight">Payvolution Events</h2>
+                  <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight">Payvolution Event</h2>
                   <p className="text-xs text-purple-200">Limited-time pop-up campus stalls & treats</p>
                 </div>
               </div>
