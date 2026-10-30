@@ -275,7 +275,7 @@ export default function MerchantDashboard() {
         
         {/* Header Section */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
-          <div className="flex justify-between items-start">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <span className="bg-orange-50 text-orange-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block">
                 Merchant Portal
@@ -289,7 +289,7 @@ export default function MerchantDashboard() {
               )}
             </div>
             
-            <div className="flex items-center space-x-3">
+            <div className="flex flex-wrap items-center gap-2">
               <Link href="/vendor/analytics" className="px-3.5 py-2 text-xs font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-xl transition-colors">
                 Analytics
               </Link>
@@ -311,9 +311,18 @@ export default function MerchantDashboard() {
               >
                 {isEditingProfile ? "Cancel" : "Edit Store Profile"}
               </button>
+
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                className="px-3.5 py-2 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-colors cursor-pointer"
+              >
+                Delete Account
+              </button>
+
               <button 
                 onClick={handleLogout}
-                className="text-gray-500 hover:text-red-600 text-sm font-medium transition-colors cursor-pointer"
+                className="px-3.5 py-2 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors cursor-pointer"
               >
                 Log Out
               </button>
@@ -325,95 +334,78 @@ export default function MerchantDashboard() {
           )}
 
           {isEditingProfile && (
-            <div className="space-y-4 pt-4 border-t border-gray-100">
-              <form onSubmit={handleUpdateMerchantProfile} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store / Stall Name</label>
-                    <input
-                      type="text"
-                      required
-                      value={editStoreName}
-                      onChange={(e) => setEditStoreName(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Campus Location</label>
-                    <input
-                      type="text"
-                      required
-                      value={editLocation}
-                      onChange={(e) => setEditLocation(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                    />
-                  </div>
-                </div>
+            <form onSubmit={handleUpdateMerchantProfile} className="space-y-4 pt-4 border-t border-gray-100">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store Bio & Opening Hours</label>
-                  <textarea
-                    rows={2}
-                    value={editDescription}
-                    onChange={(e) => setEditDescription(e.target.value)}
+                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store / Stall Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={editStoreName}
+                    onChange={(e) => setEditStoreName(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                    placeholder="Operating Hours: Mon-Fri 8 AM - 5 PM"
                   />
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Email Address</label>
-                    <input
-                      type="email"
-                      required
-                      value={editEmail}
-                      onChange={(e) => setEditEmail(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Phone Number</label>
-                    <input
-                      type="tel"
-                      value={editPhone}
-                      onChange={(e) => setEditPhone(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                      placeholder="+60123456789"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">New Password</label>
-                    <input
-                      type="password"
-                      value={editPassword}
-                      onChange={(e) => setEditPassword(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                      placeholder="Leave blank to keep"
-                    />
-                  </div>
-                </div>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
-                >
-                  Save Changes
-                </button>
-              </form>
-
-              {/* ── Danger Zone (Merchant Account Deletion) ── */}
-              <div className="pt-4 border-t border-gray-100 flex items-center justify-between gap-4">
                 <div>
-                  <h3 className="text-xs font-bold text-red-600 uppercase">Danger Zone</h3>
-                  <p className="text-xs text-gray-400">Permanently delete your merchant account and remove your store.</p>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Campus Location</label>
+                  <input
+                    type="text"
+                    required
+                    value={editLocation}
+                    onChange={(e) => setEditLocation(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                  />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowDeleteModal(true)}
-                  className="px-3.5 py-2 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-colors cursor-pointer flex-shrink-0"
-                >
-                  Delete Account
-                </button>
               </div>
-            </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store Bio & Opening Hours</label>
+                <textarea
+                  rows={2}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                  placeholder="Operating Hours: Mon-Fri 8 AM - 5 PM"
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    required
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Phone Number</label>
+                  <input
+                    type="tel"
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                    placeholder="+60123456789"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">New Password</label>
+                  <input
+                    type="password"
+                    value={editPassword}
+                    onChange={(e) => setEditPassword(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                    placeholder="Leave blank to keep"
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
+              >
+                Save Changes
+              </button>
+            </form>
           )}
         </div>
 
