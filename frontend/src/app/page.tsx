@@ -488,9 +488,6 @@ export default function Home() {
               <h1 className="text-lg sm:text-xl md:text-2xl font-black tracking-tight text-slate-900 group-hover:text-[#F04B14] transition-colors">
                 Sunway Express Lane
               </h1>
-              <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-orange-600">
-                Campus Food Ordering
-              </span>
             </div>
           </Link>
 
@@ -501,7 +498,7 @@ export default function Home() {
               href="/vendor/rental"
               className="hidden sm:inline-flex bg-orange-50 hover:bg-orange-100 text-orange-700 text-xs sm:text-sm font-bold px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl transition border border-orange-200/60"
             >
-              🎪 Rentals
+             Rentals
             </Link>
 
             {/* 🛒 Cart Button — Positioned at the LEFT-HAND SIDE of My Profile */}
@@ -573,7 +570,7 @@ export default function Home() {
               <div className="flex items-center gap-3">
                 <img
                   src="/payvolution-events.png"
-                  alt="Payvolution Events"
+                  alt="Payvolution Event"
                   className="h-8 w-8 sm:h-9 sm:w-9 rounded-xl bg-white/20 p-1.5 object-contain backdrop-blur-sm"
                 />
                 <div>
