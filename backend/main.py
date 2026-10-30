@@ -53,12 +53,15 @@ origins = [
     "https://payvolution.app",
     "https://www.payvolution.app",
     "http://localhost:3000",
-    "http://127.0.0.1:3000"
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # Explicitly allow your domain and local testing
+    allow_origins=origins,
+    # Covers all Vercel preview URLs (e.g. pay-cn53d2njn-audreyyang0402-1031.vercel.app)
+    allow_origin_regex=r"https://.*-audreyyang0402-1031\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],  # Allows all HTTP methods (GET, POST, PUT, DELETE, PATCH, OPTIONS)
     allow_headers=["*"],  # Allows all headers
