@@ -18,6 +18,7 @@
 import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
+import FoodDetailsDialog from "@/components/FoodDetailsDialog";
 import RecommendationWidget from "@/components/RecommendationWidget";
 
 // ─── Type Definitions ────────────────────────────────────────────────────────
@@ -99,6 +100,7 @@ export default function Home() {
 
   // ── State: Cart (single stall at a time) ──
   const [cart, setCart] = useState<{ [key: string]: { item: MenuItem; quantity: number } }>({});
+  const [selectedFood, setSelectedFood] = useState<MenuItem | null>(null);
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
 
   // ── State: Animations & Toasts ──
@@ -233,6 +235,7 @@ export default function Home() {
 
   // ─── 5. Add to Cart Handler (with jumping animation & toast) ───────────────
   const addToCart = (item: MenuItem) => {
+    if (!item.is_available) return false;
     // If switching stalls, prompt user to confirm cart reset
     if (selectedMerchantId && selectedMerchantId !== item.merchant_id && Object.keys(cart).length > 0) {
       const currentMerchant = merchants.find((merchant) => merchant.id === selectedMerchantId);
@@ -240,7 +243,7 @@ export default function Home() {
       const shouldSwitch = window.confirm(
         `Your cart has items from "${currentMerchant?.name ?? "another stall"}". Switching to "${nextMerchant?.name ?? "this stall"}" will clear it. Continue?`
       );
-      if (!shouldSwitch) return;
+      if (!shouldSwitch) return false;
       setCart({});
     }
 
@@ -266,6 +269,7 @@ export default function Home() {
     setTimeout(() => {
       setToastMessage((msg) => (msg?.includes(item.name) ? null : msg));
     }, 4000);
+    return true;
   };
 
   // ─── 6. Remove from Cart Handler ──────────────────────────────────────────
@@ -362,7 +366,8 @@ export default function Home() {
     const isRahmah = Number(item.price) <= 5.0;
 
     return (
-      <article className="flex w-52 sm:w-60 shrink-0 snap-start flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
+      <article className="relative flex w-52 sm:w-60 shrink-0 snap-start flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
+        <button type="button" onClick={() => setSelectedFood(item)} aria-label={`View details for ${item.name}`} className="absolute inset-0 z-10 rounded-2xl focus-visible:outline-2 focus-visible:outline-orange-600" />
         {/* Item image */}
         <div className="relative h-28 sm:h-36 w-full overflow-hidden bg-slate-100">
           {item.image_url ? (
@@ -423,7 +428,7 @@ export default function Home() {
               type="button"
               onClick={() => addToCart(item)}
               disabled={!item.is_available}
-              className="rounded-lg bg-[#F04B14] px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-orange-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+              className="relative z-20 rounded-lg bg-[#F04B14] px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-orange-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
             >
               + Add
             </button>
@@ -590,8 +595,9 @@ export default function Home() {
               {eventItems.map((item) => (
                 <div
                   key={item.id}
-                  className="flex w-[260px] sm:w-[300px] shrink-0 snap-start items-center gap-3 rounded-xl bg-white p-3 shadow-md border border-white/40 text-slate-900"
+                  className="relative flex w-[260px] sm:w-[300px] shrink-0 snap-start items-center gap-3 rounded-xl bg-white p-3 shadow-md border border-white/40 text-slate-900"
                 >
+                  <button type="button" onClick={() => setSelectedFood(item)} aria-label={`View details for ${item.name}`} className="absolute inset-0 z-10 rounded-xl focus-visible:outline-2 focus-visible:outline-orange-600" />
                   {item.image_url ? (
                     <img
                       src={item.image_url}
@@ -623,7 +629,7 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={() => addToCart(item)}
-                        className="rounded-lg bg-[#F04B14] px-3 py-1 text-xs font-bold text-white transition hover:bg-orange-700 active:scale-95"
+                        className="relative z-20 rounded-lg bg-[#F04B14] px-3 py-1 text-xs font-bold text-white transition hover:bg-orange-700 active:scale-95"
                       >
                         + Add
                       </button>
@@ -647,6 +653,7 @@ export default function Home() {
           items={allMenuItems}
           merchants={merchants.filter((m) => m.id !== EVENT_MERCHANT_ID)}
           onAddToCart={addToCart}
+          onViewItem={setSelectedFood}
           loading={menusLoading}
         />
 
@@ -757,6 +764,13 @@ export default function Home() {
       {/* ────────────────────────────────────────────────────────────────
           CART DRAWER (all screen sizes)
       ──────────────────────────────────────────────────────────────── */}
+      {selectedFood && <FoodDetailsDialog key={selectedFood.id} item={selectedFood} merchant={merchants.find(m => m.id === selectedFood.merchant_id)} onClose={() => setSelectedFood(null)} onAdd={() => {
+        if (addToCart(selectedFood)) {
+          setSelectedFood(null);
+          setToastMessage(null);
+          setIsMobileCartOpen(true);
+        }
+      }} />}
       {isMobileCartOpen && (
         <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/60 backdrop-blur-sm animate-fade-in">
           {/* Backdrop click to dismiss */}

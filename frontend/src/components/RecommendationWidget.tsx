@@ -24,6 +24,7 @@ interface RecommendationMerchant {
 interface RecommendationWidgetProps {
   items: RecommendationItem[];
   merchants: RecommendationMerchant[];
+  onViewItem?: (item: RecommendationItem) => void;
   onAddToCart: (item: RecommendationItem) => void;
   loading: boolean;
 }
@@ -66,6 +67,7 @@ export default function RecommendationWidget({
   items,
   merchants,
   onAddToCart,
+  onViewItem,
   loading,
 }: RecommendationWidgetProps) {
   // Activated by user click/tap – collapsed by default
@@ -295,8 +297,9 @@ export default function RecommendationWidget({
                 {filteredItems.map((item) => (
                   <article
                     key={item.id}
-                    className="group flex min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md"
+                    className="relative group flex min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md"
                   >
+                    {onViewItem && <button type="button" onClick={() => onViewItem(item)} aria-label={`View details for ${item.name}`} className="absolute inset-0 z-10 rounded-2xl focus-visible:outline-2 focus-visible:outline-orange-600" />}
                     {item.image_url && (
                       <img
                         src={item.image_url}
@@ -327,7 +330,7 @@ export default function RecommendationWidget({
                         <button
                           type="button"
                           onClick={() => onAddToCart(item)}
-                          className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-white transition hover:opacity-90 active:scale-95 cursor-pointer"
+                          className="relative z-20 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-white transition hover:opacity-90 active:scale-95 cursor-pointer"
                           style={{ backgroundColor: BRAND_ORANGE }}
                         >
                           <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400" />
