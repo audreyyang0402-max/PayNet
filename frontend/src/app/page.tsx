@@ -103,6 +103,7 @@ export default function Home() {
 
   // ── State: Animations & Toasts ──
   const [isProfileJumping, setIsProfileJumping] = useState(false);
+  const [isCartBouncing, setIsCartBouncing] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // ── State: User Profile (from localStorage) ──
@@ -252,15 +253,19 @@ export default function Home() {
       };
     });
 
-    // ── Trigger Profile Jumping Animation ──
+    // ── Trigger Cart & Profile Bouncing Animation ──
+    setIsCartBouncing(true);
     setIsProfileJumping(true);
-    setTimeout(() => setIsProfileJumping(false), 600);
+    setTimeout(() => {
+      setIsCartBouncing(false);
+      setIsProfileJumping(false);
+    }, 700);
 
-    // ── Trigger Toast Message ──
-    setToastMessage(`🛒 ${item.name} added! Check your cart to checkout.`);
+    // ── Trigger Toast Message (Don't forget to check out at the cart) ──
+    setToastMessage(`🛒 Added ${item.name}! Don't forget to check out at the cart.`);
     setTimeout(() => {
       setToastMessage((msg) => (msg?.includes(item.name) ? null : msg));
-    }, 3500);
+    }, 4000);
   };
 
   // ─── 6. Remove from Cart Handler ──────────────────────────────────────────
@@ -489,15 +494,53 @@ export default function Home() {
             {/* Boulevard Rentals link */}
             <Link
               href="/vendor/rental"
-              className="bg-orange-50 hover:bg-orange-100 text-orange-700 text-xs sm:text-sm font-bold px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl transition border border-orange-200/60"
+              className="hidden sm:inline-flex bg-orange-50 hover:bg-orange-100 text-orange-700 text-xs sm:text-sm font-bold px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl transition border border-orange-200/60"
             >
               🎪 Rentals
             </Link>
 
-            {/* Profile Button with Jumping Animation & Cart Badge */}
+            {/* 🛒 Cart Button — Positioned at the LEFT-HAND SIDE of My Profile */}
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== "undefined" && window.innerWidth >= 1024) {
+                  // On desktop, scroll smoothly to the cart sidebar
+                  const cartEl = document.getElementById("desktop-cart-sidebar");
+                  if (cartEl) {
+                    cartEl.scrollIntoView({ behavior: "smooth" });
+                  } else {
+                    setIsMobileCartOpen(true);
+                  }
+                } else {
+                  // On mobile/tablet, open/toggle the cart drawer
+                  setIsMobileCartOpen((prev) => !prev);
+                }
+              }}
+              className={`relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer border ${
+                totalItemCount > 0
+                  ? "bg-[#F04B14] hover:bg-orange-700 text-white border-orange-600 shadow-md"
+                  : "bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-200"
+              } ${isCartBouncing ? "animate-cart-bounce ring-4 ring-orange-300 scale-105" : ""}`}
+              aria-label="Shopping Cart"
+              title="View your cart and check out"
+            >
+              <span className="text-base sm:text-lg">🛒</span>
+              <span className="font-extrabold">Cart</span>
+
+              {/* Item count badge */}
+              {totalItemCount > 0 ? (
+                <span className="ml-0.5 flex h-5 min-w-[20px] px-1.5 items-center justify-center rounded-full bg-white text-[#F04B14] text-[11px] font-black shadow-sm">
+                  {totalItemCount}
+                </span>
+              ) : (
+                <span className="text-slate-400 font-normal text-xs">(0)</span>
+              )}
+            </button>
+
+            {/* Profile Button */}
             <Link
               href="/profile"
-              className={`relative flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs sm:text-sm font-bold px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl transition border border-slate-200 cursor-pointer ${
+              className={`relative flex items-center gap-1.5 sm:gap-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs sm:text-sm font-bold px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl transition border border-slate-200 cursor-pointer ${
                 isProfileJumping ? "animate-cart-bounce ring-4 ring-orange-300 bg-orange-100 text-orange-700" : ""
               }`}
               title="View your profile, photo & orders"
@@ -516,13 +559,6 @@ export default function Home() {
               )}
 
               <span className="hidden sm:inline truncate max-w-[100px]">{userDisplayName}</span>
-
-              {/* Cart item count indicator on profile */}
-              {totalItemCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-[#F04B14] text-[10px] font-black text-white shadow-md animate-pulse">
-                  {totalItemCount}
-                </span>
-              )}
             </Link>
           </div>
         </header>
@@ -698,7 +734,7 @@ export default function Home() {
           {/* ────────────────────────────────────────────────────────────
               DESKTOP CART SIDEBAR (Hidden on mobile, visible on lg+)
           ──────────────────────────────────────────────────────────── */}
-          <aside className="hidden lg:block min-w-0 rounded-2xl border border-orange-100 bg-white p-5 shadow-sm lg:sticky lg:top-5">
+          <aside id="desktop-cart-sidebar" className="hidden lg:block min-w-0 rounded-2xl border border-orange-100 bg-white p-5 shadow-sm lg:sticky lg:top-5">
             <div className="mb-4 border-b border-slate-100 pb-3 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Your Cart</h2>
@@ -862,75 +898,92 @@ export default function Home() {
             </div>
 
             {/* Cart Items List */}
-            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 divide-y divide-slate-100">
-              {Object.values(cart).map(({ item, quantity }) => (
-                <div key={item.id} className="pt-2 flex items-center justify-between gap-2 text-xs">
-                  <div className="min-w-0">
-                    <p className="font-bold text-slate-900">{item.name}</p>
-                    <p className="text-slate-500">RM {Number(item.price).toFixed(2)} each</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => removeFromCart(item.id)}
-                      className="h-7 w-7 rounded-lg bg-slate-100 font-bold text-slate-700 hover:bg-slate-200"
-                    >
-                      −
-                    </button>
-                    <span className="w-4 text-center font-bold text-sm">{quantity}</span>
-                    <button
-                      type="button"
-                      onClick={() => addToCart(item)}
-                      className="h-7 w-7 rounded-lg bg-slate-100 font-bold text-slate-700 hover:bg-slate-200"
-                    >
-                      +
-                    </button>
-                  </div>
+            {Object.keys(cart).length === 0 ? (
+              <div className="py-12 text-center text-slate-400">
+                <p className="text-4xl mb-2">🛒</p>
+                <p className="font-bold text-slate-800 text-sm">Your cart is currently empty</p>
+                <p className="text-xs text-slate-500 mt-1">Tap +Add on any stall meal to begin your order.</p>
+                <button
+                  type="button"
+                  onClick={() => setIsMobileCartOpen(false)}
+                  className="mt-4 px-4 py-2 bg-orange-50 text-[#F04B14] font-bold text-xs rounded-xl hover:bg-orange-100 transition"
+                >
+                  Browse Campus Stalls
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 divide-y divide-slate-100">
+                  {Object.values(cart).map(({ item, quantity }) => (
+                    <div key={item.id} className="pt-2 flex items-center justify-between gap-2 text-xs">
+                      <div className="min-w-0">
+                        <p className="font-bold text-slate-900">{item.name}</p>
+                        <p className="text-slate-500">RM {Number(item.price).toFixed(2)} each</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => removeFromCart(item.id)}
+                          className="h-7 w-7 rounded-lg bg-slate-100 font-bold text-slate-700 hover:bg-slate-200"
+                        >
+                          −
+                        </button>
+                        <span className="w-4 text-center font-bold text-sm">{quantity}</span>
+                        <button
+                          type="button"
+                          onClick={() => addToCart(item)}
+                          className="h-7 w-7 rounded-lg bg-slate-100 font-bold text-slate-700 hover:bg-slate-200"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
 
-            {/* Pickup Slot & Checkout Area */}
-            <div className="mt-4 pt-3 border-t border-slate-100 space-y-3">
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-700 mb-1">
-                  Pickup Slot
-                </label>
-                {pickupSlots.length === 0 ? (
-                  <p className="text-xs text-red-600">No pickup slots available.</p>
-                ) : (
-                  <select
-                    value={selectedSlotId}
-                    onChange={(e) => setSelectedSlotId(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-800"
+                {/* Pickup Slot & Checkout Area */}
+                <div className="mt-4 pt-3 border-t border-slate-100 space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-slate-700 mb-1">
+                      Pickup Slot
+                    </label>
+                    {pickupSlots.length === 0 ? (
+                      <p className="text-xs text-red-600">No pickup slots available.</p>
+                    ) : (
+                      <select
+                        value={selectedSlotId}
+                        onChange={(e) => setSelectedSlotId(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-800"
+                      >
+                        {pickupSlots.map((slot) => (
+                          <option key={slot.id} value={slot.id}>
+                            {new Date(slot.time_slot).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}{" "}
+                            ({slot.current_bookings}/{slot.max_capacity} booked)
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  <div className="flex justify-between items-center font-bold text-slate-900 pt-1">
+                    <span className="text-sm">Total Amount</span>
+                    <span className="text-lg text-[#F04B14]">RM {cartTotal.toFixed(2)}</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleCheckout}
+                    disabled={checkingOut || pickupSlots.length === 0}
+                    className="w-full rounded-xl bg-[#F04B14] py-3.5 text-sm font-bold text-white shadow-lg transition hover:bg-orange-700 disabled:opacity-50"
                   >
-                    {pickupSlots.map((slot) => (
-                      <option key={slot.id} value={slot.id}>
-                        {new Date(slot.time_slot).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}{" "}
-                        ({slot.current_bookings}/{slot.max_capacity} booked)
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-
-              <div className="flex justify-between items-center font-bold text-slate-900 pt-1">
-                <span className="text-sm">Total Amount</span>
-                <span className="text-lg text-[#F04B14]">RM {cartTotal.toFixed(2)}</span>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleCheckout}
-                disabled={checkingOut || pickupSlots.length === 0}
-                className="w-full rounded-xl bg-[#F04B14] py-3.5 text-sm font-bold text-white shadow-lg transition hover:bg-orange-700 disabled:opacity-50"
-              >
-                {checkingOut ? "Redirecting to DuitNow..." : "Proceed to DuitNow Payment"}
-              </button>
-            </div>
+                    {checkingOut ? "Redirecting to DuitNow..." : "Proceed to DuitNow Payment"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
