@@ -502,20 +502,7 @@ export default function Home() {
             {/* 🛒 Cart Button — Positioned at the LEFT-HAND SIDE of My Profile */}
             <button
               type="button"
-              onClick={() => {
-                if (typeof window !== "undefined" && window.innerWidth >= 1024) {
-                  // On desktop, scroll smoothly to the cart sidebar
-                  const cartEl = document.getElementById("desktop-cart-sidebar");
-                  if (cartEl) {
-                    cartEl.scrollIntoView({ behavior: "smooth" });
-                  } else {
-                    setIsMobileCartOpen(true);
-                  }
-                } else {
-                  // On mobile/tablet, open/toggle the cart drawer
-                  setIsMobileCartOpen((prev) => !prev);
-                }
-              }}
+              onClick={() => setIsMobileCartOpen(true)}
               className={`relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer border ${
                 totalItemCount > 0
                   ? "bg-[#F04B14] hover:bg-orange-700 text-white border-orange-600 shadow-md"
@@ -666,7 +653,7 @@ export default function Home() {
         {/* ────────────────────────────────────────────────────────────────
             STALL-BY-STALL MARKETPLACE & CART SECTION
         ──────────────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="grid grid-cols-1 items-start gap-6 ">
           {/* Main Stall Rows */}
           <section className="min-w-0 space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-2 px-1">
@@ -731,107 +718,7 @@ export default function Home() {
             )}
           </section>
 
-          {/* ────────────────────────────────────────────────────────────
-              DESKTOP CART SIDEBAR (Hidden on mobile, visible on lg+)
-          ──────────────────────────────────────────────────────────── */}
-          <aside id="desktop-cart-sidebar" className="hidden lg:block min-w-0 rounded-2xl border border-orange-100 bg-white p-5 shadow-sm lg:sticky lg:top-5">
-            <div className="mb-4 border-b border-slate-100 pb-3 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">Your Cart</h2>
-                {Object.keys(cart).length > 0 && (
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    Stall: <strong className="text-slate-800">{cartMerchant?.name ?? "Selected stall"}</strong>
-                  </p>
-                )}
-              </div>
-              <span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-700">
-                {totalItemCount} items
-              </span>
-            </div>
 
-            {Object.keys(cart).length === 0 ? (
-              <div className="py-8 text-center text-slate-400 text-xs">
-                <p className="text-2xl mb-1">🛒</p>
-                <p>Choose a stall and tap +Add to order food.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {/* Cart Line Items */}
-                <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
-                  {Object.values(cart).map(({ item, quantity }) => (
-                    <div
-                      key={item.id}
-                      className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 text-xs"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate font-semibold text-slate-800">{item.name}</p>
-                        <p className="text-slate-500">RM {Number(item.price).toFixed(2)} × {quantity}</p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => removeFromCart(item.id)}
-                          className="h-6 w-6 rounded-md bg-slate-100 font-bold text-slate-700 hover:bg-slate-200 transition"
-                        >
-                          −
-                        </button>
-                        <span className="w-4 text-center font-bold">{quantity}</span>
-                        <button
-                          type="button"
-                          onClick={() => addToCart(item)}
-                          className="h-6 w-6 rounded-md bg-slate-100 font-bold text-slate-700 hover:bg-slate-200 transition"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Pickup Slot Selection */}
-                <div className="space-y-1.5 pt-2 border-t border-slate-100">
-                  <label htmlFor="desktop-pickup-slot" className="text-[11px] font-bold uppercase text-slate-700">
-                    Pickup Slot Time
-                  </label>
-                  {pickupSlots.length === 0 ? (
-                    <p className="text-xs text-red-600">No pickup slots available for this stall.</p>
-                  ) : (
-                    <select
-                      id="desktop-pickup-slot"
-                      value={selectedSlotId}
-                      onChange={(event) => setSelectedSlotId(event.target.value)}
-                      className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs text-slate-800"
-                    >
-                      {pickupSlots.map((slot) => (
-                        <option key={slot.id} value={slot.id}>
-                          {new Date(slot.time_slot).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}{" "}
-                          ({slot.current_bookings}/{slot.max_capacity} booked)
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-                {/* Total + Checkout Button */}
-                <div className="flex justify-between border-t border-slate-100 pt-3 font-bold text-slate-900">
-                  <span className="text-sm">Total</span>
-                  <span className="text-base text-[#F04B14]">RM {cartTotal.toFixed(2)}</span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleCheckout}
-                  disabled={checkingOut || pickupSlots.length === 0}
-                  className="w-full rounded-xl bg-[#F04B14] py-3 text-xs sm:text-sm font-bold text-white shadow-md transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {checkingOut ? "Redirecting to DuitNow..." : "Proceed to DuitNow Payment"}
-                </button>
-              </div>
-            )}
-          </aside>
         </div>
       </div>
 
@@ -868,10 +755,10 @@ export default function Home() {
       )}
 
       {/* ────────────────────────────────────────────────────────────────
-          MOBILE BOTTOM SHEET CART DRAWER (<lg)
+          CART DRAWER (all screen sizes)
       ──────────────────────────────────────────────────────────────── */}
       {isMobileCartOpen && (
-        <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end bg-black/60 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/60 backdrop-blur-sm animate-fade-in">
           {/* Backdrop click to dismiss */}
           <div className="flex-1" onClick={() => setIsMobileCartOpen(false)} />
 
