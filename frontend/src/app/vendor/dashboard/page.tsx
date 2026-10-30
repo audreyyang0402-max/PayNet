@@ -56,6 +56,12 @@ export default function MerchantDashboard() {
   const [qrUpdating, setQrUpdating] = useState(false);
   const [qrUpdateMessage, setQrUpdateMessage] = useState("");
 
+  // Delete Account States
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
   useEffect(() => {
     async function loadDashboardData() {
       try {
@@ -195,6 +201,36 @@ export default function MerchantDashboard() {
     }
   };
 
+  const handleDeleteAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDeleteError("");
+    setDeleting(true);
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${BACKEND_URL}/users/me`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ password: deletePassword }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Failed to delete account.");
+      }
+
+      localStorage.clear();
+      window.location.href = "/";
+    } catch (err: any) {
+      setDeleteError(err.message || "An error occurred.");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
     try {
       const token = localStorage.getItem("token");
@@ -289,80 +325,147 @@ export default function MerchantDashboard() {
           )}
 
           {isEditingProfile && (
-            <form onSubmit={handleUpdateMerchantProfile} className="space-y-4 pt-4 border-t border-gray-100">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store / Stall Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={editStoreName}
-                    onChange={(e) => setEditStoreName(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                  />
+            <div className="space-y-4 pt-4 border-t border-gray-100">
+              <form onSubmit={handleUpdateMerchantProfile} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store / Stall Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={editStoreName}
+                      onChange={(e) => setEditStoreName(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Campus Location</label>
+                    <input
+                      type="text"
+                      required
+                      value={editLocation}
+                      onChange={(e) => setEditLocation(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                    />
+                  </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Campus Location</label>
-                  <input
-                    type="text"
-                    required
-                    value={editLocation}
-                    onChange={(e) => setEditLocation(e.target.value)}
+                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store Bio & Opening Hours</label>
+                  <textarea
+                    rows={2}
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                    placeholder="Operating Hours: Mon-Fri 8 AM - 5 PM"
                   />
                 </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Email Address</label>
+                    <input
+                      type="email"
+                      required
+                      value={editEmail}
+                      onChange={(e) => setEditEmail(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Phone Number</label>
+                    <input
+                      type="tel"
+                      value={editPhone}
+                      onChange={(e) => setEditPhone(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                      placeholder="+60123456789"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">New Password</label>
+                    <input
+                      type="password"
+                      value={editPassword}
+                      onChange={(e) => setEditPassword(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                      placeholder="Leave blank to keep"
+                    />
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
+                >
+                  Save Changes
+                </button>
+              </form>
+
+              {/* ── Danger Zone (Merchant Account Deletion) ── */}
+              <div className="pt-4 border-t border-gray-100 flex items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-xs font-bold text-red-600 uppercase">Danger Zone</h3>
+                  <p className="text-xs text-gray-400">Permanently delete your merchant account and remove your store.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteModal(true)}
+                  className="px-3.5 py-2 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-colors cursor-pointer flex-shrink-0"
+                >
+                  Delete Account
+                </button>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store Bio & Opening Hours</label>
-                <textarea
-                  rows={2}
-                  value={editDescription}
-                  onChange={(e) => setEditDescription(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                  placeholder="Operating Hours: Mon-Fri 8 AM - 5 PM"
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Email Address</label>
-                  <input
-                    type="email"
-                    required
-                    value={editEmail}
-                    onChange={(e) => setEditEmail(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Phone Number</label>
-                  <input
-                    type="tel"
-                    value={editPhone}
-                    onChange={(e) => setEditPhone(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                    placeholder="+60123456789"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">New Password</label>
-                  <input
-                    type="password"
-                    value={editPassword}
-                    onChange={(e) => setEditPassword(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                    placeholder="Leave blank to keep"
-                  />
-                </div>
-              </div>
-              <button
-                type="submit"
-                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
-              >
-                Save Changes
-              </button>
-            </form>
+            </div>
           )}
         </div>
+
+        {/* ── Delete Confirmation Modal ── */}
+        {showDeleteModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+              <h3 className="text-lg font-bold text-red-600">Delete Account Confirmation</h3>
+              <p className="text-xs text-gray-600">
+                This action is irreversible. Please enter your current password to confirm account deletion.
+              </p>
+
+              {deleteError && (
+                <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded-xl border border-red-200">
+                  {deleteError}
+                </div>
+              )}
+
+              <form onSubmit={handleDeleteAccount} className="space-y-3">
+                <input
+                  type="password"
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                  placeholder="Enter your password"
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm outline-none focus:ring-2 focus:ring-red-500"
+                />
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowDeleteModal(false);
+                      setDeletePassword("");
+                      setDeleteError("");
+                    }}
+                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-200"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={deleting}
+                    className="px-4 py-2 bg-red-600 text-white rounded-xl text-xs font-semibold hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {deleting ? "Deleting..." : "Permanently Delete"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* DuitNow QR Code Management Section */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
@@ -388,6 +491,7 @@ export default function MerchantDashboard() {
             {qrUrl && (
               <div className="text-center py-3 bg-gray-50 rounded-xl border border-gray-100 max-w-xs">
                 <p className="text-xs font-semibold text-gray-600 mb-2">Current QR Code:</p>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img 
                   src={qrUrl.startsWith("http") ? qrUrl : `${BACKEND_URL}${qrUrl}`} 
                   alt="DuitNow QR Preview" 
@@ -455,7 +559,6 @@ export default function MerchantDashboard() {
                     </span>
                   </div>
 
-                  {/* Display Student's Uploaded Payment Receipt Screenshot */}
                   {order.transaction_ref && (
                     <div className="bg-white p-3 rounded-lg border border-yellow-200 space-y-2">
                       <p className="text-xs font-semibold text-gray-700">Student Uploaded Payment Receipt:</p>
@@ -464,6 +567,7 @@ export default function MerchantDashboard() {
                         target="_blank" 
                         rel="noopener noreferrer"
                       >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img 
                           src={`${BACKEND_URL}${order.transaction_ref}`} 
                           alt="Payment Receipt Screenshot" 
@@ -474,7 +578,6 @@ export default function MerchantDashboard() {
                     </div>
                   )}
 
-                  {/* Itemized Dish Breakdown */}
                   <div className="border-t border-gray-200 pt-2 space-y-1">
                     <p className="text-xs font-bold text-gray-700 uppercase tracking-wider">Dishes Ordered:</p>
                     {!order.items || order.items.length === 0 ? (
