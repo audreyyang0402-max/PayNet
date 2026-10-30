@@ -2,11 +2,11 @@ import os
 import secrets
 from datetime import datetime, date, timedelta, timezone
 import httpx as httpx_client  # aliased since you might already have httpx elsewhere
-from fastapi import UploadFile, File, Form
+from fastapi import UploadFile, File, Form, HTTPException
 import shutil
 
 from fastapi_offline import FastAPIOffline
-from fastapi import FastAPI, Depends, HTTPException, Query, status
+from fastapi import FastAPI, Depends, Query, status
 from fastapi.staticfiles import StaticFiles  # <--- Added import for serving static upload files
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,9 @@ from sqlalchemy.orm import selectinload  # <--- Added import for eager loading r
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Literal
 from uuid import UUID
+
+# --- NEW SUPABASE STORAGE IMPORTS ---
+from supabase import create_client, Client
 
 from database import engine, get_db
 from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem, BoulevardStall, RentalBooking, Event, EventMerchant
@@ -50,6 +53,35 @@ app = FastAPIOffline(lifespan=lifespan)
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
+# --- SUPABASE STORAGE CONFIGURATION ---
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") # Service role key to bypass RLS for uploads
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+
+async def upload_to_supabase(file: UploadFile) -> str:
+    """Helper function to upload files directly to Supabase Storage and return the public URL."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase Storage client is not configured on the backend.")
+    try:
+        file_bytes = await file.read()
+        file_ext = file.filename.split(".")[-1] if file.filename and "." in file.filename else "png"
+        file_name = f"{os.urandom(12).hex()}.{file_ext}"
+        file_path = f"images/{file_name}"
+
+        # Upload bytes to Supabase Storage bucket named 'uploads'
+        response = supabase.storage.from_("uploads").upload(
+            path=file_path,
+            file=file_bytes,
+            file_options={"content-type": file.content_type or "image/png"}
+        )
+
+        # Get the public URL of the uploaded image
+        public_url_res = supabase.storage.from_("uploads").get_public_url(file_path)
+        return public_url_res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase upload failed: {str(e)}")
+
+
 # --- NEW CORS CONFIGURATION ---
 app.add_middleware(
     CORSMiddleware,
@@ -60,7 +92,7 @@ app.add_middleware(
             "http://localhost:3000,http://localhost:5000,http://127.0.0.1:3000,https://pay-net-iota.vercel.app,https://payvolution.app,https://www.payvolution.app"
         ).split(",") if origin.strip()
     ], 
-    allow_credentials=True,
+    allow_credentials=True, 
     allow_methods=["*"], 
     allow_headers=["*"], 
 )
@@ -357,7 +389,6 @@ async def delete_my_account_api(
             await db.execute(update(Merchant).where(Merchant.id.in_(merchant_ids)).values(is_active=False))
             await db.execute(update(MenuItem).where(MenuItem.merchant_id.in_(merchant_ids)).values(is_available=False))
 
-        # Perform soft or hard removal depending on preference, matching standard flow
         await db.delete(current_user)
         await db.commit()
         
@@ -439,15 +470,10 @@ async def upload_merchant_qr(
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant profile not found.")
 
-    os.makedirs("uploads", exist_ok=True)
-    file_extension = os.path.splitext(qr_file.filename)[1]
-    file_name = f"qr_{merchant.id}_{secrets.token_hex(4)}{file_extension}"
-    file_path = f"uploads/{file_name}"
-    
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(qr_file.file, buffer)
+    # Upload directly to Supabase Storage bucket for permanent cloud storage
+    public_url = await upload_to_supabase(qr_file)
 
-    merchant.duitnow_qr_url = f"/{file_path}"
+    merchant.duitnow_qr_url = public_url
     try:
         await db.commit()
         await db.refresh(merchant)
@@ -919,15 +945,10 @@ async def submit_order_receipt(
     if order.customer_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied. You do not own this order.")
 
-    os.makedirs("uploads", exist_ok=True)
-    file_extension = os.path.splitext(receipt_file.filename)[1]
-    file_name = f"{order_id}_{secrets.token_hex(4)}{file_extension}"
-    file_path = f"uploads/{file_name}"
-    
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(receipt_file.file, buffer)
+    # Upload directly to Supabase Storage bucket for permanent cloud storage
+    public_url = await upload_to_supabase(receipt_file)
 
-    order.transaction_ref = f"/{file_path}"
+    order.transaction_ref = public_url
     order.status = "pending_verification"
 
     try:
