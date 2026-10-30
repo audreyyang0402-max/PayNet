@@ -324,6 +324,56 @@ async def delete_my_account(
         raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
 
 
+# --- NEW: Specific API Endpoint for Frontend Profile Deletion ---
+@app.delete("/api/users/me")
+async def delete_my_account_api(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrators cannot delete accounts through this endpoint."
+        )
+    
+    try:
+        # Check active orders first
+        merchant_result = await db.execute(select(Merchant).where(Merchant.user_id == current_user.id))
+        merchant_ids = [m.id for m in merchant_result.scalars().all()]
+
+        involved = Order.customer_id == current_user.id
+        if merchant_ids:
+            involved = or_(involved, Order.merchant_id.in_(merchant_ids))
+        
+        active_count = (await db.execute(
+            select(func.count(Order.id)).where(involved, Order.status.in_(["preparing", "ready"]))
+        )).scalar_one()
+        
+        if active_count:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"You still have {active_count} order(s) being prepared or waiting for pickup."
+            )
+
+        if merchant_ids:
+            await db.execute(update(Merchant).where(Merchant.id.in_(merchant_ids)).values(is_active=False))
+            await db.execute(update(MenuItem).where(MenuItem.merchant_id.in_(merchant_ids)).values(is_available=False))
+
+        # Perform soft or hard removal depending on preference, matching standard flow
+        await db.delete(current_user)
+        await db.commit()
+        
+        return {"status": "success", "message": "Account successfully deleted."}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete account: {str(e)}"
+        )
+
+
 @app.patch("/merchants/me")
 async def update_my_merchant_profile(
     update_data: MerchantProfileUpdate,

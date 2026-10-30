@@ -379,7 +379,7 @@ export default function ProfilePage() {
         </div>
 
         {/* ──────────────────────────────────────────────────────────────────
-            SECTION 2 — Profile Card (avatar, info, edit)
+            SECTION 2 — Profile Card (avatar, info, edit, & Danger Zone)
         ────────────────────────────────────────────────────────────────── */}
         <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-sm border border-gray-200 space-y-5">
 
@@ -527,7 +527,6 @@ export default function ProfilePage() {
               <button
                 onClick={() => {
                   setIsEditing(!isEditing);
-                  // Reset edit fields when opening edit mode
                   if (!isEditing) {
                     setEditPreferredName(preferredName);
                     setEditPassword("");
@@ -602,6 +601,19 @@ export default function ProfilePage() {
               </button>
             </form>
           )}
+
+          {/* ── Danger Zone (Moved inside top profile card) ── */}
+          {user?.role !== "admin" && (
+            <div className="pt-4 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-red-600">⚠️ Danger Zone</h3>
+                <p className="text-xs text-gray-500">Permanently delete your account and remove access.</p>
+              </div>
+              <div className="w-full sm:w-auto">
+                <DeleteAccountButton />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ──────────────────────────────────────────────────────────────────
@@ -613,7 +625,6 @@ export default function ProfilePage() {
             Select any dietary preferences. These are saved locally for your reference.
           </p>
 
-          {/* Tag cloud — wrapping flex for mobile-first */}
           <div className="flex flex-wrap gap-2">
             {DIETARY_OPTIONS.map((option) => {
               const isActive = dietaryPreferences.includes(option);
@@ -635,7 +646,6 @@ export default function ProfilePage() {
             })}
           </div>
 
-          {/* Show active selections as summary */}
           {dietaryPreferences.length > 0 && (
             <p className="text-xs text-gray-400 pt-1">
               Active: {dietaryPreferences.join(", ")}
@@ -645,7 +655,6 @@ export default function ProfilePage() {
 
         {/* ──────────────────────────────────────────────────────────────────
             SECTION 4 — Ready Order Notification Banners
-            One banner per ready order that hasn't been dismissed.
         ────────────────────────────────────────────────────────────────── */}
         {readyOrders.map((order) => (
           <div
@@ -683,7 +692,6 @@ export default function ProfilePage() {
 
         {/* ──────────────────────────────────────────────────────────────────
             SECTION 5 — Order History & Receipts (customers only)
-            Each order card is compact with collapsible receipt details.
         ────────────────────────────────────────────────────────────────── */}
         {user?.role === "customer" && (
           <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
@@ -692,7 +700,6 @@ export default function ProfilePage() {
             </h2>
 
             {orders.length === 0 ? (
-              /* Empty state */
               <div className="text-center py-8 border border-dashed border-gray-200 rounded-xl space-y-3">
                 <p className="text-gray-500 text-sm">
                   You haven&apos;t placed any orders yet.
@@ -714,14 +721,12 @@ export default function ProfilePage() {
                       key={order.id}
                       className="rounded-xl border border-gray-200 bg-gray-50 overflow-hidden"
                     >
-                      {/* ── Compact order header (always visible) ── */}
                       <button
                         type="button"
                         onClick={() => toggleOrderExpanded(order.id)}
                         className="w-full px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-gray-100 transition-colors"
                       >
                         <div className="flex items-center gap-3 min-w-0">
-                          {/* Expand/collapse chevron */}
                           <svg
                             xmlns="http://www.w3.org/2000/svg"
                             className={`w-4 h-4 text-gray-400 transition-transform flex-shrink-0 ${
@@ -750,12 +755,10 @@ export default function ProfilePage() {
                         </div>
 
                         <div className="flex items-center gap-3 flex-shrink-0">
-                          {/* Total price */}
                           <span className="text-sm font-bold text-[#F04B14]">
                             RM {Number(order.total_price).toFixed(2)}
                           </span>
 
-                          {/* Status badge */}
                           <span
                             className={`text-[10px] font-semibold px-2 py-0.5 rounded-md uppercase ${
                               order.status === "pending"
@@ -772,10 +775,8 @@ export default function ProfilePage() {
                         </div>
                       </button>
 
-                      {/* ── Collapsible receipt details ── */}
                       {isExpanded && (
                         <div className="px-4 pb-4 pt-1 border-t border-gray-200 space-y-2">
-                          {/* Full Order ID & timestamp */}
                           <p className="text-[11px] text-gray-400 font-mono">
                             Order ID: {order.id}
                           </p>
@@ -784,7 +785,6 @@ export default function ProfilePage() {
                             {new Date(order.created_at).toLocaleString()}
                           </p>
 
-                          {/* Itemized receipt */}
                           <div className="pt-2 space-y-1">
                             <p className="text-xs font-bold text-gray-700 uppercase tracking-wider">
                               Receipt Items:
@@ -816,7 +816,6 @@ export default function ProfilePage() {
                             )}
                           </div>
 
-                          {/* Total */}
                           <div className="border-t border-gray-200 pt-2 flex justify-between items-center font-bold text-gray-900">
                             <span className="text-xs uppercase text-gray-500">
                               Total Paid
@@ -834,17 +833,6 @@ export default function ProfilePage() {
             )}
           </div>
         )}
-
-        {/* ──────────────────────────────────────────────────────────────────
-            SECTION 6 — Danger Zone (Delete Account)
-        ────────────────────────────────────────────────────────────────── */}
-        <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-sm border border-gray-200 space-y-3">
-          <h2 className="text-lg font-bold text-red-600">⚠️ Danger Zone</h2>
-          <p className="text-xs text-gray-500">
-            Permanently delete your account. This action cannot be undone.
-          </p>
-          <DeleteAccountButton />
-        </div>
 
       </div>
     </main>
