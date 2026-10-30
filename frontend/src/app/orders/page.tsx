@@ -46,16 +46,16 @@ export default function OrdersPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-gray-50 p-8">
+    <main className="min-h-screen bg-[#faf8f3] px-4 py-6 sm:p-8">
       <div className="max-w-2xl mx-auto">
-        <Link href="/" className="text-blue-600 hover:underline text-sm font-medium mb-6 inline-block">
-          ← Back to Home
+        <Link href="/profile" className="rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium mb-6 inline-block">
+          Back to my account
         </Link>
 
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-3xl font-bold text-gray-900">My Order History</h1>
           <Link href="/customer/analytics" className="rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-700">
-            View My Analytics
+            Spending tracker
           </Link>
         </div>
 
@@ -80,9 +80,9 @@ export default function OrdersPage() {
             >
               <div className="flex justify-between items-center">
                 <div>
-                  <p className="text-xs text-gray-400 font-mono mb-1">ID: {order.id}</p>
+                  <p className="text-xs text-gray-400 font-mono mb-1 break-all">ID: {order.id}</p>
                   <p className="text-sm text-gray-500">
-                    {new Date(order.created_at).toLocaleString()}
+                    {new Date(order.created_at).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur" })}
                   </p>
                   <span className={`inline-block mt-2 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase ${
                     order.status === 'completed' 

@@ -708,7 +708,8 @@ async def get_merchant_analytics(days: int = Query(default=30, ge=7, le=90), db:
 async def get_customer_analytics(days: int = Query(default=30, ge=7, le=90), db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.role != "customer":
         raise HTTPException(status_code=403, detail="Customer privileges required.")
-    return await build_order_analytics(db, days, customer_id=current_user.id)
+    from customer_analytics import build_customer_analytics
+    return await build_customer_analytics(db, current_user.id, days)
 
 
 @app.post("/merchants")

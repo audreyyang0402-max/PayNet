@@ -89,10 +89,10 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
         <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <Link href={isAdmin ? "/admin/rentals" : isCustomer ? "/orders" : "/vendor/dashboard"} className="text-sm font-medium text-orange-700 hover:underline">
-                ← Back to {isCustomer ? "order history" : `${isAdmin ? "admin" : "vendor"} dashboard`}
+              <Link href={isAdmin ? "/admin/rentals" : isCustomer ? "/profile" : "/vendor/dashboard"} className="text-sm font-medium text-orange-700 hover:underline">
+                ← Back to {isCustomer ? "my account" : `${isAdmin ? "admin" : "vendor"} dashboard`}
               </Link>
-              <p className="mt-4 text-xs font-bold uppercase tracking-[0.18em] text-orange-700">Phase 7 · Analytics</p>
+              <p className="mt-4 text-xs font-bold uppercase tracking-[0.18em] text-orange-700">Analytics</p>
               <h1 className="mt-1 text-3xl font-bold text-slate-900">{isAdmin ? "Platform analytics" : isCustomer ? "Your spending" : "Store analytics"}</h1>
               <p className="mt-2 text-sm text-slate-500">{isCustomer ? "Your completed purchases and order activity from the selected period." : "Sales and order activity from the selected period."}</p>
             </div>
