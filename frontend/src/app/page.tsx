@@ -18,7 +18,8 @@
 import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
-import FoodDetailsDialog from "@/components/FoodDetailsDialog";
+import ShopDetailsDialog from "@/components/ShopDetailsDialog";
+import { isDisplayableFood } from "@/lib/menu-visibility";
 import RecommendationWidget from "@/components/RecommendationWidget";
 
 // ─── Type Definitions ────────────────────────────────────────────────────────
@@ -100,7 +101,7 @@ export default function Home() {
 
   // ── State: Cart (single stall at a time) ──
   const [cart, setCart] = useState<{ [key: string]: { item: MenuItem; quantity: number } }>({});
-  const [selectedFood, setSelectedFood] = useState<MenuItem | null>(null);
+  const [selectedShop, setSelectedShop] = useState<Merchant | null>(null);
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
 
   // ── State: Animations & Toasts ──
@@ -216,7 +217,7 @@ export default function Home() {
         backendMerchants.map(async (merchant) => {
           try {
             const response = await fetch(`${BACKEND_URL}/merchants/${merchant.id}/items`);
-            return [merchant.id, response.ok ? await response.json() : []] as const;
+            return [merchant.id, response.ok ? (await response.json()).filter(isDisplayableFood) : []] as const;
           } catch {
             return [merchant.id, []] as const;
           }
@@ -367,7 +368,6 @@ export default function Home() {
 
     return (
       <article className="relative flex w-52 sm:w-60 shrink-0 snap-start flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
-        <button type="button" onClick={() => setSelectedFood(item)} aria-label={`View details for ${item.name}`} className="absolute inset-0 z-10 rounded-2xl focus-visible:outline-2 focus-visible:outline-orange-600" />
         {/* Item image */}
         <div className="relative h-28 sm:h-36 w-full overflow-hidden bg-slate-100">
           {item.image_url ? (
@@ -589,12 +589,11 @@ export default function Home() {
 
             {/* Bottom Row: Horizontally scrolling rectangular event cards */}
             <div className="flex gap-3 overflow-x-auto pb-2 snap-x hide-scrollbar">
-              {eventItems.map((item) => (
+              {eventItems.filter(isDisplayableFood).map((item) => (
                 <div
                   key={item.id}
                   className="relative flex w-[260px] sm:w-[300px] shrink-0 snap-start items-center gap-3 rounded-xl bg-white p-3 shadow-md border border-white/40 text-slate-900"
                 >
-                  <button type="button" onClick={() => setSelectedFood(item)} aria-label={`View details for ${item.name}`} className="absolute inset-0 z-10 rounded-xl focus-visible:outline-2 focus-visible:outline-orange-600" />
                   {item.image_url ? (
                     <img
                       src={item.image_url}
@@ -650,7 +649,6 @@ export default function Home() {
           items={allMenuItems}
           merchants={merchants.filter((m) => m.id !== EVENT_MERCHANT_ID)}
           onAddToCart={addToCart}
-          onViewItem={setSelectedFood}
           loading={menusLoading}
         />
 
@@ -693,6 +691,7 @@ export default function Home() {
                           <h3 className="mt-0.5 text-base sm:text-lg font-bold leading-snug text-slate-900">
                             {merchant.name}
                           </h3>
+                          <button onClick={() => setSelectedShop(merchant)} className="mt-2 rounded-lg bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-800 hover:bg-orange-100">View shop</button>
                           <p className="mt-1 text-xs text-slate-500">📍 {merchant.location || "Campus"}</p>
                         </div>
                         {merchant.description && (
@@ -761,12 +760,8 @@ export default function Home() {
       {/* ────────────────────────────────────────────────────────────────
           CART DRAWER (all screen sizes)
       ──────────────────────────────────────────────────────────────── */}
-      {selectedFood && <FoodDetailsDialog key={selectedFood.id} item={selectedFood} merchant={merchants.find(m => m.id === selectedFood.merchant_id)} onClose={() => setSelectedFood(null)} onAdd={() => {
-        if (addToCart(selectedFood)) {
-          setSelectedFood(null);
-          setToastMessage(null);
-          setIsMobileCartOpen(true);
-        }
+      {selectedShop && <ShopDetailsDialog merchant={selectedShop} items={menuItemsByMerchant[selectedShop.id] || []} onClose={() => setSelectedShop(null)} onAdd={item => {
+        if (addToCart(item)) { setSelectedShop(null); setToastMessage(null); setIsMobileCartOpen(true); }
       }} />}
       {isMobileCartOpen && (
         <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/60 backdrop-blur-sm animate-fade-in">

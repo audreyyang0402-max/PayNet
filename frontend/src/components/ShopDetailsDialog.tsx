@@ -1,0 +1,14 @@
+"use client";
+import { useEffect, useRef } from "react";
+import { BACKEND_URL } from "@/lib/backend-url";
+import { isDisplayableFood } from "@/lib/menu-visibility";
+type Item = { id: string; merchant_id: string; name: string; description: string | null; price: number; image_url?: string | null; is_available: boolean };
+export default function ShopDetailsDialog({ merchant, items, onClose, onAdd }: { merchant: { name: string; location: string; description?: string | null }; items: Item[]; onClose: () => void; onAdd: (item: Item) => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => { const el=ref.current; el?.showModal(); const old=document.body.style.overflow; document.body.style.overflow="hidden"; return () => { el?.close(); document.body.style.overflow=old; }; }, []);
+  const visible=items.filter(isDisplayableFood);
+  return <dialog ref={ref} aria-labelledby="shop-title" onCancel={onClose} onClose={onClose} onClick={e => { if(e.target===e.currentTarget) onClose(); }} className="fixed inset-0 m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-2xl overflow-y-auto rounded-3xl border-0 bg-white p-0 text-slate-900 shadow-2xl backdrop:bg-black/50 backdrop:backdrop-blur-md">
+    <header className="flex items-start justify-between gap-4 bg-orange-50 p-5"><div><p className="text-xs font-semibold uppercase tracking-widest text-orange-700">Meet the shop</p><h2 id="shop-title" className="mt-1 text-2xl font-bold">{merchant.name}</h2><p className="mt-2 text-sm">{merchant.location || "Location not provided"}</p></div><button autoFocus onClick={onClose} aria-label="Close shop" className="rounded-full bg-white px-3 py-2 text-sm">Close</button></header>
+    <div className="p-5"><p className="whitespace-pre-line text-sm text-slate-600">{merchant.description || "Explore the menu from this campus shop."}</p><h3 className="mb-3 mt-5 font-bold">On the menu</h3>{!visible.length && <p className="py-6 text-sm text-slate-500">This shop has not published a complete menu yet.</p>}<div className="space-y-3">{visible.map(item=><article key={item.id} className="flex gap-3 rounded-xl border border-slate-200 p-3"><img src={item.image_url?.startsWith("/") ? BACKEND_URL+item.image_url : item.image_url || ""} alt={item.name} className="h-20 w-20 shrink-0 rounded-lg object-cover" /><div className="min-w-0 flex-1"><h4 className="font-semibold">{item.name}</h4><p className="mt-1 text-xs text-slate-500">{item.description}</p><div className="mt-3 flex items-center justify-between gap-2"><strong className="text-sm">RM {Number(item.price).toFixed(2)}</strong><button disabled={!item.is_available} onClick={()=>onAdd(item)} className="rounded-lg bg-orange-600 px-3 py-2 text-xs font-semibold text-white disabled:bg-slate-300">{item.is_available ? "Add to cart" : "Sold out"}</button></div></div></article>)}</div></div>
+  </dialog>;
+}

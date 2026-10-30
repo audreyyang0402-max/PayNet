@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
+import { BACKEND_URL } from "@/lib/backend-url";
+import { isDisplayableFood } from "@/lib/menu-visibility";
 
 // ---------------------------------------------------------------------------
 // Types – kept compatible with the existing props contract
@@ -33,7 +35,7 @@ interface RecommendationWidgetProps {
 // Tab definitions – each tab has a unique key, emoji, label, and helper text
 // ---------------------------------------------------------------------------
 
-type TabKey = "hot-deals" | "budget" | "rahmah" | "not-spicy" | "all";
+type TabKey = "hot-deals" | "budget" | "rahmah" | "not-spicy" | "popular";
 
 interface TabDefinition {
   key: TabKey;
@@ -47,7 +49,7 @@ const TABS: TabDefinition[] = [
   { key: "budget",    emoji: "💰", label: "Budget Friendly", helper: "Under RM 10" },
   { key: "rahmah",    emoji: "🍚", label: "RM5 Rahmah",      helper: "Makanan Rahmah RM5 & below" },
   { key: "not-spicy", emoji: "🌶️", label: "Not Spicy",       helper: "Mild & gentle flavours" },
-  { key: "all",       emoji: "⭐", label: "All Picks",       helper: "Everything available" },
+  { key: "popular", emoji: "⭐", label: "Campus favourites", helper: "Most ordered across campus · completed orders in the last 30 days" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -73,8 +75,22 @@ export default function RecommendationWidget({
   // Activated by user click/tap – collapsed by default
   const [isOpen, setIsOpen] = useState(false);
 
+  const [popular, setPopular] = useState<{id: string; quantity: number}[]>([]);
+  const [popularityError, setPopularityError] = useState("");
+  const [popularityLoading, setPopularityLoading] = useState(false);
+  useEffect(() => {
+    if (!isOpen) return;
+    const controller = new AbortController();
+    setPopularityLoading(true);
+    fetch(`${BACKEND_URL}/recommendations/items?limit=100`, { signal: controller.signal, cache: "no-store" })
+      .then(r => { if (!r.ok) throw new Error("Campus favourites are temporarily unavailable."); return r.json(); })
+      .then(rows => { setPopular(rows); setPopularityError(""); })
+      .catch(e => { if (!controller.signal.aborted) setPopularityError(e.message); })
+      .finally(() => { if (!controller.signal.aborted) setPopularityLoading(false); });
+    return () => controller.abort();
+  }, [isOpen]);
   // Active tab – defaults to "hot-deals"
-  const [activeTab, setActiveTab] = useState<TabKey>("hot-deals");
+  const [activeTab, setActiveTab] = useState<TabKey>("popular");
 
   // Ref for the tab bar so we can auto-scroll the active pill into view
   const tabBarRef = useRef<HTMLDivElement>(null);
@@ -84,7 +100,7 @@ export default function RecommendationWidget({
   // -------------------------------------------------------------------------
 
   const availableItems = useMemo(
-    () => items.filter((item) => item.is_available),
+    () => items.filter((item) => item.is_available && isDisplayableFood(item)),
     [items],
   );
 
@@ -126,20 +142,20 @@ export default function RecommendationWidget({
         // Exclude items whose name or description contains spicy keywords
         result = availableItems.filter((item) => {
           const text = `${item.name} ${item.description ?? ""}`.toLowerCase();
-          return !SPICY_PATTERN.test(text);
+          return /\b(mild|not spicy|non-spicy|tidak pedas)\b/i.test(text);
         });
         break;
 
-      case "all":
+      case "popular":
+        return popular.flatMap(rank => { const item = availableItems.find(item => item.id === rank.id); return item ? [item] : []; });
       default:
-        // All available items, no filter
-        result = [...availableItems];
+        result = [];
         break;
     }
 
     // Always sort by price ascending
     return result.sort((a, b) => Number(a.price) - Number(b.price));
-  }, [activeTab, availableItems, dealCutoff]);
+  }, [activeTab, availableItems, dealCutoff, popular]);
 
   // -------------------------------------------------------------------------
   // Auto-scroll the active tab pill into view on mobile
@@ -171,6 +187,7 @@ export default function RecommendationWidget({
 
   return (
     <section className="overflow-hidden rounded-2xl border border-orange-200 bg-white shadow-sm transition-all">
+      {isOpen && activeTab === "popular" && <p role="status" className="px-5 pt-3 text-xs text-slate-600">{popularityError || (popularityLoading ? "Loading campus favourites…" : "Based on quantities in completed orders, not paid promotions.")}</p>}
       {/* ================================================================
           Interactive Click-to-Activate Header Banner
           Requires user click/tap before opening recommendations
@@ -299,10 +316,10 @@ export default function RecommendationWidget({
                     key={item.id}
                     className="relative group flex min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md"
                   >
-                    {onViewItem && <button type="button" onClick={() => onViewItem(item)} aria-label={`View details for ${item.name}`} className="absolute inset-0 z-10 rounded-2xl focus-visible:outline-2 focus-visible:outline-orange-600" />}
+
                     {item.image_url && (
                       <img
-                        src={item.image_url}
+                        src={item.image_url.startsWith("/") ? BACKEND_URL + item.image_url : item.image_url}
                         alt={item.name}
                         loading="lazy"
                         className="h-32 w-full object-cover sm:h-36"

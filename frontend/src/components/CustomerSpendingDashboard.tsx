@@ -77,7 +77,7 @@ export default function CustomerSpendingDashboard() {
           ["Completed orders",data.summary.completed_orders,`Last ${days} days`],
           ["Average completed order",money(data.summary.average_completed_order),"Completed orders only"],
           ["Average daily spend",money(data.summary.daily_average),"Includes days with no spending"],
-        ].map(([label,value,note]) => <article key={String(label)} className="rounded-xl border border-stone-200 bg-white p-4"><h2 className="text-xs text-stone-500">{label}</h2><p className="mt-2 text-xl font-semibold">{value}</p><p className="mt-2 text-[11px] leading-relaxed text-stone-500">{note}</p></article>)}
+        ].map(([label,value,note], index) => <article key={String(label)} className={`rounded-xl border p-4 ${["bg-sky-50 border-sky-200", "bg-amber-50 border-amber-200", "bg-violet-50 border-violet-200", "bg-emerald-50 border-emerald-200", "bg-rose-50 border-rose-200", "bg-indigo-50 border-indigo-200"][index]}`}><h2 className="text-xs text-stone-500">{label}</h2><p className="mt-2 text-xl font-semibold">{value}</p><p className="mt-2 text-[11px] leading-relaxed text-stone-500">{note}</p></article>)}
       </section>
       <section className="rounded-2xl border border-stone-200 bg-white p-5 sm:p-6"><div className="flex justify-between"><h2 className="font-semibold">Daily spending</h2><span className="text-xs text-stone-500">Malaysian time · MYR</span></div>
         {data.summary.total_spent === 0 && <p className="mt-4 text-sm text-stone-500">No confirmed spending in this period yet.</p>}

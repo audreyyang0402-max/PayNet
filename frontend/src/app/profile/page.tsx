@@ -96,6 +96,7 @@ export default function ProfilePage() {
                   {photo ? <img src={photo} alt="Your profile" className="h-full w-full rounded-2xl object-cover" /> : (name || user.name).charAt(0).toUpperCase()}
                   <span className="absolute -bottom-2 rounded-full border border-stone-200 bg-white px-2 py-0.5 text-[10px] text-stone-600">Edit photo</span>
                 </button>
+                <button className="mt-5 w-full text-xs font-semibold text-orange-700 underline underline-offset-4" onClick={() => { setDraft(name); setEditing(!editing); }}>{editing ? "Cancel edit" : "Edit profile"}</button>
                 <input ref={file} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={e => upload(e.target.files?.[0])} />
               </div>
               <div className="min-w-0 flex-1">
@@ -104,11 +105,8 @@ export default function ProfilePage() {
                 {name && name !== user.name && <p className="text-xs text-stone-500">Registered as {user.name}</p>}
                 <p className="mt-2 break-all text-sm text-stone-600">{user.email}</p>
                 <p className="mt-1 text-sm text-stone-600">{user.phone_number || "No phone number provided"}</p>
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  {user.role === "customer" && <span className="text-xs text-stone-500"><strong className="text-base text-stone-900">{error ? "—" : orders.length}</strong> total orders</span>}
-                  <button className="text-xs font-semibold text-orange-700 underline underline-offset-4" onClick={() => { setDraft(name); setEditing(!editing); }}>{editing ? "Cancel edit" : "Edit profile"}</button>
-                </div>
               </div>
+              {user.role === "customer" && <div className="flex h-20 w-16 shrink-0 flex-col items-center justify-center rounded-2xl bg-sky-50 text-sky-900 sm:h-24 sm:w-24"><strong className="text-2xl">{error ? "—" : orders.length}</strong><span className="mt-1 text-center text-[10px] font-medium">Total orders</span></div>}
             </div>
             {editing && <form className="mt-6 space-y-3 rounded-xl bg-stone-50 p-4" onSubmit={e => { e.preventDefault(); const next = draft.trim(); if (save({ photo, name: next, diets: preferences })) { setName(next); setEditing(false); } }}>
               <label className="block text-sm font-medium">Preferred name<input value={draft} maxLength={60} onChange={e => setDraft(e.target.value)} className="mt-1 w-full rounded-lg border border-stone-300 bg-white p-2" /></label>
@@ -117,14 +115,15 @@ export default function ProfilePage() {
             </form>}
           </div>
           <nav aria-label="Account pages" className="grid grid-cols-2 gap-3 border-t border-stone-100 p-5 sm:p-7">
-            {user.role === "customer" ? <><Link href="/customer/analytics" className={`${button} border-orange-600 bg-orange-600 text-white hover:bg-orange-700`}>Spending tracker</Link><Link href="/orders" className={button}>Order history</Link></> : <Link href={user.role === "admin" ? "/admin/rentals" : "/vendor/dashboard"} className={button}>Dashboard</Link>}
+            {user.role === "customer" ? <Link href="/orders" className={`${button} bg-orange-50 text-orange-800`}>Order history</Link> : <Link href={user.role === "admin" ? "/admin/rentals" : "/vendor/dashboard"} className={button}>Dashboard</Link>}
             <button onClick={logout} className="col-span-2 justify-self-start text-sm font-medium text-stone-500 underline underline-offset-4">Log out</button>
           </nav>
-          <div className="border-t border-stone-100 p-5 sm:p-7">
-            <h2 className="font-semibold">Dietary preferences</h2><p className="mt-1 text-xs text-stone-500">Personal reminders on this browser; these do not guarantee ingredients or allergy safety.</p>
-            <div className="mt-3 flex flex-wrap gap-2">{diets.map(d => <button key={d} aria-pressed={preferences.includes(d)} onClick={() => { const next = preferences.includes(d) ? preferences.filter(p => p !== d) : [...preferences,d]; if (save({ photo, name, diets: next })) setPreferences(next); }} className={`rounded-full border px-3 py-1.5 text-xs font-medium ${preferences.includes(d) ? "border-orange-300 bg-orange-50 text-orange-800" : "border-stone-200 text-stone-600"}`}>{d}</button>)}</div>
-          </div>
+          </section>
+        <section className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-lime-50 to-amber-50 p-5 shadow-sm sm:p-7">
+            <h2 className="inline-block rounded-lg bg-emerald-100 px-3 py-1 font-semibold text-emerald-900">Dietary preferences</h2><p className="mt-1 text-xs text-stone-500">Personal reminders on this browser; these do not guarantee ingredients or allergy safety.</p>
+            <div className="mt-3 flex flex-wrap gap-2">{diets.map(d => <button key={d} aria-pressed={preferences.includes(d)} onClick={() => { const next = preferences.includes(d) ? preferences.filter(p => p !== d) : [...preferences,d]; if (save({ photo, name, diets: next })) setPreferences(next); }} className={`rounded-full border px-3 py-1.5 text-xs font-medium ${preferences.includes(d) ? "border-emerald-500 bg-emerald-700 text-white" : "border-emerald-200 bg-white/80 text-emerald-900"}`}>{d}</button>)}</div>
         </section>
+        {user.role === "customer" && <Link href="/customer/analytics" className="flex items-center justify-between gap-4 rounded-2xl border border-indigo-200 bg-indigo-50 p-5 text-indigo-950"><div><h2 className="font-semibold">Spending tracker</h2><p className="mt-1 text-xs text-indigo-700">Your daily budget, favourite meals and spending habits.</p></div><span className="rounded-lg bg-white px-3 py-2 text-sm font-semibold">View</span></Link>}
         {orders.some(o => o.status === "ready") && <Link href="/orders" role="status" className="block rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-800">Your order is ready to collect. View order details.</Link>}
         {user.role !== "admin" && <details className="rounded-xl border border-stone-200 bg-white p-4 text-sm text-stone-500"><summary className="cursor-pointer">Account management</summary><p className="my-3 text-xs">Permanently delete your account. This action cannot be undone.</p><DeleteAccountButton /></details>}
       </>}

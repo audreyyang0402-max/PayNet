@@ -220,29 +220,24 @@ def read_root():
 # --- PHASE 5: RECOMMENDATION ROUTE ---
 @app.get("/recommendations/items")
 async def get_recommended_items(
-    limit: int = 5,
+    limit: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db)
 ):
+    # Public aggregate counts only: never expose individual customer/order data.
+    quantity = func.sum(OrderItem.quantity)
     result = await db.execute(
-        select(MenuItem)
-        .where(MenuItem.is_available == True)
-        .limit(limit)
+        select(MenuItem.id, quantity.label("quantity"))
+        .join(OrderItem, OrderItem.menu_item_id == MenuItem.id)
+        .join(Order, Order.id == OrderItem.order_id)
+        .join(Merchant, Merchant.id == MenuItem.merchant_id)
+        .where(Order.status == "completed", Order.created_at >= datetime.now(timezone.utc) - timedelta(days=30),
+               MenuItem.is_available == True, MenuItem.price > 0,
+               MenuItem.image_url.isnot(None), func.length(func.trim(MenuItem.image_url)) > 0,
+               Merchant.is_active == True)
+        .group_by(MenuItem.id).order_by(quantity.desc(), MenuItem.id).limit(limit)
     )
-    items = result.scalars().all()
-    
-    recommendations = []
-    for item in items:
-        recommendations.append({
-            "id": str(item.id),
-            "merchant_id": str(item.merchant_id),
-            "name": item.name,
-            "description": item.description,
-            "price": float(item.price),
-            "image_url": item.image_url,
-            "tag": "Popular Choice 🔥"
-        })
-        
-    return recommendations
+    return [{"id": str(row.id), "quantity": int(row.quantity)} for row in result]
+
 
 
 # 1. Route to create a user first (Merchants need a user_id)
