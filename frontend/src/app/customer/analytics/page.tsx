@@ -1,2 +1,2 @@
-import CustomerSpendingDashboard from "@/components/CustomerSpendingDashboard";
-export default function CustomerAnalyticsPage() { return <CustomerSpendingDashboard />; }
+import { redirect } from "next/navigation";
+export default function CustomerAnalyticsPage() { redirect("/profile#spending-tracker"); }

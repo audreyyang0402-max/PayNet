@@ -54,9 +54,7 @@ export default function OrdersPage() {
 
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-3xl font-bold text-gray-900">My Order History</h1>
-          <Link href="/customer/analytics" className="rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-700">
-            Spending tracker
-          </Link>
+
         </div>
 
         {loading && <p className="text-gray-500">Loading your orders...</p>}

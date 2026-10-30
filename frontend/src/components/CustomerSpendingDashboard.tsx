@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BACKEND_URL } from "@/lib/backend-url";
 
@@ -52,10 +51,10 @@ export default function CustomerSpendingDashboard() {
   }, [days,refresh,router]);
   const limit = Number(budget) > 0 && Number.isFinite(Number(budget)) ? Number(budget) : 0;
   const max = Math.max(1,...(data?.daily.map(d => d.spent) || []));
-  return <main className="min-h-screen bg-[#faf8f3] px-4 py-6 text-stone-900 sm:py-10"><div className="mx-auto max-w-5xl space-y-5">
-    <nav className="flex flex-wrap gap-2"><Link href="/profile" className={button}>Back to my account</Link><Link href="/orders" className={button}>Order history</Link></nav>
+  return <section id="spending-tracker" aria-labelledby="spending-title" className="scroll-mt-6 space-y-5 text-stone-900">
+
     <header className="flex flex-wrap items-end justify-between gap-4 py-2">
-      <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-700">Your food budget</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Spending tracker</h1><p className="mt-2 max-w-lg text-sm text-stone-500">Know where your money goes, one meal at a time.</p></div>
+      <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-700">Your food budget</p><h2 id="spending-title" className="mt-1 text-2xl font-bold tracking-tight">Spending tracker</h2><p className="mt-2 max-w-lg text-sm text-stone-500">Know where your money goes, one meal at a time.</p></div>
       <div className="flex gap-2"><label className="sr-only" htmlFor="spending-period">Date range</label><select id="spending-period" className={button} value={days} onChange={e => { setData(null); setDays(Number(e.target.value)); }}><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select><button className={button} disabled={busy} onClick={() => setRefresh(r => r+1)}>{busy ? "Updating…" : "Refresh"}</button></div>
     </header>
     <p className="text-xs text-stone-500" role="status">{data ? `Updated ${new Date(data.updated_at).toLocaleTimeString("en-MY", { timeZone: "Asia/Kuala_Lumpur" })} MYT · refreshes every 15 seconds while visible` : "Loading your spending…"}</p>
@@ -87,5 +86,5 @@ export default function CustomerSpendingDashboard() {
       <section className="rounded-2xl border border-stone-200 bg-white p-5 sm:p-6"><h2 className="font-semibold">Your most ordered food</h2><p className="mt-1 text-xs text-stone-500">Ranked by quantity in vendor-confirmed orders during this period.</p>{!data.top_items.length ? <p className="py-6 text-sm text-stone-500">Your favourites will appear after an order is confirmed.</p> : <ol className="mt-4 divide-y divide-stone-100">{data.top_items.map((item,i) => <li key={item.id} className="flex items-center gap-3 py-3"><span className="text-xs text-stone-400">{String(i+1).padStart(2,"0")}</span><div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold">{item.name}</p><p className="text-xs text-stone-500">{item.quantity} ordered{i === 0 ? " · Your most frequent choice" : ""}</p></div><span className="text-sm font-medium">{money(item.spent)}</span></li>)}</ol>}</section>
       <p className="text-xs leading-relaxed text-stone-500">This tracks order values confirmed by vendors, not bank transactions. Pending and cancelled orders are excluded from spending. Refunds or payments outside Payvolution are not reflected.</p>
     </>}
-  </div></main>;
+  </section>;
 }

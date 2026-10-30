@@ -187,7 +187,7 @@ export default function RecommendationWidget({
 
   return (
     <section className="overflow-hidden rounded-2xl border border-orange-200 bg-white shadow-sm transition-all">
-      {isOpen && activeTab === "popular" && <p role="status" className="px-5 pt-3 text-xs text-slate-600">{popularityError || (popularityLoading ? "Loading campus favourites…" : "Based on quantities in completed orders, not paid promotions.")}</p>}
+
       {/* ================================================================
           Interactive Click-to-Activate Header Banner
           Requires user click/tap before opening recommendations
@@ -220,6 +220,7 @@ export default function RecommendationWidget({
           ================================================================ */}
       {isOpen && (
         <div className="pt-2 animate-slide-up">
+          {activeTab === "popular" && (popularityError || popularityLoading) && <p role="status" className="px-5 pt-3 text-xs text-slate-600">{popularityError || "Loading campus favourites…"}</p>}
           {/* Horizontal scrollable tab bar */}
           <div
             ref={tabBarRef}
