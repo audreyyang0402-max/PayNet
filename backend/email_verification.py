@@ -47,7 +47,7 @@ async def provider_request(path, payload):
 
 async def issue_code(db, email, purpose):
     email = normalize_email(email)
-    if purpose not in ("register", "reset"):
+    if purpose not in ("register", "reset", "delete"):
         raise HTTPException(400, "Invalid verification purpose.")
     await lock_email(db, email)
     now = datetime.now(timezone.utc)

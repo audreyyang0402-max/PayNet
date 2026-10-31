@@ -5,6 +5,8 @@ import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import AnalyticsDashboard from "@/components/AnalyticsDashboard";
+import DeleteAccountButton from "@/components/DeleteAccountButton";
 
 interface MerchantProfile {
   id: string;
@@ -66,7 +68,7 @@ export default function MerchantDashboard() {
   const [error, setError] = useState<string | null>(null);
 
   // Edit Merchant Profile States
-  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [tab, setTab] = useState<"analytics" | "orders" | "payment" | "profile">("analytics");
   const [editStoreName, setEditStoreName] = useState("");
   const [editLocation, setEditLocation] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -78,12 +80,6 @@ export default function MerchantDashboard() {
   const [qrUrl, setQrUrl] = useState("");
   const [qrUpdating, setQrUpdating] = useState(false);
   const [qrUpdateMessage, setQrUpdateMessage] = useState("");
-
-  // Delete Account States
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deletePassword, setDeletePassword] = useState("");
-  const [deleteError, setDeleteError] = useState("");
-  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -102,7 +98,7 @@ export default function MerchantDashboard() {
 
         if (!profileRes.ok) throw new Error("Could not load merchant profile.");
         const profileData = await profileRes.json();
-        
+
         const bookingsRes = await fetch(`${BACKEND_URL}/boulevard/my-bookings`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -154,8 +150,6 @@ export default function MerchantDashboard() {
       const token = localStorage.getItem("token");
       const payload: any = {
         phone_number: editPhone,
-        store_name: editStoreName,
-        location: editLocation,
         description: editDescription,
       };
 
@@ -176,7 +170,7 @@ export default function MerchantDashboard() {
       const updated = await res.json();
       setMerchant((prev) => prev ? { ...prev, name: updated.store_name, location: updated.location, description: updated.description } : null);
       setProfileUpdateSuccess("Store profile updated successfully!");
-      setIsEditingProfile(false);
+
     } catch (err: any) {
       setError(err.message);
     }
@@ -220,36 +214,6 @@ export default function MerchantDashboard() {
     }
   };
 
-  const handleDeleteAccount = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setDeleteError("");
-    setDeleting(true);
-
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${BACKEND_URL}/users/me`, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ password: deletePassword }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.detail || "Failed to delete account.");
-      }
-
-      localStorage.clear();
-      window.location.href = "/";
-    } catch (err: any) {
-      setDeleteError(err.message || "An error occurred.");
-    } finally {
-      setDeleting(false);
-    }
-  };
-
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
     try {
       const token = localStorage.getItem("token");
@@ -261,7 +225,7 @@ export default function MerchantDashboard() {
         },
         body: JSON.stringify({ status: newStatus }),
       });
-      
+
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.detail || "Failed to update order status.");
@@ -280,10 +244,6 @@ export default function MerchantDashboard() {
     router.push("/vendor/login" as any);
   };
 
-  const totalRevenue = orders.filter(o => o.status === "completed").reduce((sum, order) => sum + Number(order.total_price), 0);
-  const completedOrdersCount = orders.filter(
-    (o) => o.status.toLowerCase() === 'completed'
-  ).length;
 
   if (loading) return <div className="min-h-screen flex items-center justify-center">Loading dashboard...</div>;
   if (error) return <div className="p-8 text-red-600 bg-red-50 text-center m-8 rounded-xl">{error}</div>;
@@ -291,10 +251,11 @@ export default function MerchantDashboard() {
   return (
     <main className="min-h-screen bg-stone-50 p-4 sm:p-8">
       <div className="max-w-5xl mx-auto space-y-8">
-        
-        {notice && <div role="status" className="fixed right-4 top-4 z-50 max-w-sm rounded-xl border border-orange-200 bg-white p-4 shadow-xl">{notice}<a href="#manage-orders" className="ml-2 font-semibold text-orange-700">View orders</a></div>}
+
+        {notice && <div role="status" className="fixed right-4 top-4 z-50 max-w-sm rounded-xl border border-orange-200 bg-white p-4 shadow-xl">{notice}<button onClick={()=>{setTab("orders");setNotice("");}} className="ml-2 font-semibold text-orange-700">View orders</button></div>}
+        <Link href="/" className="inline-block rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold">Back to marketplace</Link>
         {/* Header Section */}
-        <div className="bg-gradient-to-br from-white to-indigo-50 p-6 rounded-2xl shadow-sm border border-indigo-100 space-y-4">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 space-y-4">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <span className="bg-orange-50 text-orange-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block">
@@ -302,60 +263,24 @@ export default function MerchantDashboard() {
               </span>
               <h1 className="text-2xl font-bold text-gray-900">{merchant?.name}</h1>
               <p className="text-gray-500 text-sm">📍 {merchant?.location}</p>
-              {merchant?.description && (
-                <p className="text-gray-600 text-xs mt-2 bg-gray-50 p-3 rounded-xl border border-gray-100">
-                  {merchant.description}
-                </p>
-              )}
+
             </div>
-            
-            <div className="flex flex-wrap items-center gap-2">
-              <a href="#manage-orders" className="rounded-xl bg-sky-50 px-3.5 py-2 text-xs font-semibold text-sky-800">Manage orders ({orders.filter(o => ["pending", "pending_verification", "preparing", "ready"].includes(o.status)).length})</a>
-              <Link href="/vendor/analytics" className="px-3.5 py-2 text-xs font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-xl transition-colors">
-                Analytics
-              </Link>
-              <Link href="/vendor/menu" className="px-3.5 py-2 text-xs font-semibold text-white bg-orange-600 hover:bg-orange-700 rounded-xl transition-colors shadow-sm">
-                Manage Menu & Slots
-              </Link>
-              {merchant?.is_temporary && (
-                <Link
-                  href="/vendor/rental"
-                  className="px-3.5 py-2 text-xs font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-xl transition-colors shadow-sm"
-                >
-                  Manage Stall Rental
-                </Link>
-              )}
 
-              <button
-                onClick={() => setIsEditingProfile(!isEditingProfile)}
-                className="px-3.5 py-2 text-xs font-semibold text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-xl transition-colors cursor-pointer"
-              >
-                {isEditingProfile ? "Cancel" : "Edit Store Profile"}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowDeleteModal(true)}
-                className="px-3.5 py-2 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-colors cursor-pointer"
-              >
-                Delete Account
-              </button>
-
-              <button 
-                onClick={handleLogout}
-                className="px-3.5 py-2 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors cursor-pointer"
-              >
-                Log Out
-              </button>
-            </div>
+            <button onClick={handleLogout} className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700">Log out</button>
           </div>
+          <nav aria-label="Merchant portal" className="grid grid-cols-2 gap-2 border-t border-stone-100 pt-4 text-center sm:flex sm:flex-wrap sm:justify-center">
+            {(["analytics","orders","payment","profile"] as const).map(t => <button key={t} aria-pressed={tab === t} onClick={()=>setTab(t)} className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors ${tab===t ? "bg-orange-700 text-white" : "bg-orange-50 text-orange-900 hover:bg-orange-100"}`}>{{analytics:"Overview",orders:"Manage orders",payment:"Payment setup",profile:"Store profile"}[t]}{t==="orders" ? ` (${orders.filter(o=>["pending","pending_verification","preparing","ready"].includes(o.status)).length})` : ""}</button>)}
+            <Link href="/vendor/menu" className="rounded-xl bg-stone-100 px-4 py-2.5 text-sm font-semibold text-stone-700">Menu & pickup slots</Link>
+            {merchant?.is_temporary && <Link href="/vendor/rental" className="rounded-xl bg-stone-100 px-4 py-2.5 text-sm font-semibold text-stone-700">Stall rental</Link>}
+          </nav>
 
           {profileUpdateSuccess && (
             <div className="p-3 bg-green-50 text-green-700 text-xs rounded-xl">{profileUpdateSuccess}</div>
           )}
 
-          {isEditingProfile && (
+          {tab === "profile" && (
             <form onSubmit={handleUpdateMerchantProfile} className="space-y-4 pt-4 border-t border-gray-100">
+              <p className="text-sm text-stone-500">Your registered stall name, campus location and email are fixed. You can edit your bio, operating hours and contact phone below.</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store / Stall Name</label>
@@ -363,7 +288,7 @@ export default function MerchantDashboard() {
                     type="text"
                     required
                     value={editStoreName}
-                    onChange={(e) => setEditStoreName(e.target.value)}
+                    readOnly aria-readonly="true"
                     className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
                   />
                 </div>
@@ -373,7 +298,7 @@ export default function MerchantDashboard() {
                     type="text"
                     required
                     value={editLocation}
-                    onChange={(e) => setEditLocation(e.target.value)}
+                    readOnly aria-readonly="true"
                     className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
                   />
                 </div>
@@ -425,56 +350,8 @@ export default function MerchantDashboard() {
           )}
         </div>
 
-        {/* ── Delete Confirmation Modal ── */}
-        {showDeleteModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
-              <h3 className="text-lg font-bold text-red-600">Delete Account Confirmation</h3>
-              <p className="text-xs text-gray-600">
-                This action is irreversible. Please enter your current password to confirm account deletion.
-              </p>
-
-              {deleteError && (
-                <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded-xl border border-red-200">
-                  {deleteError}
-                </div>
-              )}
-
-              <form onSubmit={handleDeleteAccount} className="space-y-3">
-                <input
-                  type="password"
-                  value={deletePassword}
-                  onChange={(e) => setDeletePassword(e.target.value)}
-                  placeholder="Enter your password"
-                  required
-                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm outline-none focus:ring-2 focus:ring-red-500"
-                />
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowDeleteModal(false);
-                      setDeletePassword("");
-                      setDeleteError("");
-                    }}
-                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-200"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={deleting}
-                    className="px-4 py-2 bg-red-600 text-white rounded-xl text-xs font-semibold hover:bg-red-700 disabled:opacity-50"
-                  >
-                    {deleting ? "Deleting..." : "Permanently Delete"}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
+        {tab === "analytics" && <AnalyticsDashboard audience="merchant" embedded />}
+        {tab === "payment" && <>
         {/* DuitNow QR Code Management Section */}
         <div className="bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-6 rounded-2xl shadow-sm border border-indigo-200">
           <p className="mb-2 text-xs font-bold uppercase tracking-widest text-indigo-600">Payment setup</p>
@@ -501,10 +378,10 @@ export default function MerchantDashboard() {
               <div className="text-center py-3 bg-gray-50 rounded-xl border border-gray-100 max-w-xs">
                 <p className="text-xs font-semibold text-gray-600 mb-2">Current QR Code:</p>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img 
-                  src={qrUrl.startsWith("http") ? qrUrl : `${BACKEND_URL}${qrUrl}`} 
-                  alt="DuitNow QR Preview" 
-                  className="w-36 h-36 mx-auto object-contain bg-white rounded-lg border p-1" 
+                <img
+                  src={qrUrl.startsWith("http") ? qrUrl : `${BACKEND_URL}${qrUrl}`}
+                  alt="DuitNow QR Preview"
+                  className="w-36 h-36 mx-auto object-contain bg-white rounded-lg border p-1"
                 />
               </div>
             )}
@@ -523,29 +400,10 @@ export default function MerchantDashboard() {
           </form>
         </div>
 
-        <section className="rounded-2xl border border-violet-200 bg-gradient-to-r from-violet-50 to-rose-50 p-5">
-          <h2 className="font-bold text-violet-900">Selling at Payvolution Event?</h2>
-          <p className="mt-2 text-sm text-stone-600">Ask the event administrator to assign this shop to the event. Keep using Manage Menu & Slots for your dishes and collection times. Event placement is separate from stall rental approval.</p>
-          <Link href="/events" className="mt-3 inline-block text-sm font-semibold text-violet-800">View events</Link>
-        </section>
-        {/* Sales Summary Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-orange-50 p-6 rounded-2xl shadow-sm border border-orange-200">
-            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Completed sales</p>
-            <p className="text-2xl font-bold text-orange-600 mt-1">RM {totalRevenue.toFixed(2)}</p>
-          </div>
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Total Orders</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1">{orders.length}</p>
-          </div>
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Completed orders</p>
-            <p className="text-2xl font-bold text-green-600 mt-1">{completedOrdersCount}</p>
-          </div>
-        </div>
-
+        </>}
+        {tab === "orders" && <>
         {/* Incoming Orders Section */}
-        <div className="bg-gradient-to-br from-white to-indigo-50 p-6 rounded-2xl shadow-sm border border-indigo-100 space-y-4">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 space-y-4">
           <h2 id="manage-orders" className="scroll-mt-6 text-xl font-bold text-gray-900">Manage orders</h2>
           <p className="text-sm text-stone-500">Updates every 15 seconds while this page is visible. Verify payment in your banking app before accepting.</p>
           {orderError && <p role="alert" className="text-sm text-red-700">{orderError}</p>}
@@ -580,15 +438,15 @@ export default function MerchantDashboard() {
                   {order.transaction_ref && (
                     <div className="bg-white p-3 rounded-lg border border-yellow-200 space-y-2">
                       <p className="text-xs font-semibold text-gray-700">Student Uploaded Payment Receipt:</p>
-                      <a 
-                        href={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`} 
-                        target="_blank" 
+                      <a
+                        href={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`}
+                        target="_blank"
                         rel="noopener noreferrer"
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img 
-                          src={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`} 
-                          alt="Payment Receipt Screenshot" 
+                        <img
+                          src={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`}
+                          alt="Payment Receipt Screenshot"
                           className="w-32 h-32 object-cover rounded-lg border hover:opacity-90 transition cursor-pointer"
                         />
                       </a>
@@ -650,6 +508,9 @@ export default function MerchantDashboard() {
             </div>
           )}
         </div>
+
+        </>}
+        {tab === "profile" && <details className="rounded-2xl border border-stone-200 bg-white p-5"><summary className="cursor-pointer list-none text-sm font-semibold text-stone-600">Account management</summary><div className="mt-4"><DeleteAccountButton /></div></details>}
 
       </div>
     </main>

@@ -168,8 +168,8 @@ export default function RentalContent() {
         {/* Header Section */}
         <div className="flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
           <div>
-            <Link href="/" className="text-orange-600 hover:underline font-medium text-sm">
-              ← Back to Marketplace
+            <Link href="/" className="inline-block rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-800">
+              Back to marketplace
             </Link>
             <h1 className="text-2xl font-bold text-gray-900 mt-2">Boulevard Stall Rentals</h1>
             <p className="text-gray-500 text-sm">Browse campus boulevard spots and manage your rental requests.</p>

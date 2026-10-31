@@ -37,7 +37,7 @@ from auth_endpoints import (
     DeleteAccountRequest,
     send_verification,
     verify_code,
-    delete_account,
+    delete_account, DeleteCodeRequest, send_delete_code,
 )
 
 
@@ -191,9 +191,6 @@ class SendCodeRequest(BaseModel):
     email: EmailStr
     purpose: Literal["register", "reset"]
 
-class DeleteAccountRequest(BaseModel):
-    password: str  # re-enter password to confirm deletion
-
 # NEW: Schemas for Boulevard Rental Bookings
 class RentalBookingCreate(BaseModel):
     stall_id: UUID
@@ -322,116 +319,24 @@ async def update_my_profile(
 
 
 @app.delete("/users/me")
+@app.delete("/api/users/me")
 async def delete_my_account(
     payload: DeleteAccountRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role == "admin":
-        raise HTTPException(status_code=403, detail="Admin accounts cannot be deleted.")
-    if not verify_password(payload.password, current_user.password_hash):
-        raise HTTPException(status_code=400, detail="Incorrect password.")
-
-    merchant_result = await db.execute(select(Merchant).where(Merchant.user_id == current_user.id))
-    merchant_ids = [m.id for m in merchant_result.scalars().all()]
-
-    involved = Order.customer_id == current_user.id
-    if merchant_ids:
-        involved = or_(involved, Order.merchant_id.in_(merchant_ids))
-    active_count = (await db.execute(
-        select(func.count(Order.id)).where(involved, Order.status.in_(["preparing", "ready"]))
-    )).scalar_one()
-    if active_count:
-        raise HTTPException(
-            status_code=400,
-            detail=f"You still have {active_count} order(s) being prepared or waiting for pickup. Please finish them first."
-        )
-
-    if merchant_ids:
-        await db.execute(update(Merchant).where(Merchant.id.in_(merchant_ids)).values(is_active=False))
-        await db.execute(update(MenuItem).where(MenuItem.merchant_id.in_(merchant_ids)).values(is_available=False))
-
-    await db.execute(
-        update(RentalBooking)
-        .where(RentalBooking.vendor_user_id == current_user.id, RentalBooking.status.in_(["pending", "approved"]))
-        .values(status="cancelled")
-    )
-
-    current_user.name = "Deleted User"
-    current_user.email = f"deleted-{current_user.id}@{DELETED_EMAIL_DOMAIN}"
-    current_user.phone_number = None
-    current_user.password_hash = hash_password(secrets.token_urlsafe(32))
-
-    try:
-        await db.commit()
-        return {"message": "Account deleted successfully."}
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+    return await delete_account(payload, current_user, db)
 
 
-# --- NEW: Specific API Endpoint for Frontend Profile Deletion ---
-@app.delete("/api/users/me")
-async def delete_my_account_api(
+@app.post("/users/me/deletion-code")
+async def request_deletion_code(
+    payload: DeleteCodeRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role == "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Administrators cannot delete accounts through this endpoint."
-        )
-    
-    try:
-        # Check active orders first
-        merchant_result = await db.execute(select(Merchant).where(Merchant.user_id == current_user.id))
-        merchant_ids = [m.id for m in merchant_result.scalars().all()]
-
-        involved = Order.customer_id == current_user.id
-        if merchant_ids:
-            involved = or_(involved, Order.merchant_id.in_(merchant_ids))
-        
-        active_count = (await db.execute(
-            select(func.count(Order.id)).where(involved, Order.status.in_(["preparing", "ready"]))
-        )).scalar_one()
-        
-        if active_count:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"You still have {active_count} order(s) being prepared or waiting for pickup."
-            )
-
-        if merchant_ids:
-            await db.execute(update(Merchant).where(Merchant.id.in_(merchant_ids)).values(is_active=False))
-            await db.execute(update(MenuItem).where(MenuItem.merchant_id.in_(merchant_ids)).values(is_available=False))
-
-        # Cancel pending/approved rental bookings safely
-        await db.execute(
-            update(RentalBooking)
-            .where(RentalBooking.vendor_user_id == current_user.id, RentalBooking.status.in_(["pending", "approved"]))
-            .values(status="cancelled")
-        )
-
-        # Soft delete / anonymize user data to avoid foreign key constraint crashes
-        current_user.name = "Deleted User"
-        current_user.email = f"deleted-{current_user.id}@{DELETED_EMAIL_DOMAIN}"
-        current_user.phone_number = None
-        current_user.password_hash = hash_password(secrets.token_urlsafe(32))
-
-        await db.commit()
-        
-        return {"status": "success", "message": "Account successfully deleted."}
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete account: {str(e)}"
-        )
+    return await send_delete_code(payload, current_user, db)
 
 
-# --- NEW: Admin Delete User Endpoint (Updated to clean up Rental Bookings & Merchants) ---
 @app.delete("/admin/users/{user_id}")
 async def admin_delete_user(
     user_id: UUID,
@@ -557,12 +462,12 @@ async def update_my_merchant_profile(
     merchant = result.scalars().first()
     
     if merchant:
-        if update_data.store_name is not None:
-            merchant.name = update_data.store_name
+        if update_data.store_name is not None and update_data.store_name != merchant.name:
+            raise HTTPException(400, "The registered stall name cannot be changed.")
         if update_data.description is not None:
             merchant.description = update_data.description
-        if update_data.location is not None:
-            merchant.location = update_data.location
+        if update_data.location is not None and update_data.location != merchant.location:
+            raise HTTPException(400, "The registered campus location cannot be changed.")
 
     try:
         await db.commit()

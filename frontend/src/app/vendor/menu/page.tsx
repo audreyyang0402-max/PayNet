@@ -350,9 +350,9 @@ export default function MerchantMenuPage() {
           <div>
             <Link
               href="/vendor/dashboard"
-              className="text-[#F04B14] hover:underline font-bold text-xs sm:text-sm inline-block mb-1"
+              className="inline-block rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-800 mb-3"
             >
-              ← Back to Vendor Dashboard
+              Back to merchant portal
             </Link>
             <h1 className="text-xl sm:text-2xl font-black text-slate-900">
               Stall Menu & Food Products

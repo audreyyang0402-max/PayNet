@@ -21,7 +21,7 @@ type Analytics = {
 const API_URL = `${BACKEND_URL}`;
 const money = (amount: number) => `RM ${amount.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export default function AnalyticsDashboard({ audience }: { audience: "admin" | "merchant" | "customer" }) {
+export default function AnalyticsDashboard({ audience, embedded = false }: { audience: "admin" | "merchant" | "customer"; embedded?: boolean }) {
   const router = useRouter();
   const [updatedAt, setUpdatedAt] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -88,17 +88,18 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
     return `${x},${y}`;
   }).join(" "), [data, maxOrders]);
 
+  const Container = embedded ? "section" : "main";
   return (
-    <main className="min-h-screen bg-stone-50 p-5 sm:p-8">
+    <Container className={embedded ? "" : "min-h-screen bg-stone-50 p-5 sm:p-8"}>
       <div className="mx-auto max-w-5xl space-y-6">
         <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <Link href={isAdmin ? "/admin/rentals" : isCustomer ? "/profile" : "/vendor/dashboard"} className="text-sm font-medium text-orange-700 hover:underline">
-                ← Back to {isCustomer ? "my account" : `${isAdmin ? "admin" : "vendor"} dashboard`}
-              </Link>
+              {!embedded && <Link href={isAdmin ? "/admin/rentals" : isCustomer ? "/profile" : "/vendor/dashboard"} className="inline-block rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-800">
+                Back to {isCustomer ? "my account" : `${isAdmin ? "admin" : "vendor"} dashboard`}
+              </Link>}
               <p className="mt-4 text-xs font-bold uppercase tracking-[0.18em] text-orange-700">Analytics</p>
-              <h1 className="mt-1 text-3xl font-bold text-slate-900">{isAdmin ? "Platform analytics" : isCustomer ? "Your spending" : "Store analytics"}</h1>
+              <h2 className="mt-1 text-2xl font-bold text-slate-900">{isAdmin ? "Platform analytics" : isCustomer ? "Your spending" : "Store analytics"}</h2>
               <p className="mt-2 text-sm text-slate-500">{isCustomer ? "Your completed purchases and order activity from the selected period." : "Sales and order activity from the selected period."}</p>
             </div>
             <label className="text-sm font-medium text-slate-700">
@@ -116,7 +117,7 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-stone-500"><p>{updatedAt ? `Updated ${updatedAt} MYT · refreshes every 15 seconds` : "Loading latest totals"}</p><button onClick={() => setRefreshKey(k => k + 1)} className="rounded-xl border bg-white px-4 py-2 font-semibold text-orange-700">Refresh</button></div>
         {loading && <div className="rounded-xl border border-slate-200 bg-white p-8 text-slate-500">Loading analytics…</div>}
         {data && <>
-          <section aria-label="Key metrics" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <section aria-label="Key metrics" className="grid grid-cols-2 gap-3 xl:grid-cols-4">
             {(isCustomer ? [
               { label: "Total spent", value: money(data.summary.total_revenue), detail: `${data.summary.completed_orders} completed orders` },
               { label: "Orders placed", value: data.summary.total_orders.toLocaleString(), detail: `In the last ${days} days` },
@@ -129,7 +130,7 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
               { label: "Average order", value: money(data.summary.completed_orders ? data.summary.total_revenue / data.summary.completed_orders : 0), detail: "Completed orders only" },
             ]).map((metric, index) => <article key={metric.label} className={`rounded-2xl border p-5 shadow-sm ${["border-orange-200 bg-orange-50", "border-sky-200 bg-sky-50", "border-violet-200 bg-violet-50", "border-rose-200 bg-rose-50"][index]}`}>
               <p className="text-sm font-medium text-slate-500">{metric.label}</p>
-              <p className="mt-3 text-2xl font-bold text-slate-900">{metric.value}</p>
+              <p className="mt-3 text-xl sm:text-2xl font-bold text-slate-900">{metric.value}</p>
               <p className="mt-2 text-xs text-slate-500">{metric.detail}</p>
             </article>)}
           </section>
@@ -141,7 +142,7 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
                 <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">{days} days</span>
               </div>
               <div className="mt-5 overflow-hidden">
-                <svg viewBox="0 0 700 245" role="img" aria-label={isCustomer ? "Line chart of daily customer spending" : "Line chart of daily completed sales revenue"} className="h-64 w-full">
+                <svg viewBox="0 0 700 245" role="img" aria-label={isCustomer ? "Line chart of daily customer spending" : "Line chart of daily completed sales revenue"} className="h-48 w-full sm:h-64">
                   {[25, 85, 145, 210].map((y) => <line key={y} x1="0" x2="700" y1={y} y2={y} stroke="#e2e8f0" strokeDasharray="4 5" />)}
                   {revenuePoints && <polyline points={revenuePoints} fill="none" stroke="#ea580c" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" />}
                 </svg>
@@ -152,7 +153,7 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
             <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
               <div><h2 className="font-bold text-slate-900">{isCustomer ? "Your order frequency" : "Order frequency"}</h2><p className="mt-1 text-xs text-slate-500">Orders placed each day</p></div>
               <div className="mt-5 overflow-hidden">
-                <svg viewBox="0 0 700 245" role="img" aria-label="Line chart of daily order counts" className="h-64 w-full">
+                <svg viewBox="0 0 700 245" role="img" aria-label="Line chart of daily order counts" className="h-48 w-full sm:h-64">
                   {[25, 85, 145, 210].map((y) => <line key={y} x1="0" x2="700" y1={y} y2={y} stroke="#e2e8f0" strokeDasharray="4 5" />)}
                   {orderPoints && <polyline points={orderPoints} fill="none" stroke="#2563eb" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" />}
                 </svg>
@@ -161,7 +162,7 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
             </article>
           </section>
 
-          <details className="rounded-2xl border bg-white p-5"><summary className="cursor-pointer font-semibold text-orange-700">View daily sales and order counts</summary><div className="mt-4 max-h-80 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th>Date (MYT)</th><th>Orders</th><th>Completed sales</th></tr></thead><tbody>{data.revenue_trend.map(d => <tr key={d.date} className="border-t"><td className="py-2">{d.date}</td><td>{d.orders}</td><td>{money(d.revenue)}</td></tr>)}</tbody></table></div></details>
+          <details className="rounded-2xl border bg-white p-5"><summary className="cursor-pointer list-none font-semibold text-orange-700">View daily sales and order counts</summary><div className="mt-4 max-h-80 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th>Date (MYT)</th><th>Orders</th><th>Completed sales</th></tr></thead><tbody>{data.revenue_trend.map(d => <tr key={d.date} className="border-t"><td className="py-2">{d.date}</td><td>{d.orders}</td><td>{money(d.revenue)}</td></tr>)}</tbody></table></div></details>
           <p className="text-xs text-stone-500">Sales include completed orders only. Pending payments and cancelled orders are excluded. These are order totals, not bank reconciliation or net profit.</p>
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
             <div className="mb-5"><h2 className="font-bold text-slate-900">{isCustomer ? "Your most ordered items" : "Top-selling items"}</h2><p className="mt-1 text-xs text-slate-500">{isCustomer ? "Items from your completed orders" : "Ranked by quantities in completed orders"}</p></div>
@@ -175,6 +176,6 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
           </section>
         </>}
       </div>
-    </main>
+    </Container>
   );
 }
