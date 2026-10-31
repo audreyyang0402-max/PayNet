@@ -6,6 +6,12 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
+function passwordError(value: string): string {
+  if (new TextEncoder().encode(value).length > 72) return "Password is too long. Please shorten it; emoji and accented characters use more space.";
+  if (Array.from(value).length < 12 || !/[a-z]/.test(value) || !/[A-Z]/.test(value) || !/[0-9]/.test(value) || !/[^a-zA-Z0-9\s]/.test(value)) return "Password: use at least 12 characters, including an uppercase letter, a lowercase letter, a number and a symbol.";
+  return "";
+}
+
 export default function VendorRegisterPage() {
   const router = useRouter();
   const [step, setStep] = useState<"accountType" | "details" | "verification">("accountType");
@@ -28,9 +34,8 @@ export default function VendorRegisterPage() {
     setError("");
 
     try {
-      if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^a-zA-Z0-9\s]/.test(password)) {
-        throw new Error("Use at least 12 characters with uppercase, lowercase, a number and a symbol.");
-      }
+      const issue = passwordError(password);
+      if (issue) throw new Error(issue);
       const res = await fetch(`${BACKEND_URL}/auth/send-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -59,6 +64,9 @@ export default function VendorRegisterPage() {
     setError("");
 
     try {
+      const issue = passwordError(password);
+      if (issue) { setStep("details"); setError(issue); return; }
+      if (!/^[0-9]{6,8}$/.test(verificationCode)) { setError("Verification code: enter all 6–8 digits from your latest email."); return; }
       const res = await fetch(`${BACKEND_URL}/auth/verify-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -78,7 +86,11 @@ export default function VendorRegisterPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.detail || "Verification failed");
+        const message = typeof data.detail === "string" ? data.detail : "Could not verify your details. Please check the form.";
+        if (/password|uppercase|UTF-8/i.test(message)) {
+          setStep("details");
+          setError(`Please correct your password. ${message}`);
+        } else setError(message);
         return;
       }
 
@@ -142,7 +154,7 @@ export default function VendorRegisterPage() {
         </div>
 
         {error && (
-          <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">
+          <div role="alert" className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">
             {error}
           </div>
         )}
@@ -244,11 +256,13 @@ export default function VendorRegisterPage() {
               <input
                 type="password" minLength={12} autoComplete="new-password" title="At least 12 characters with uppercase, lowercase, a number and a symbol"
                 required
+                aria-describedby="password-help"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
               />
+              <p id="password-help" className="mt-2 text-xs text-gray-500">Your password needs at least 12 characters with uppercase, lowercase, a number and a symbol. This is different from the code sent by email.</p>
             </div>
 
             {accountType === "merchant" && (
@@ -305,17 +319,19 @@ export default function VendorRegisterPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Verification Code</label>
+              <label htmlFor="verification-code" className="block text-xs font-semibold text-gray-700 uppercase mb-1">Verification Code (6–8 digits)</label>
               <input
                 type="text"
-                maxLength={8} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6,8}"
+                id="verification-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6,8}"
                 required
+                aria-describedby="verification-help"
+                onPaste={e => { e.preventDefault(); setVerificationCode(e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 8)); }}
                 value={verificationCode}
                 onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
-                placeholder="000000"
+                placeholder="Enter email code"
                 className="w-full px-4 py-3 text-center text-2xl font-bold tracking-widest border-2 border-orange-200 rounded-lg focus:outline-none focus:border-orange-500"
               />
-              <p className="text-xs text-gray-500 mt-1">Code expires in 10 minutes. Use the latest code from your email.</p>
+              <p id="verification-help" className="text-xs text-gray-500 mt-1">Enter every digit from the latest email, including any starting zeros. Code expires in 10 minutes.</p>
             </div>
 
             <button

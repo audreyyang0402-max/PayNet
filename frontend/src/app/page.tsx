@@ -689,9 +689,8 @@ export default function Home() {
                             Shop / Stall
                           </p>
                           <h3 className="mt-0.5 text-base sm:text-lg font-bold leading-snug text-slate-900">
-                            {merchant.name}
+                            <button type="button" onClick={() => setSelectedShop(merchant)} className="text-left hover:text-orange-700 focus-visible:outline-2 focus-visible:outline-orange-600" aria-label={`View ${merchant.name}`}>{merchant.name}</button>
                           </h3>
-                          <button onClick={() => setSelectedShop(merchant)} className="mt-2 rounded-lg bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-800 hover:bg-orange-100">View shop</button>
                           <p className="mt-1 text-xs text-slate-500">📍 {merchant.location || "Campus"}</p>
                         </div>
                         {merchant.description && (
@@ -699,6 +698,7 @@ export default function Home() {
                             {merchant.description}
                           </p>
                         )}
+                          <button onClick={() => setSelectedShop(merchant)} className="mt-2 rounded-lg bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-800 hover:bg-orange-100">View shop</button>
                       </div>
 
                       {/* Horizontal Scrolling Items */}

@@ -30,10 +30,12 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 # --- PASSWORD HASHING (UPDATED TO USE BCRYPT DIRECTLY) ---
 
 def validate_password(password: str):
-    if (len(password) < 12 or len(password.encode("utf-8")) > 72
+    if len(password.encode("utf-8")) > 72:
+        raise HTTPException(400, "Password is too long. Please shorten it; emoji and accented characters use more space.")
+    if (len(password) < 12
         or not re.search(r"[a-z]", password) or not re.search(r"[A-Z]", password)
         or not re.search(r"[0-9]", password) or not re.search(r"[^a-zA-Z0-9\s]", password)):
-        raise HTTPException(400, "Use at least 12 characters with uppercase, lowercase, a number and a symbol (maximum 72 UTF-8 bytes).")
+        raise HTTPException(400, "Password: use at least 12 characters, including an uppercase letter, a lowercase letter, a number and a symbol.")
 
 def password_stamp(password_hash: str):
     return hmac.new(SECRET_KEY.encode(), password_hash.encode(), hashlib.sha256).hexdigest()
