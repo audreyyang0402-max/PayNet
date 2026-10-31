@@ -58,7 +58,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") # Service role key to bypa
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 async def upload_to_supabase(file: UploadFile) -> str:
-    """Helper function to upload files directly to Supabase Storage and return the public URL."""
+    """Helper function to upload files directly to Supabase Storage and return the public URL safely."""
     if not supabase:
         raise HTTPException(status_code=500, detail="Supabase Storage client is not configured on the backend.")
     try:
@@ -67,16 +67,25 @@ async def upload_to_supabase(file: UploadFile) -> str:
         file_name = f"{os.urandom(12).hex()}.{file_ext}"
         file_path = f"images/{file_name}"
 
-        # Upload bytes to Supabase Storage bucket named 'uploads'
+        # Upload bytes to Supabase Storage bucket named 'uploads' with upsert enabled
         response = supabase.storage.from_("uploads").upload(
             path=file_path,
             file=file_bytes,
-            file_options={"content-type": file.content_type or "image/png"}
+            file_options={"content-type": file.content_type or "image/png", "upsert": "true"}
         )
 
-        # Get the public URL of the uploaded image
+        # Get the public URL safely handling both string and dictionary returns
         public_url_res = supabase.storage.from_("uploads").get_public_url(file_path)
-        return public_url_res
+        
+        if isinstance(public_url_res, dict):
+            public_url = public_url_res.get("publicUrl") or public_url_res.get("data", {}).get("publicUrl")
+        else:
+            public_url = str(public_url_res)
+
+        if not public_url:
+            raise HTTPException(status_code=500, detail="Failed to generate public URL from Supabase.")
+
+        return public_url
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase upload failed: {str(e)}")
 
@@ -388,7 +397,19 @@ async def delete_my_account_api(
             await db.execute(update(Merchant).where(Merchant.id.in_(merchant_ids)).values(is_active=False))
             await db.execute(update(MenuItem).where(MenuItem.merchant_id.in_(merchant_ids)).values(is_available=False))
 
-        await db.delete(current_user)
+        # Cancel pending/approved rental bookings safely
+        await db.execute(
+            update(RentalBooking)
+            .where(RentalBooking.vendor_user_id == current_user.id, RentalBooking.status.in_(["pending", "approved"]))
+            .values(status="cancelled")
+        )
+
+        # Soft delete / anonymize user data to avoid foreign key constraint crashes
+        current_user.name = "Deleted User"
+        current_user.email = f"deleted-{current_user.id}@{DELETED_EMAIL_DOMAIN}"
+        current_user.phone_number = None
+        current_user.password_hash = hash_password(secrets.token_urlsafe(32))
+
         await db.commit()
         
         return {"status": "success", "message": "Account successfully deleted."}

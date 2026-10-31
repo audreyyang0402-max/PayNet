@@ -544,13 +544,13 @@ export default function MerchantDashboard() {
                     <div className="bg-white p-3 rounded-lg border border-yellow-200 space-y-2">
                       <p className="text-xs font-semibold text-gray-700">Student Uploaded Payment Receipt:</p>
                       <a 
-                        href={`${BACKEND_URL}${order.transaction_ref}`} 
+                        href={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`} 
                         target="_blank" 
                         rel="noopener noreferrer"
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img 
-                          src={`${BACKEND_URL}${order.transaction_ref}`} 
+                          src={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`} 
                           alt="Payment Receipt Screenshot" 
                           className="w-32 h-32 object-cover rounded-lg border hover:opacity-90 transition cursor-pointer"
                         />
