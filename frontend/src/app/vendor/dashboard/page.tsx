@@ -44,6 +44,35 @@ export default function MerchantDashboard() {
   const [notice, setNotice] = useState("");
   const [orderError, setOrderError] = useState("");
   const seenOrders = useRef<Set<string> | null>(null);
+
+  // Helper function to play a notification sound effect via Web Audio API
+  const playNotificationSound = () => {
+    try {
+      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContext) return;
+      const ctx = new AudioContext();
+
+      const playTone = (freq: number, start: number, duration: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.15, ctx.currentTime + start);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime + start);
+        osc.stop(ctx.currentTime + start + duration);
+      };
+
+      // Friendly double-chime sound effect
+      playTone(587.33, 0, 0.15); // D5
+      playTone(880.00, 0.15, 0.3); // A5
+    } catch (e) {
+      console.error("Audio playback error:", e);
+    }
+  };
+
   useEffect(() => {
     if (!merchant?.id) return;
     let stopped = false, busy = false;
@@ -55,7 +84,12 @@ export default function MerchantDashboard() {
         if (!res.ok) throw Error("Could not refresh orders. Please reload or sign in again.");
         const rows: Order[] = await res.json();
         if (stopped) return;
-        if (seenOrders.current && rows.some(o => !seenOrders.current!.has(o.id))) setNotice("New order received. Open Manage orders to review it.");
+        
+        if (seenOrders.current && rows.some(o => !seenOrders.current!.has(o.id))) {
+          setNotice("New order received. Open Manage orders to review it.");
+          playNotificationSound(); // <--- Plays chime automatically on new order!
+        }
+        
         seenOrders.current = new Set(rows.map(o => o.id)); setOrders(rows); setOrderError("");
       } catch (e) { if (!stopped) setOrderError(e instanceof Error ? e.message : "Could not refresh orders."); }
       finally { busy = false; }
@@ -63,6 +97,7 @@ export default function MerchantDashboard() {
     refresh(); const timer = setInterval(refresh, 15000);
     return () => { stopped = true; clearInterval(timer); };
   }, [merchant?.id]);
+
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(""), 5000); return () => clearTimeout(timer); }, [notice]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
