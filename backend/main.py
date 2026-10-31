@@ -431,7 +431,7 @@ async def delete_my_account_api(
         )
 
 
-# --- NEW: Admin Delete User Endpoint (Updated to clean up Rental Bookings) ---
+# --- NEW: Admin Delete User Endpoint (Updated to clean up Rental Bookings & Merchants) ---
 @app.delete("/admin/users/{user_id}")
 async def admin_delete_user(
     user_id: UUID,
@@ -458,18 +458,18 @@ async def admin_delete_user(
         )
 
     try:
-        # 1. Delete dependent rental bookings first to avoid foreign key violation
+        # 1. Delete dependent rental bookings first
         await db.execute(
             RentalBooking.__table__.delete().where(RentalBooking.vendor_user_id == target_user.id)
         )
 
-        # 2. Deactivate associated merchant records
+        # 2. Deactivate menu items and explicitly delete merchant records to avoid foreign key violations
         merchant_result = await db.execute(select(Merchant).where(Merchant.user_id == target_user.id))
         merchant_ids = [m.id for m in merchant_result.scalars().all()]
 
         if merchant_ids:
-            await db.execute(update(Merchant).where(Merchant.id.in_(merchant_ids)).values(is_active=False))
             await db.execute(update(MenuItem).where(MenuItem.merchant_id.in_(merchant_ids)).values(is_available=False))
+            await db.execute(Merchant.__table__.delete().where(Merchant.user_id == target_user.id))
 
         # 3. Finally delete the user
         await db.delete(target_user)
