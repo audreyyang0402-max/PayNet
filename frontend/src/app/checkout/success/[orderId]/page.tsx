@@ -14,7 +14,7 @@ export default function OrderVerificationPage() {
   const [merchant, setMerchant] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [isZoomed, setIsZoomed] = useState(false); // <--- State for QR zoom modal
+  const [isZoomed, setIsZoomed] = useState(false);
 
   useEffect(() => {
     if (!orderId) return;
@@ -74,6 +74,26 @@ export default function OrderVerificationPage() {
     }
   };
 
+  // Helper function to download the QR code image
+  const handleDownloadQR = async () => {
+    try {
+      const response = await fetch(qrImageUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${merchant?.name || "Vendor"}-DuitNow-QR.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to download QR image:", err);
+      // Fallback: Open image in new tab if direct download fails due to CORS
+      window.open(qrImageUrl, "_blank");
+    }
+  };
+
   if (!order) {
     return <div className="min-h-screen flex items-center justify-center text-gray-500">Loading order details...</div>;
   }
@@ -106,7 +126,7 @@ export default function OrderVerificationPage() {
             <span className="font-bold text-gray-900 text-base">RM {order.total_price.toFixed(2)}</span>
           </div>
 
-          {/* Display Vendor DuitNow QR Image with Click-to-Enlarge Feature */}
+          {/* Display Vendor DuitNow QR Image with Click-to-Enlarge & Download */}
           <div className="mt-4 pt-3 border-t border-gray-200 text-center">
             <p className="text-xs font-semibold text-gray-600 mb-2">
               Vendor DuitNow QR ({merchant?.name || "Stall"}):
@@ -122,13 +142,24 @@ export default function OrderVerificationPage() {
                 className="w-48 h-48 mx-auto object-contain transition group-hover:scale-105"
               />
               <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition rounded-lg flex items-center justify-center">
-                <span className="bg-gray-900/80 text-white text-[10px] px-2 py-1 rounded-md font-medium shadow">Click to Enlarge</span>
+                <span className="bg-gray-900/80 text-white text-[10px] px-2 py-1 rounded-md font-medium shadow">Click to Enlarge / Download</span>
               </div>
+            </div>
+
+            {/* Quick Download Button below thumbnail */}
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={handleDownloadQR}
+                className="text-xs text-blue-600 hover:text-blue-800 font-semibold inline-flex items-center gap-1 cursor-pointer"
+              >
+                📥 Download QR Image
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Full-Screen Zoom Modal */}
+        {/* Full-Screen Zoom Modal with Download Button */}
         {isZoomed && (
           <div 
             onClick={() => setIsZoomed(false)}
@@ -157,15 +188,25 @@ export default function OrderVerificationPage() {
               </div>
 
               <p className="text-xs text-gray-500">
-                Open your banking app, scan this QR code to transfer, then upload your receipt screenshot.
+                Tap download to save the QR code to your phone gallery, then upload from your banking app.
               </p>
 
-              <button 
-                onClick={() => setIsZoomed(false)}
-                className="w-full py-2.5 bg-gray-900 hover:bg-black text-white font-semibold rounded-xl text-xs transition cursor-pointer"
-              >
-                Close
-              </button>
+              <div className="w-full space-y-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadQR}
+                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                >
+                  📥 Download QR Code Image
+                </button>
+
+                <button 
+                  onClick={() => setIsZoomed(false)}
+                  className="w-full py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl text-xs transition cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         )}
