@@ -1,4 +1,4 @@
-// src/app/checkout/success/[id]/page.tsx (or your equivalent file path)
+// src/app/checkout/success/[id]/page.tsx
 "use client";
 
 import { BACKEND_URL } from "@/lib/backend-url";
@@ -14,6 +14,7 @@ export default function OrderVerificationPage() {
   const [merchant, setMerchant] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [isZoomed, setIsZoomed] = useState(false); // <--- State for QR zoom modal
 
   useEffect(() => {
     if (!orderId) return;
@@ -56,7 +57,7 @@ export default function OrderVerificationPage() {
         headers: {
           Authorization: `Bearer ${token}`,
         },
-        body: formData, // FormData automatically formats as multipart/form-data
+        body: formData,
       });
 
       if (res.ok) {
@@ -76,6 +77,12 @@ export default function OrderVerificationPage() {
   if (!order) {
     return <div className="min-h-screen flex items-center justify-center text-gray-500">Loading order details...</div>;
   }
+
+  const qrImageUrl = merchant?.duitnow_qr_url?.startsWith("http") 
+    ? merchant.duitnow_qr_url 
+    : merchant?.duitnow_qr_url 
+      ? `${BACKEND_URL}${merchant.duitnow_qr_url}` 
+      : "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=DuitNow-QR-Placeholder";
 
   return (
     <main className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
@@ -99,18 +106,69 @@ export default function OrderVerificationPage() {
             <span className="font-bold text-gray-900 text-base">RM {order.total_price.toFixed(2)}</span>
           </div>
 
-          {/* Display Vendor DuitNow QR Image with automatic fallback */}
+          {/* Display Vendor DuitNow QR Image with Click-to-Enlarge Feature */}
           <div className="mt-4 pt-3 border-t border-gray-200 text-center">
             <p className="text-xs font-semibold text-gray-600 mb-2">
               Vendor DuitNow QR ({merchant?.name || "Stall"}):
             </p>
-            <img 
-              src={merchant?.duitnow_qr_url?.startsWith("http") ? merchant.duitnow_qr_url : `${BACKEND_URL}${merchant?.duitnow_qr_url}` || "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=DuitNow-QR-Placeholder"} 
-              alt="Vendor DuitNow QR" 
-              className="w-48 h-48 mx-auto rounded-lg border object-contain bg-white p-1"
-            />
+            
+            <div 
+              onClick={() => setIsZoomed(true)}
+              className="relative group cursor-pointer inline-block bg-white p-2 rounded-lg border border-gray-200 shadow-sm transition hover:shadow-md hover:border-blue-500"
+            >
+              <img 
+                src={qrImageUrl} 
+                alt="Vendor DuitNow QR" 
+                className="w-48 h-48 mx-auto object-contain transition group-hover:scale-105"
+              />
+              <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition rounded-lg flex items-center justify-center">
+                <span className="bg-gray-900/80 text-white text-[10px] px-2 py-1 rounded-md font-medium shadow">Click to Enlarge</span>
+              </div>
+            </div>
           </div>
         </div>
+
+        {/* Full-Screen Zoom Modal */}
+        {isZoomed && (
+          <div 
+            onClick={() => setIsZoomed(false)}
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out"
+          >
+            <div 
+              onClick={(e) => e.stopPropagation()} 
+              className="bg-white p-6 rounded-3xl shadow-2xl max-w-sm w-full flex flex-col items-center relative space-y-4 text-center"
+            >
+              <div className="flex justify-between items-center w-full">
+                <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wide">Scan DuitNow QR</h3>
+                <button 
+                  onClick={() => setIsZoomed(false)}
+                  className="text-gray-400 hover:text-gray-600 text-sm font-bold rounded-full bg-gray-100 hover:bg-gray-200 w-8 h-8 flex items-center justify-center transition cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200 w-full flex justify-center">
+                <img 
+                  src={qrImageUrl} 
+                  alt="Enlarged Vendor DuitNow QR" 
+                  className="w-72 h-72 object-contain"
+                />
+              </div>
+
+              <p className="text-xs text-gray-500">
+                Open your banking app, scan this QR code to transfer, then upload your receipt screenshot.
+              </p>
+
+              <button 
+                onClick={() => setIsZoomed(false)}
+                className="w-full py-2.5 bg-gray-900 hover:bg-black text-white font-semibold rounded-xl text-xs transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
 
         {!submitted ? (
           <form onSubmit={handleSubmitReceipt} className="space-y-4 text-left">
