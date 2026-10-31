@@ -698,7 +698,7 @@ export default function Home() {
                             {merchant.description}
                           </p>
                         )}
-                          <button onClick={() => setSelectedShop(merchant)} className="mt-2 rounded-lg bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-800 hover:bg-orange-100">View shop</button>
+
                       </div>
 
                       {/* Horizontal Scrolling Items */}
