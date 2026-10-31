@@ -223,6 +223,9 @@ class EventMerchantAdd(BaseModel):
     merchant_id: UUID
     stall_number: Optional[str] = None
 
+class RoleUpdateRequest(BaseModel):
+    role: Literal["admin", "merchant", "customer"]
+
 
 # --- ROUTES ---
 
@@ -428,7 +431,7 @@ async def delete_my_account_api(
         )
 
 
-# --- NEW: Admin Delete User Endpoint ---
+# --- NEW: Admin Delete User Endpoint (Updated to clean up Rental Bookings) ---
 @app.delete("/admin/users/{user_id}")
 async def admin_delete_user(
     user_id: UUID,
@@ -455,6 +458,12 @@ async def admin_delete_user(
         )
 
     try:
+        # 1. Delete dependent rental bookings first to avoid foreign key violation
+        await db.execute(
+            RentalBooking.__table__.delete().where(RentalBooking.vendor_user_id == target_user.id)
+        )
+
+        # 2. Deactivate associated merchant records
         merchant_result = await db.execute(select(Merchant).where(Merchant.user_id == target_user.id))
         merchant_ids = [m.id for m in merchant_result.scalars().all()]
 
@@ -462,6 +471,7 @@ async def admin_delete_user(
             await db.execute(update(Merchant).where(Merchant.id.in_(merchant_ids)).values(is_active=False))
             await db.execute(update(MenuItem).where(MenuItem.merchant_id.in_(merchant_ids)).values(is_available=False))
 
+        # 3. Finally delete the user
         await db.delete(target_user)
         await db.commit()
         return {"status": "success", "message": "User deleted successfully."}
@@ -470,6 +480,52 @@ async def admin_delete_user(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete user: {str(e)}"
+        )
+
+
+# --- NEW: Admin Update User Role Endpoint ---
+@app.put("/admin/users/{user_id}/role")
+async def update_user_role(
+    user_id: UUID,
+    payload: RoleUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required."
+        )
+    
+    target_user = await db.get(User, user_id)
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found."
+        )
+
+    target_user.role = payload.role
+
+    if payload.role == "merchant":
+        merchant_check = await db.execute(select(Merchant).where(Merchant.user_id == target_user.id))
+        if not merchant_check.scalars().first():
+            new_merchant = Merchant(
+                user_id=target_user.id,
+                name=f"{target_user.name}'s Store",
+                description="Campus Merchant",
+                location="Sunway Campus"
+            )
+            db.add(new_merchant)
+
+    try:
+        await db.commit()
+        await db.refresh(target_user)
+        return {"status": "success", "message": "User role updated successfully.", "role": target_user.role}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update user role: {str(e)}"
         )
 
 
