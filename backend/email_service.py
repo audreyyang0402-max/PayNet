@@ -135,7 +135,7 @@ def send_order_ready_email(
         resend.Emails.send({
             "from": SENDER,
             "to": [customer_email],
-            "subject": f"🍽️ Your order {order_number} is ready for pickup!",
+            "subject": f"Your order {order_number} is ready for pickup!",
             "html": html,
         })
         logger.info("Order-ready email sent to %s for order %s", customer_email, order_number)
