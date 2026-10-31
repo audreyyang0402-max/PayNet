@@ -87,6 +87,7 @@ async def upload_to_supabase(file: UploadFile) -> str:
 
         return public_url
     except Exception as e:
+        print(f"CRITICAL SUPABASE UPLOAD ERROR: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Supabase upload failed: {str(e)}")
 
 
