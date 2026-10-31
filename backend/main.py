@@ -1,4 +1,5 @@
 import os
+import logging
 import secrets
 from datetime import datetime, date, timedelta, timezone
 import httpx as httpx_client  # aliased since you might already have httpx elsewhere
@@ -26,6 +27,9 @@ from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem,
 # --- NEW AUTH IMPORTS ---
 from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN, validate_password, password_stamp
 from email_verification import check_code, normalize_email
+from email_service import send_order_ready_email
+
+logger = logging.getLogger(__name__)
 
 from auth_endpoints import (
     SendVerificationRequest,
@@ -1094,9 +1098,46 @@ async def update_order_status(
     order.status = status_update.status
     try:
         await db.commit()
+
+        # ── Send "food is ready" email when merchant marks order ready ──
+        if status_update.status == "ready":
+            try:
+                full_order = await db.execute(
+                    select(Order)
+                    .where(Order.id == order_id)
+                    .options(
+                        selectinload(Order.customer),
+                        selectinload(Order.items).selectinload(OrderItem.menu_item),
+                    )
+                )
+                full_order = full_order.scalars().first()
+                slot = await db.get(PickupSlot, order.pickup_slot_id) if order.pickup_slot_id else None
+                pickup_time = (
+                    slot.time_slot.strftime("%I:%M %p") if slot else "your scheduled slot"
+                )
+                items_for_email = [
+                    {
+                        "name": oi.menu_item.name if oi.menu_item else "Item",
+                        "quantity": oi.quantity,
+                        "price": float(oi.price_at_order),
+                    }
+                    for oi in full_order.items
+                ]
+                send_order_ready_email(
+                    customer_email=full_order.customer.email,
+                    customer_name=full_order.customer.name,
+                    order_number=order.order_number or str(order.id)[:8].upper(),
+                    merchant_name=merchant.name,
+                    merchant_location=merchant.location or "Campus Stall",
+                    pickup_time=pickup_time,
+                    items=items_for_email,
+                    total_price=float(order.total_price),
+                )
+            except Exception as email_err:
+                # Email failure must NOT roll back the status update
+                logger.warning("Order-ready email failed for order %s: %s", order_id, email_err)
+
         await db.refresh(order)
-
-
         return {
             "message": "Order status updated successfully",
             "order_id": str(order.id),
