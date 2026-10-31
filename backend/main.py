@@ -731,8 +731,9 @@ async def delete_account_endpoint(req: DeleteAccountRequest, current_user: User 
 
 
 async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID | None = None, customer_id: UUID | None = None):
-    start = datetime.now(timezone.utc) - timedelta(days=days - 1)
-    filters = [Order.created_at >= start]
+    now = datetime.now(timezone.utc)
+    start = now.astimezone(timezone(timedelta(hours=8))).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days - 1)
+    filters = [Order.created_at >= start, Order.created_at <= now]
     if merchant_id is not None:
         filters.append(Order.merchant_id == merchant_id)
     if customer_id is not None:
@@ -755,7 +756,7 @@ async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID |
     active_result = await db.execute(select(func.count(Order.id)).where(*active_filters))
     active_orders = active_result.scalar_one()
 
-    day_expr = func.date(Order.created_at)
+    day_expr = func.date(func.timezone("Asia/Kuala_Lumpur", Order.created_at))
     trend_result = await db.execute(
         select(
             day_expr.label("day"),
@@ -773,7 +774,7 @@ async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID |
         values = trend_by_day.get(day, {"orders": 0, "revenue": 0.0})
         trends.append({"date": day, **values})
 
-    item_filters = [Order.created_at >= start, Order.status == "completed"]
+    item_filters = [Order.created_at >= start, Order.created_at <= now, Order.status == "completed"]
     if merchant_id is not None:
         item_filters.append(Order.merchant_id == merchant_id)
         item_filters.append(MenuItem.merchant_id == merchant_id)
@@ -1136,7 +1137,10 @@ async def list_customer_orders(db: AsyncSession = Depends(get_db), current_user:
 
 
 @app.get("/merchants/{merchant_id}/orders")
-async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get_db)):
+async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    merchant = await db.get(Merchant, merchant_id)
+    if not merchant or (current_user.role != "admin" and (current_user.role != "merchant" or merchant.user_id != current_user.id)):
+        raise HTTPException(status_code=403, detail="Access denied.")
     result = await db.execute(
         select(Order)
         .where(Order.merchant_id == merchant_id)
@@ -1409,6 +1413,11 @@ async def create_event(
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admins can create events.")
     
+    if event_data.start_time.tzinfo is None or event_data.end_time.tzinfo is None or event_data.end_time <= event_data.start_time:
+        raise HTTPException(status_code=422, detail="Provide a valid start and end time with timezone.")
+    for merchant_id in set(event_data.merchant_ids):
+        if not await db.get(Merchant, merchant_id):
+            raise HTTPException(status_code=404, detail="Merchant not found.")
     new_event = Event(
         name=event_data.name,
         description=event_data.description,
@@ -1421,7 +1430,7 @@ async def create_event(
     db.add(new_event)
     await db.flush()
     
-    for merchant_id in event_data.merchant_ids:
+    for merchant_id in set(event_data.merchant_ids):
         event_merchant = EventMerchant(event_id=new_event.id, merchant_id=merchant_id)
         db.add(event_merchant)
     
@@ -1433,7 +1442,7 @@ async def create_event(
 @app.get("/events")
 async def list_events(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Event).order_by(Event.event_date.desc())
+        select(Event).where(Event.is_active.is_(True)).order_by(Event.event_date.desc())
     )
     events = result.scalars().all()
     return [
@@ -1452,6 +1461,30 @@ async def list_events(db: AsyncSession = Depends(get_db)):
     ]
 
 
+@app.get("/events/featured-merchants")
+async def featured_event_merchants(db: AsyncSession = Depends(get_db)):
+    # Upcoming and current events; expired assignments return to the campus list.
+    result = await db.execute(
+        select(Merchant).join(EventMerchant, EventMerchant.merchant_id == Merchant.id)
+        .join(Event, Event.id == EventMerchant.event_id)
+        .where(Event.is_active.is_(True), Event.end_time >= datetime.now(timezone.utc),
+               EventMerchant.is_active.is_(True), Merchant.is_active.is_not(False)).distinct()
+    )
+    return [{"id": str(m.id), "name": m.name, "location": m.location, "description": m.description}
+            for m in result.scalars().all()]
+
+
+@app.get("/admin/merchants")
+async def admin_merchants(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required.")
+    rows = (await db.execute(select(Merchant, User).join(User, Merchant.user_id == User.id).order_by(Merchant.name))).all()
+    return [{"id": str(m.id), "name": m.name, "location": m.location, "description": m.description,
+             "duitnow_qr_url": m.duitnow_qr_url, "is_active": m.is_active,
+             "owner_name": u.name, "email": u.email, "phone_number": u.phone_number}
+            for m, u in rows]
+
+
 @app.get("/events/{event_id}")
 async def get_event(event_id: UUID, db: AsyncSession = Depends(get_db)):
     event = await db.get(Event, event_id)
@@ -1459,7 +1492,7 @@ async def get_event(event_id: UUID, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Event not found.")
     
     result = await db.execute(
-        select(EventMerchant).where(EventMerchant.event_id == event_id)
+        select(EventMerchant).where(EventMerchant.event_id == event_id, EventMerchant.is_active.is_(True))
     )
     event_merchants = result.scalars().all()
     merchant_ids = [em.merchant_id for em in event_merchants]
@@ -1496,7 +1529,7 @@ async def get_event_merchants(event_id: UUID, db: AsyncSession = Depends(get_db)
         raise HTTPException(status_code=404, detail="Event not found.")
     
     result = await db.execute(
-        select(EventMerchant).where(EventMerchant.event_id == event_id)
+        select(EventMerchant).where(EventMerchant.event_id == event_id, EventMerchant.is_active.is_(True))
     )
     event_merchants = result.scalars().all()
     

@@ -120,11 +120,11 @@ export default function ProfilePage() {
             <button onClick={logout} className={`${button} border-red-200 bg-red-50 text-red-700 hover:bg-red-100`}>Log out</button>
           </nav>
           </section>
-        <section className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-lime-50 to-amber-50 p-5 shadow-sm sm:p-7">
-            <h2 className="inline-block rounded-lg bg-emerald-100 px-3 py-1 font-semibold text-emerald-900">Dietary preferences</h2><p className="mt-1 text-xs text-stone-500">Personal reminders on this browser; these do not guarantee ingredients or allergy safety.</p>
-            <div className="mt-3 flex flex-wrap gap-2">{diets.map(d => <button key={d} aria-pressed={preferences.includes(d)} onClick={() => { const next = preferences.includes(d) ? preferences.filter(p => p !== d) : [...preferences,d]; if (save({ photo, name, diets: next })) setPreferences(next); }} className={`rounded-full border px-3 py-1.5 text-xs font-medium ${preferences.includes(d) ? "border-emerald-500 bg-emerald-700 text-white" : "border-emerald-200 bg-white/80 text-emerald-900"}`}>{d}</button>)}</div>
+        <section className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-rose-50 to-amber-50 p-5 shadow-sm sm:p-7">
+            <h2 className="inline-block rounded-lg bg-violet-100 px-3 py-1 font-semibold text-violet-900">Dietary preferences</h2><p className="mt-1 text-xs text-stone-500">Personal reminders on this browser; these do not guarantee ingredients or allergy safety.</p>
+            <div className="mt-3 flex flex-wrap gap-2">{diets.map(d => <button key={d} aria-pressed={preferences.includes(d)} onClick={() => { const next = preferences.includes(d) ? preferences.filter(p => p !== d) : [...preferences,d]; if (save({ photo, name, diets: next })) setPreferences(next); }} className={`rounded-full border px-3 py-1.5 text-xs font-medium ${preferences.includes(d) ? "border-violet-500 bg-violet-700 text-white" : "border-violet-200 bg-white/80 text-violet-900"}`}>{d}</button>)}</div>
         </section>
-        {orders.some(o => o.status === "ready") && <Link href="/orders" role="status" className="block rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">Your order is ready to collect. View order details.</Link>}
+        {orders.some(o => o.status === "ready") && <Link href="/orders" role="status" className="block rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-800">Your order is ready to collect. View order details.</Link>}
         {user.role === "customer" && <CustomerSpendingDashboard />}
         {user.role !== "admin" && <details className="rounded-xl border border-stone-200 bg-white p-4 text-sm text-stone-500"><summary className="cursor-pointer">Account management</summary><p className="my-3 text-xs">Permanently delete your account. This action cannot be undone.</p><DeleteAccountButton /></details>}
       </>}

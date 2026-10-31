@@ -2,7 +2,7 @@
 "use client";
 
 import { BACKEND_URL } from "@/lib/backend-url";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -38,6 +38,30 @@ export default function MerchantDashboard() {
   const router = useRouter();
   const [merchant, setMerchant] = useState<MerchantProfile | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [orderFilter, setOrderFilter] = useState("active");
+  const [notice, setNotice] = useState("");
+  const [orderError, setOrderError] = useState("");
+  const seenOrders = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!merchant?.id) return;
+    let stopped = false, busy = false;
+    async function refresh() {
+      if (busy || document.hidden) return;
+      busy = true;
+      try {
+        const res = await fetch(`${BACKEND_URL}/merchants/${merchant!.id}/orders`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }, cache: "no-store" });
+        if (!res.ok) throw Error("Could not refresh orders. Please reload or sign in again.");
+        const rows: Order[] = await res.json();
+        if (stopped) return;
+        if (seenOrders.current && rows.some(o => !seenOrders.current!.has(o.id))) setNotice("New order received. Open Manage orders to review it.");
+        seenOrders.current = new Set(rows.map(o => o.id)); setOrders(rows); setOrderError("");
+      } catch (e) { if (!stopped) setOrderError(e instanceof Error ? e.message : "Could not refresh orders."); }
+      finally { busy = false; }
+    }
+    refresh(); const timer = setInterval(refresh, 15000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [merchant?.id]);
+  useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(""), 5000); return () => clearTimeout(timer); }, [notice]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -105,10 +129,11 @@ export default function MerchantDashboard() {
           setEditPhone(userData.phone_number || "");
         }
 
-        const ordersRes = await fetch(`${BACKEND_URL}/merchants/${profileData.id}/orders`);
+        const ordersRes = await fetch(`${BACKEND_URL}/merchants/${profileData.id}/orders`, { headers: { Authorization: `Bearer ${token}` } });
         if (ordersRes.ok) {
           const ordersData = await ordersRes.json();
           setOrders(ordersData);
+          seenOrders.current = new Set(ordersData.map((o: Order) => o.id));
         }
       } catch (err: any) {
         setError(err.message);
@@ -242,7 +267,7 @@ export default function MerchantDashboard() {
         throw new Error(errData.detail || "Failed to update order status.");
       }
 
-      setOrders(orders.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
+      setOrders(current => current.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
     } catch (err: any) {
       alert(err.message);
     }
@@ -255,20 +280,21 @@ export default function MerchantDashboard() {
     router.push("/vendor/login" as any);
   };
 
-  const totalRevenue = orders.reduce((sum, order) => sum + Number(order.total_price), 0);
+  const totalRevenue = orders.filter(o => o.status === "completed").reduce((sum, order) => sum + Number(order.total_price), 0);
   const completedOrdersCount = orders.filter(
-    (o) => o.status.toLowerCase() === 'completed' || o.status.toLowerCase() === 'ready'
+    (o) => o.status.toLowerCase() === 'completed'
   ).length;
 
   if (loading) return <div className="min-h-screen flex items-center justify-center">Loading dashboard...</div>;
   if (error) return <div className="p-8 text-red-600 bg-red-50 text-center m-8 rounded-xl">{error}</div>;
 
   return (
-    <main className="min-h-screen bg-gray-50 p-8">
+    <main className="min-h-screen bg-stone-50 p-4 sm:p-8">
       <div className="max-w-5xl mx-auto space-y-8">
         
+        {notice && <div role="status" className="fixed right-4 top-4 z-50 max-w-sm rounded-xl border border-orange-200 bg-white p-4 shadow-xl">{notice}<a href="#manage-orders" className="ml-2 font-semibold text-orange-700">View orders</a></div>}
         {/* Header Section */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+        <div className="bg-gradient-to-br from-white to-indigo-50 p-6 rounded-2xl shadow-sm border border-indigo-100 space-y-4">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <span className="bg-orange-50 text-orange-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block">
@@ -284,6 +310,7 @@ export default function MerchantDashboard() {
             </div>
             
             <div className="flex flex-wrap items-center gap-2">
+              <a href="#manage-orders" className="rounded-xl bg-sky-50 px-3.5 py-2 text-xs font-semibold text-sky-800">Manage orders ({orders.filter(o => ["pending", "pending_verification", "preparing", "ready"].includes(o.status)).length})</a>
               <Link href="/vendor/analytics" className="px-3.5 py-2 text-xs font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-xl transition-colors">
                 Analytics
               </Link>
@@ -449,8 +476,9 @@ export default function MerchantDashboard() {
         )}
 
         {/* DuitNow QR Code Management Section */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-          <h2 className="text-lg font-bold text-gray-900 mb-1">DuitNow QR Management</h2>
+        <div className="bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-6 rounded-2xl shadow-sm border border-indigo-200">
+          <p className="mb-2 text-xs font-bold uppercase tracking-widest text-indigo-600">Payment setup</p>
+          <h2 className="text-lg font-bold text-indigo-950 mb-1">DuitNow QR Management</h2>
           <p className="text-xs text-gray-500 mb-4">
             Upload your static DuitNow QR image file so customers can scan it during checkout.
           </p>
@@ -495,10 +523,15 @@ export default function MerchantDashboard() {
           </form>
         </div>
 
+        <section className="rounded-2xl border border-violet-200 bg-gradient-to-r from-violet-50 to-rose-50 p-5">
+          <h2 className="font-bold text-violet-900">Selling at Payvolution Event?</h2>
+          <p className="mt-2 text-sm text-stone-600">Ask the event administrator to assign this shop to the event. Keep using Manage Menu & Slots for your dishes and collection times. Event placement is separate from stall rental approval.</p>
+          <Link href="/events" className="mt-3 inline-block text-sm font-semibold text-violet-800">View events</Link>
+        </section>
         {/* Sales Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Total Revenue</p>
+          <div className="bg-orange-50 p-6 rounded-2xl shadow-sm border border-orange-200">
+            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Completed sales</p>
             <p className="text-2xl font-bold text-orange-600 mt-1">RM {totalRevenue.toFixed(2)}</p>
           </div>
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
@@ -506,21 +539,25 @@ export default function MerchantDashboard() {
             <p className="text-2xl font-bold text-gray-900 mt-1">{orders.length}</p>
           </div>
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Fulfilled / Ready</p>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Completed orders</p>
             <p className="text-2xl font-bold text-green-600 mt-1">{completedOrdersCount}</p>
           </div>
         </div>
 
         {/* Incoming Orders Section */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
-          <h2 className="text-xl font-bold text-gray-900">Incoming Orders</h2>
+        <div className="bg-gradient-to-br from-white to-indigo-50 p-6 rounded-2xl shadow-sm border border-indigo-100 space-y-4">
+          <h2 id="manage-orders" className="scroll-mt-6 text-xl font-bold text-gray-900">Manage orders</h2>
+          <p className="text-sm text-stone-500">Updates every 15 seconds while this page is visible. Verify payment in your banking app before accepting.</p>
+          {orderError && <p role="alert" className="text-sm text-red-700">{orderError}</p>}
+          <nav aria-label="Order status" className="flex flex-wrap gap-2">{["active", "pending_verification", "preparing", "ready", "completed", "all"].map(f => <button key={f} onClick={() => setOrderFilter(f)} aria-pressed={orderFilter === f} className={`rounded-full px-3 py-2 text-xs font-semibold ${orderFilter === f ? "bg-orange-600 text-white" : "bg-stone-100 text-stone-700"}`}>{f === "active" ? "Incoming / active" : f.replaceAll("_", " ")}</button>)}</nav>
+          {!orders.some(o => orderFilter === "all" || (orderFilter === "active" ? ["pending", "pending_verification", "preparing", "ready"].includes(o.status) : o.status === orderFilter)) && <p className="p-4 text-sm text-stone-500">No orders in this category.</p>}
           {orders.length === 0 ? (
             <p className="text-gray-500 text-sm py-4 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
               No incoming orders yet.
             </p>
           ) : (
             <div className="space-y-4">
-              {orders.map((order) => (
+              {orders.filter(o => orderFilter === "all" || (orderFilter === "active" ? ["pending", "pending_verification", "preparing", "ready"].includes(o.status) : o.status === orderFilter)).map((order) => (
                 <div key={order.id} className="p-5 rounded-xl border border-gray-200 bg-gray-50 space-y-3">
                   <div className="flex justify-between items-start">
                     <div>
@@ -597,6 +634,7 @@ export default function MerchantDashboard() {
                           Start Preparing
                         </button>
                       )}
+                      {order.status === "ready" && <button onClick={() => handleUpdateOrderStatus(order.id, "completed")} className="rounded-lg bg-emerald-700 px-3.5 py-1.5 text-xs font-semibold text-white">Mark collected</button>}
                       {order.status === 'preparing' && (
                         <button
                           onClick={() => handleUpdateOrderStatus(order.id, 'ready')}

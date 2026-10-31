@@ -23,6 +23,8 @@ const money = (amount: number) => `RM ${amount.toLocaleString("en-MY", { minimum
 
 export default function AnalyticsDashboard({ audience }: { audience: "admin" | "merchant" | "customer" }) {
   const router = useRouter();
+  const [updatedAt, setUpdatedAt] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
   const [days, setDays] = useState(30);
   const [data, setData] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -32,15 +34,16 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
   const loginPath = isAdmin ? "/admin/login" : isCustomer ? "/login" : "/vendor/login";
 
   useEffect(() => {
-    let cancelled = false;
+    let cancelled = false, inFlight = false;
     async function load() {
+      if (inFlight) return;
       const token = window.localStorage.getItem("token");
       const expectedRole = isAdmin ? "admin" : isCustomer ? "customer" : "merchant";
       if (!token || window.localStorage.getItem("userRole") !== expectedRole) {
         router.replace(loginPath);
         return;
       }
-      setLoading(true);
+      inFlight = true;
       setError(null);
       try {
         const endpoint = isAdmin ? "/admin/analytics" : isCustomer ? "/users/me/analytics" : "/merchants/me/analytics";
@@ -59,16 +62,18 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
           throw new Error(body?.detail || "Could not load analytics.");
         }
         const result: Analytics = await response.json();
-        if (!cancelled) setData(result);
+        if (!cancelled) { setData(result); setUpdatedAt(new Date().toLocaleTimeString("en-MY", {timeZone:"Asia/Kuala_Lumpur"})); }
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load analytics.");
       } finally {
+        inFlight = false;
         if (!cancelled) setLoading(false);
       }
     }
     load();
-    return () => { cancelled = true; };
-  }, [days, isAdmin, isCustomer, loginPath, router]);
+    const timer = setInterval(() => { if (!document.hidden) load(); }, 15000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [days, isAdmin, isCustomer, loginPath, router, refreshKey]);
 
   const maxRevenue = Math.max(1, ...(data?.revenue_trend.map((point) => point.revenue) ?? [0]));
   const maxOrders = Math.max(1, ...(data?.revenue_trend.map((point) => point.orders) ?? [0]));
@@ -84,8 +89,8 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
   }).join(" "), [data, maxOrders]);
 
   return (
-    <main className="min-h-screen bg-slate-50 p-5 sm:p-8">
-      <div className="mx-auto max-w-6xl space-y-6">
+    <main className="min-h-screen bg-stone-50 p-5 sm:p-8">
+      <div className="mx-auto max-w-5xl space-y-6">
         <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -108,8 +113,9 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
         </header>
 
         {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-stone-500"><p>{updatedAt ? `Updated ${updatedAt} MYT · refreshes every 15 seconds` : "Loading latest totals"}</p><button onClick={() => setRefreshKey(k => k + 1)} className="rounded-xl border bg-white px-4 py-2 font-semibold text-orange-700">Refresh</button></div>
         {loading && <div className="rounded-xl border border-slate-200 bg-white p-8 text-slate-500">Loading analytics…</div>}
-        {!loading && data && <>
+        {data && <>
           <section aria-label="Key metrics" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {(isCustomer ? [
               { label: "Total spent", value: money(data.summary.total_revenue), detail: `${data.summary.completed_orders} completed orders` },
@@ -121,7 +127,7 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
               { label: "All orders", value: data.summary.total_orders.toLocaleString(), detail: `${data.summary.active_orders} active now` },
               { label: "Customers", value: data.summary.customers.toLocaleString(), detail: `In the last ${days} days` },
               { label: "Average order", value: money(data.summary.completed_orders ? data.summary.total_revenue / data.summary.completed_orders : 0), detail: "Completed orders only" },
-            ]).map((metric) => <article key={metric.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            ]).map((metric, index) => <article key={metric.label} className={`rounded-2xl border p-5 shadow-sm ${["border-orange-200 bg-orange-50", "border-sky-200 bg-sky-50", "border-violet-200 bg-violet-50", "border-rose-200 bg-rose-50"][index]}`}>
               <p className="text-sm font-medium text-slate-500">{metric.label}</p>
               <p className="mt-3 text-2xl font-bold text-slate-900">{metric.value}</p>
               <p className="mt-2 text-xs text-slate-500">{metric.detail}</p>
@@ -155,6 +161,8 @@ export default function AnalyticsDashboard({ audience }: { audience: "admin" | "
             </article>
           </section>
 
+          <details className="rounded-2xl border bg-white p-5"><summary className="cursor-pointer font-semibold text-orange-700">View daily sales and order counts</summary><div className="mt-4 max-h-80 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th>Date (MYT)</th><th>Orders</th><th>Completed sales</th></tr></thead><tbody>{data.revenue_trend.map(d => <tr key={d.date} className="border-t"><td className="py-2">{d.date}</td><td>{d.orders}</td><td>{money(d.revenue)}</td></tr>)}</tbody></table></div></details>
+          <p className="text-xs text-stone-500">Sales include completed orders only. Pending payments and cancelled orders are excluded. These are order totals, not bank reconciliation or net profit.</p>
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
             <div className="mb-5"><h2 className="font-bold text-slate-900">{isCustomer ? "Your most ordered items" : "Top-selling items"}</h2><p className="mt-1 text-xs text-slate-500">{isCustomer ? "Items from your completed orders" : "Ranked by quantities in completed orders"}</p></div>
             {data.top_items.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">{isCustomer ? "No completed purchases in this period yet." : "No completed item sales in this period yet."}</p> : <div className="space-y-4">

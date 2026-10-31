@@ -234,19 +234,20 @@ export default function AdminRentalsPage() {
   if (loading) return <div className="min-h-screen flex items-center justify-center">Loading admin panel...</div>;
 
   return (
-    <main className="min-h-screen bg-gray-50 p-8">
+    <main className="min-h-screen bg-stone-50 p-4 sm:p-8">
       <div className="max-w-5xl mx-auto space-y-8">
         
         {/* Admin Header & Navigation Tabs */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
-          <div className="flex justify-between items-center">
-            <Link href="/vendor/dashboard" className="text-orange-600 hover:underline font-medium text-sm">
-              ← Back to Dashboard
+          <div className="flex flex-wrap justify-between items-center gap-4">
+            <Link href="/admin/merchants" className="text-orange-600 hover:underline font-medium text-sm">
+              Merchant overview
             </Link>
-            <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-semibold">
+            <div className="flex flex-wrap gap-2 bg-gray-100 p-1 rounded-xl text-xs font-semibold">
               <Link href="/admin/rentals" className="px-4 py-2 bg-white text-gray-900 rounded-lg shadow-sm">
                 Rental Management
               </Link>
+              <Link href="/admin/merchants" className="rounded-xl bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-800">Merchants & events</Link>
               <Link href="/admin/analytics" className="px-4 py-2 text-gray-500 hover:text-gray-900 rounded-lg transition-all">
                 Analytics
               </Link>
@@ -261,7 +262,7 @@ export default function AdminRentalsPage() {
               <p className="text-gray-500 text-sm">Review pop-up applications and manage physical campus Boulevard stalls.</p>
             </div>
 
-            <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-semibold">
+            <div className="flex flex-wrap gap-2 bg-gray-100 p-1 rounded-xl text-xs font-semibold">
               <button
                 onClick={() => setActiveTab("rentals")}
                 className={`px-4 py-2 rounded-lg transition-all cursor-pointer ${
@@ -290,7 +291,7 @@ export default function AdminRentalsPage() {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <h2 className="text-lg font-bold text-gray-900">Boulevard Pop-up Applications</h2>
               
-              <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-semibold">
+              <div className="flex flex-wrap gap-2 bg-gray-100 p-1 rounded-xl text-xs font-semibold">
                 {["all", "pending", "approved", "rejected"].map((status) => (
                   <button
                     key={status}

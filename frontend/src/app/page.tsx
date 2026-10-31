@@ -48,49 +48,18 @@ interface PickupSlot {
   max_capacity: number;
 }
 
-// ─── Hardcoded Event Pop-up Items ───────────────────────────────────────────
-// These represent limited-time campus event vendors (Payvolution Events).
-
-const EVENT_MERCHANT_ID = "event-popups-123";
-
-const eventItems: MenuItem[] = [
-  {
-    id: "evt-item-1",
-    name: "Chicken Rice",
-    description: "Juicy steamed chicken with fragrant rice and chili dip. [Main Course | Halal]",
-    price: 10.0,
-    is_available: true,
-    merchant_id: EVENT_MERCHANT_ID,
-    image_url:
-      "https://images.unsplash.com/photo-1600336153113-d66c79abefe8?auto=format&fit=crop&w=500&q=80",
-  },
-  {
-    id: "evt-item-2",
-    name: "Satay (Stick)",
-    description: "Grilled marinated skewers with peanut sauce. [Snack | 🌶️ Mild | Halal]",
-    price: 1.5,
-    is_available: true,
-    merchant_id: EVENT_MERCHANT_ID,
-    image_url:
-      "https://images.unsplash.com/photo-1555126634-323283e090fa?auto=format&fit=crop&w=500&q=80",
-  },
-  {
-    id: "evt-item-3",
-    name: "Signature Boba",
-    description: "Freshly brewed brown sugar boba with fresh farm milk. [Beverage | Sweet]",
-    price: 9.9,
-    is_available: true,
-    merchant_id: EVENT_MERCHANT_ID,
-    image_url:
-      "https://images.unsplash.com/photo-1558855567-1a341e8c7506?auto=format&fit=crop&w=500&q=80",
-  },
-];
-
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function Home() {
   // ── State: Merchants & Menus ──
   const [merchants, setMerchants] = useState<Merchant[]>([]);
+  const [eventMerchantIds, setEventMerchantIds] = useState<string[]>([]);
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/events/featured-merchants`).then(r => {
+      if (!r.ok) throw new Error("Events unavailable");
+      return r.json();
+    }).then(rows => setEventMerchantIds(rows.map((m: Merchant) => m.id))).catch(() => {});
+  }, []);
   const [selectedMerchantId, setSelectedMerchantId] = useState<string | null>(null);
   const [menuItemsByMerchant, setMenuItemsByMerchant] = useState<Record<string, MenuItem[]>>({});
   const [menusLoading, setMenusLoading] = useState(true);
@@ -137,13 +106,9 @@ export default function Home() {
         const res = await fetch(`${BACKEND_URL}/merchants`);
         if (res.ok) {
           const data = await res.json();
-          const eventMerchant: Merchant = {
-            id: EVENT_MERCHANT_ID,
-            name: "Payvolution Event Pop-ups",
-            description: "Limited time event vendors at the campus boulevard.",
-            location: "Boulevard Walkway",
-          };
-          setMerchants([...data, eventMerchant]);
+          setMerchants(data);
+          const shopId = new URLSearchParams(window.location.search).get("shop");
+          if (shopId) setSelectedShop(data.find((m: Merchant) => m.id === shopId) ?? null);
           if (data.length > 0) {
             setSelectedMerchantId(data[0].id);
           }
@@ -166,27 +131,6 @@ export default function Home() {
 
     async function loadPickupSlots() {
       try {
-        // Fallback slots for event stall
-        if (selectedMerchantId === EVENT_MERCHANT_ID) {
-          const mockSlots = [
-            {
-              id: "slot-1",
-              time_slot: new Date(Date.now() + 15 * 60000).toISOString(),
-              current_bookings: 2,
-              max_capacity: 20,
-            },
-            {
-              id: "slot-2",
-              time_slot: new Date(Date.now() + 45 * 60000).toISOString(),
-              current_bookings: 5,
-              max_capacity: 20,
-            },
-          ];
-          setPickupSlots(mockSlots);
-          setSelectedSlotId(mockSlots[0].id);
-          return;
-        }
-
         const response = await fetch(`${BACKEND_URL}/merchants/${selectedMerchantId}/pickup-slots`);
         if (response.ok) {
           const slots: PickupSlot[] = await response.json();
@@ -207,7 +151,7 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false;
     async function loadMenus() {
-      const backendMerchants = merchants.filter((m) => m.id !== EVENT_MERCHANT_ID);
+      const backendMerchants = merchants;
       if (backendMerchants.length === 0) {
         setMenusLoading(false);
         return;
@@ -575,7 +519,7 @@ export default function Home() {
                 />
                 <div>
                   <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight">Payvolution Event</h2>
-                  <p className="text-xs text-purple-200">Limited-time pop-up campus stalls & treats</p>
+
                 </div>
               </div>
 
@@ -587,52 +531,10 @@ export default function Home() {
               </Link>
             </div>
 
-            {/* Bottom Row: Horizontally scrolling rectangular event cards */}
-            <div className="flex gap-3 overflow-x-auto pb-2 snap-x hide-scrollbar">
-              {eventItems.filter(isDisplayableFood).map((item) => (
-                <div
-                  key={item.id}
-                  className="relative flex w-[260px] sm:w-[300px] shrink-0 snap-start items-center gap-3 rounded-xl bg-white p-3 shadow-md border border-white/40 text-slate-900"
-                >
-                  {item.image_url ? (
-                    <img
-                      src={item.image_url}
-                      alt={item.name}
-                      className="h-16 w-16 sm:h-20 sm:w-20 shrink-0 rounded-lg object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-16 w-16 sm:h-20 sm:w-20 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-2xl">
-                      🍽️
-                    </div>
-                  )}
-
-                  <div className="flex flex-1 flex-col min-w-0">
-                    <div className="flex items-start justify-between gap-1">
-                      <h4 className="truncate font-bold text-slate-900 text-xs sm:text-sm">{item.name}</h4>
-                      <span className="shrink-0 font-extrabold text-[#F04B14] text-xs sm:text-sm">
-                        RM {Number(item.price).toFixed(2)}
-                      </span>
-                    </div>
-
-                    <p className="mt-0.5 line-clamp-1 text-[11px] text-slate-500">
-                      {item.description || "Made fresh for the event."}
-                    </p>
-
-                    <div className="mt-2 flex items-center justify-between gap-1">
-                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">
-                        Available
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => addToCart(item)}
-                        className="relative z-20 rounded-lg bg-[#F04B14] px-3 py-1 text-xs font-bold text-white transition hover:bg-orange-700 active:scale-95"
-                      >
-                        + Add
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
+            <div className="flex flex-wrap gap-3">
+              {merchants.filter(m => eventMerchantIds.includes(m.id)).map(m => <button key={m.id} onClick={() => setSelectedShop(m)} className="rounded-xl bg-white px-5 py-3 text-left text-slate-900 hover:bg-purple-50">
+                <span className="block font-bold">{m.name}</span><span className="text-xs text-slate-500">{m.location} · View shop</span>
+              </button>)}
             </div>
           </div>
 
@@ -647,7 +549,7 @@ export default function Home() {
         ──────────────────────────────────────────────────────────────── */}
         <RecommendationWidget
           items={allMenuItems}
-          merchants={merchants.filter((m) => m.id !== EVENT_MERCHANT_ID)}
+          merchants={merchants}
           onAddToCart={addToCart}
           loading={menusLoading}
         />
@@ -668,13 +570,13 @@ export default function Home() {
               <p className="text-xs text-slate-500">Scroll each row to see items</p>
             </div>
 
-            {merchants.filter((m) => m.id !== EVENT_MERCHANT_ID).length === 0 ? (
+            {merchants.filter(m => !eventMerchantIds.includes(m.id)).length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">
                 No stalls are available right now.
               </div>
             ) : (
               merchants
-                .filter((m) => m.id !== EVENT_MERCHANT_ID)
+                .filter((m) => !eventMerchantIds.includes(m.id))
                 .map((merchant) => {
                   const items = menuItemsByMerchant[merchant.id] ?? [];
                   return (
