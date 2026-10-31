@@ -25,6 +25,10 @@ export default function OrderVerificationPage() {
       .then((res) => res.json())
       .then((data) => {
         setOrder(data);
+        // If the order was already submitted previously, set submitted state to true
+        if (data.status && data.status !== "draft") {
+          setSubmitted(true);
+        }
         // 2. Once order is fetched, fetch the merchant's DuitNow QR URL
         if (data.merchant_id) {
           fetch(`${BACKEND_URL}/merchants`)
@@ -52,6 +56,7 @@ export default function OrderVerificationPage() {
       const formData = new FormData();
       formData.append("receipt_file", fileInput.files[0]);
 
+      // This endpoint saves the file and shifts the order status from "draft" to "pending_verification"
       const res = await fetch(`${BACKEND_URL}/orders/${orderId}/submit-receipt`, {
         method: "PATCH",
         headers: {
@@ -74,7 +79,6 @@ export default function OrderVerificationPage() {
     }
   };
 
-  // Helper function to download the QR code image
   const handleDownloadQR = async () => {
     try {
       const response = await fetch(qrImageUrl);
@@ -89,7 +93,6 @@ export default function OrderVerificationPage() {
       window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Failed to download QR image:", err);
-      // Fallback: Open image in new tab if direct download fails due to CORS
       window.open(qrImageUrl, "_blank");
     }
   };
@@ -126,7 +129,6 @@ export default function OrderVerificationPage() {
             <span className="font-bold text-gray-900 text-base">RM {order.total_price.toFixed(2)}</span>
           </div>
 
-          {/* Display Vendor DuitNow QR Image with Click-to-Enlarge & Download */}
           <div className="mt-4 pt-3 border-t border-gray-200 text-center">
             <p className="text-xs font-semibold text-gray-600 mb-2">
               Vendor DuitNow QR ({merchant?.name || "Stall"}):
@@ -146,7 +148,6 @@ export default function OrderVerificationPage() {
               </div>
             </div>
 
-            {/* Quick Download Button below thumbnail */}
             <div className="mt-2">
               <button
                 type="button"
@@ -159,7 +160,7 @@ export default function OrderVerificationPage() {
           </div>
         </div>
 
-        {/* Full-Screen Zoom Modal with Download Button */}
+        {/* Full-Screen Zoom Modal */}
         {isZoomed && (
           <div 
             onClick={() => setIsZoomed(false)}
