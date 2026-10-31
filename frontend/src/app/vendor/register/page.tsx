@@ -5,6 +5,7 @@ import { BACKEND_URL } from "@/lib/backend-url";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import PasswordInput from "@/components/PasswordInput";
 
 function passwordError(value: string): string {
   if (new TextEncoder().encode(value).length > 72) return "Password is too long. Please shorten it; emoji and accented characters use more space.";
@@ -21,6 +22,7 @@ export default function VendorRegisterPage() {
   const [email, setEmail] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [verificationCode, setVerificationCode] = useState("");
   const [storeName, setStoreName] = useState("");
   const [location, setLocation] = useState("");
@@ -36,6 +38,7 @@ export default function VendorRegisterPage() {
     try {
       const issue = passwordError(password);
       if (issue) throw new Error(issue);
+      if (password !== confirmPassword) throw new Error("Passwords do not match. Please enter the same password in both fields.");
       const res = await fetch(`${BACKEND_URL}/auth/send-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -66,6 +69,7 @@ export default function VendorRegisterPage() {
     try {
       const issue = passwordError(password);
       if (issue) { setStep("details"); setError(issue); return; }
+      if (password !== confirmPassword) { setStep("details"); setError("Passwords do not match. Please enter the same password in both fields."); return; }
       if (!/^[0-9]{6,8}$/.test(verificationCode)) { setError("Verification code: enter all 6–8 digits from your latest email."); return; }
       const res = await fetch(`${BACKEND_URL}/auth/verify-code`, {
         method: "POST",
@@ -252,9 +256,9 @@ export default function VendorRegisterPage() {
             )}
 
             <div>
-              <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Password</label>
-              <input
-                type="password" minLength={12} autoComplete="new-password" title="At least 12 characters with uppercase, lowercase, a number and a symbol"
+              <label htmlFor="register-password" className="block text-xs font-semibold text-gray-700 uppercase mb-1">Password</label>
+              <PasswordInput
+                id="register-password" label="Password" minLength={12} autoComplete="new-password" title="At least 12 characters with uppercase, lowercase, a number and a symbol"
                 required
                 aria-describedby="password-help"
                 value={password}
@@ -263,6 +267,14 @@ export default function VendorRegisterPage() {
                 className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
               />
               <p id="password-help" className="mt-2 text-xs text-gray-500">Your password needs at least 12 characters with uppercase, lowercase, a number and a symbol. This is different from the code sent by email.</p>
+            </div>
+
+            <div>
+              <label htmlFor="confirm-password" className="block text-xs font-semibold text-gray-700 uppercase mb-1">Confirm password</label>
+              <PasswordInput id="confirm-password" label="Confirm password" autoComplete="new-password" required
+                value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+                placeholder="Enter your password again"
+                className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none" />
             </div>
 
             {accountType === "merchant" && (

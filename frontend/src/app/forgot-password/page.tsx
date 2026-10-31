@@ -1,12 +1,14 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
+import PasswordInput from "@/components/PasswordInput";
 import { BACKEND_URL } from "@/lib/backend-url";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -32,11 +34,12 @@ export default function ForgotPasswordPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!sent) { await send(); return; }
+    if (password !== confirmPassword) { setError("Passwords do not match. Please enter the same password in both fields."); return; }
     setBusy(true); setError(""); setMessage("");
     try {
       await request("/auth/verify-code", { email, purpose: "reset", code, password });
       localStorage.removeItem("token");
-      setPassword(""); setCode(""); setDone(true);
+      setPassword(""); setConfirmPassword(""); setCode(""); setDone(true);
       setMessage("Password changed. Please log in again with your new password.");
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to reset password."); }
     finally { setBusy(false); }
@@ -56,9 +59,14 @@ export default function ForgotPasswordPage() {
           <label className="block text-sm">Email verification code
             <input className={input} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6,8}" maxLength={8} required value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ""))} />
           </label>
-          <label className="block text-sm">New password
-            <input className={input} type="password" autoComplete="new-password" minLength={12} required value={password} onChange={e => setPassword(e.target.value)} />
-          </label>
+          <div>
+            <label htmlFor="new-password" className="block text-sm">New password</label>
+            <PasswordInput id="new-password" label="New password" className={input} autoComplete="new-password" minLength={12} required value={password} onChange={e => setPassword(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor="confirm-password" className="block text-sm">Confirm new password</label>
+            <PasswordInput id="confirm-password" label="Confirm new password" className={input} autoComplete="new-password" required value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
+          </div>
           <p className="text-xs text-gray-600">Use at least 12 characters with uppercase, lowercase, a number and a symbol. Codes expire after 10 minutes.</p>
           <button type="button" disabled={busy} onClick={send} className="text-orange-700 underline">Resend code</button>
           <button type="button" disabled={busy} onClick={() => { setSent(false); setCode(""); setMessage(""); }} className="ml-4 underline">Change email</button>
