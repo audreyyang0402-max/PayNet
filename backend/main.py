@@ -428,6 +428,51 @@ async def delete_my_account_api(
         )
 
 
+# --- NEW: Admin Delete User Endpoint ---
+@app.delete("/admin/users/{user_id}")
+async def admin_delete_user(
+    user_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required."
+        )
+    
+    target_user = await db.get(User, user_id)
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found."
+        )
+
+    if target_user.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Administrator accounts cannot be deleted."
+        )
+
+    try:
+        merchant_result = await db.execute(select(Merchant).where(Merchant.user_id == target_user.id))
+        merchant_ids = [m.id for m in merchant_result.scalars().all()]
+
+        if merchant_ids:
+            await db.execute(update(Merchant).where(Merchant.id.in_(merchant_ids)).values(is_active=False))
+            await db.execute(update(MenuItem).where(MenuItem.merchant_id.in_(merchant_ids)).values(is_available=False))
+
+        await db.delete(target_user)
+        await db.commit()
+        return {"status": "success", "message": "User deleted successfully."}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete user: {str(e)}"
+        )
+
+
 @app.patch("/merchants/me")
 async def update_my_merchant_profile(
     update_data: MerchantProfileUpdate,
