@@ -259,25 +259,25 @@ class MerchantPublic(BaseModel):
         from_attributes = True
 
 class MenuItemCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
-    price: float
+    name: str = Field(min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=1000)
+    price: float = Field(gt=0, le=10000)
     image_url: Optional[str] = None
     is_available: bool = True
 
 class OrderItemCreate(BaseModel):
     menu_item_id: UUID
-    quantity: int = Field(default=1, ge=1)
+    quantity: int = Field(default=1, ge=1, le=50)
     special_instructions: Optional[str] = Field(default=None, max_length=300)
 
 class OrderCreate(BaseModel):
     merchant_id: UUID
     pickup_slot_id: UUID
-    items: List[OrderItemCreate]
+    items: List[OrderItemCreate] = Field(min_length=1, max_length=50)
 
 class PickupSlotCreate(BaseModel):
     time_slot: datetime
-    max_capacity: int = 10
+    max_capacity: int = Field(default=10, ge=1, le=500)
 
 class ForgotPasswordRequest(BaseModel):
     email: str
