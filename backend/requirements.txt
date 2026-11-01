@@ -43,3 +43,4 @@ typing_extensions==4.16.0
 urllib3==2.8.0
 uvicorn==0.52.4
 supabase==2.33.0
+slowapi>=0.1.9,<1.0

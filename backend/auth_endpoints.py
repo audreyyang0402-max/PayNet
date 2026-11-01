@@ -43,8 +43,11 @@ async def find_user(db, email):
 
 async def send_verification(req, db):
     user = await find_user(db, req.email)
+    # Both branches below return the SAME generic message whether or not the account
+    # exists, and skip sending a code in that case — this prevents an attacker from
+    # using this endpoint to probe which campus emails already have accounts.
     if req.purpose == "register" and user:
-        raise HTTPException(400, "Email already registered. Please log in or reset your password.")
+        return {"message": "If this account is eligible, a verification code has been sent."}
     if req.purpose == "reset" and (not user or user.is_deleted):
         return {"message": "If this account exists, a verification code has been sent."}
     await issue_code(db, req.email, req.purpose)

@@ -5,7 +5,7 @@ import logging
 import secrets
 from datetime import datetime, date, timedelta, timezone
 import httpx as httpx_client  # aliased since you might already have httpx elsewhere
-from fastapi import UploadFile, File, Form, HTTPException
+from fastapi import UploadFile, File, Form, HTTPException, Request
 import shutil
 
 from fastapi_offline import FastAPIOffline
@@ -13,6 +13,9 @@ from fastapi import FastAPI, Depends, Query, status, BackgroundTasks
 from fastapi.staticfiles import StaticFiles  # <--- Added import for serving static upload files
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import case, func, or_, update, text
 from sqlalchemy.future import select
@@ -33,6 +36,10 @@ from email_verification import check_code, normalize_email
 from email_service import send_order_ready_email
 
 logger = logging.getLogger(__name__)
+
+# Precomputed once at startup. Used only to equalize /auth/login response timing when
+# no matching account exists, so timing can't reveal which emails are registered.
+_LOGIN_TIMING_DUMMY_HASH = hash_password("dummy-password-for-timing-safety-only")
 
 from auth_endpoints import (
     SendVerificationRequest,
@@ -71,6 +78,11 @@ async def lifespan(app: FastAPIOffline):
     yield
 
 app = FastAPIOffline(lifespan=lifespan)
+
+# --- RATE LIMITING (in-memory; fine for Render's single-instance free tier) ---
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- MOUNT STATIC UPLOADS DIRECTORY ---
 # Fresh deployments may not contain this runtime-created directory.
@@ -440,7 +452,8 @@ async def create_user(user_data: UserCreate, db: AsyncSession = Depends(get_db))
         return {"id": str(new_user.id), "name": new_user.name, "email": new_user.email, "role": new_user.role}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+        logger.exception("Database error creating user")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.patch("/users/me")
@@ -476,7 +489,8 @@ async def update_my_profile(
         }
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+        logger.exception("Database error updating profile")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.delete("/users/me")
@@ -587,9 +601,10 @@ async def update_user_role(
         return {"status": "success", "message": "User role updated successfully.", "role": target_user.role}
     except Exception as e:
         await db.rollback()
+        logger.exception("Database error updating user role")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update user role: {str(e)}"
+            detail="Something went wrong. Please try again."
         )
 
 
@@ -645,7 +660,8 @@ async def update_my_merchant_profile(
         }
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+        logger.exception("Database error updating merchant profile")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.patch("/merchants/me/qr-upload")
@@ -672,7 +688,8 @@ async def upload_merchant_qr(
         return {"message": "DuitNow QR uploaded successfully", "duitnow_qr_url": merchant.duitnow_qr_url}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+        logger.exception("Database error uploading QR code")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.post("/merchants/menu-image")
@@ -732,11 +749,17 @@ async def get_my_merchant_profile(
 
 
 @app.post("/auth/login", response_model=TokenResponse)
-async def login(login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def login(request: Request, login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(func.lower(func.trim(User.email)) == normalize_email(login_data.email)))
     user = result.scalars().first()
 
-    if not user or user.is_deleted or not verify_password(login_data.password, user.password_hash):
+    # Always run the (slow) bcrypt comparison, even when no account matches — using a
+    # fixed dummy hash in that case — so response timing can't reveal which emails
+    # are registered.
+    password_ok = verify_password(login_data.password, user.password_hash if user else _LOGIN_TIMING_DUMMY_HASH)
+
+    if not user or user.is_deleted or not password_ok:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -979,7 +1002,8 @@ async def create_menu_item(
         return new_item
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+        logger.exception("Database error creating menu item")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 # --- 2. SECURED: Update Menu Item ---
@@ -1010,7 +1034,8 @@ async def update_menu_item(
         return item
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+        logger.exception("Database error updating menu item")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 # --- 3. SECURED: Delete Menu Item ---
@@ -1040,7 +1065,8 @@ async def delete_menu_item(
         return {"message": "Menu item deleted successfully"}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+        logger.exception("Database error deleting menu item")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 # --- 4. SECURED: Create Pickup Slot ---
@@ -1073,7 +1099,8 @@ async def create_pickup_slot(
         return new_slot
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+        logger.exception("Database error creating pickup slot")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 # --- PUBLIC: List Pickup Slots ---
@@ -1107,7 +1134,8 @@ async def delete_pickup_slot(
         return {"message": "Pickup slot deleted successfully"}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+        logger.exception("Database error deleting pickup slot")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 # --- PUBLIC: List Menu Items ---
@@ -1213,7 +1241,8 @@ async def create_order(
         return new_order
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+        logger.exception("Database error creating order")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.patch("/orders/{order_id}/submit-receipt")
@@ -1246,7 +1275,8 @@ async def submit_order_receipt(
         }
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+        logger.exception("Database error submitting receipt")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.get("/orders/{order_id}")
@@ -1800,7 +1830,8 @@ async def admin_update_merchant(
         return {"message": "Merchant profile updated.", "id": str(merchant.id), "name": merchant.name, "location": merchant.location, "description": merchant.description}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.exception("Database error in admin merchant update")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.patch("/admin/merchants/{merchant_id}/toggle-active")
@@ -1848,7 +1879,8 @@ async def admin_delete_merchant(
         return {"message": "Merchant deleted successfully."}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.exception("Database error in admin merchant delete")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.patch("/admin/menu-items/{item_id}/approval")
@@ -1871,7 +1903,8 @@ async def admin_approve_menu_item(
         return {"message": f"Menu item {payload.approval_status}.", "id": str(item.id), "approval_status": payload.approval_status}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.exception("Database error in admin menu item approval")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.delete("/admin/menu-items/{item_id}")
@@ -1896,7 +1929,8 @@ async def admin_delete_menu_item(
         return {"message": "Menu item deleted."}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.exception("Database error in admin menu item delete")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.delete("/admin/pickup-slots/{slot_id}")
@@ -1919,7 +1953,8 @@ async def admin_delete_pickup_slot(
         return {"message": "Pickup slot deleted."}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.exception("Database error in admin pickup slot delete")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.put("/admin/merchants/reorder")
@@ -1939,7 +1974,8 @@ async def admin_reorder_merchants(
         return {"message": "Merchant display order updated."}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.exception("Database error in admin merchant reorder")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.patch("/admin/merchants/{merchant_id}/preview")
@@ -1962,7 +1998,8 @@ async def admin_toggle_preview(
         return {"id": str(merchant.id), "is_preview": getattr(merchant, "is_preview", False)}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.exception("Database error in admin merchant preview toggle")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.get("/admin/merchants/ordered")
@@ -2018,7 +2055,8 @@ async def admin_upload_event_banner(
         return {"message": "Event banner uploaded.", "banner_image_url": event.banner_image_url}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.exception("Database error uploading event banner")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.patch("/admin/events/{event_id}")
@@ -2063,7 +2101,8 @@ async def admin_update_event(
         }
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.exception("Database error in admin event update")
+        raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
 @app.get("/admin/merchants/{merchant_id}/items")
