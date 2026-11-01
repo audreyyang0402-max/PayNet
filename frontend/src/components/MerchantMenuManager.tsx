@@ -354,7 +354,10 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error("Failed to delete pickup slot.");
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail || "Failed to delete pickup slot.");
+      }
 
       setSlots(slots.filter((s) => s.id !== slotId));
     } catch (err: any) {
@@ -427,9 +430,16 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
           "Authorization": `Bearer ${token}`
         },
       });
-      if (!res.ok) throw new Error("Failed to delete item.");
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.detail || "Failed to delete item.");
 
-      setMenuItems(menuItems.filter((i) => i.id !== itemId));
+      if (result.hidden) {
+        // The item has past orders, so the backend hid it instead of deleting it.
+        setMenuItems(menuItems.map((i) => (i.id === itemId ? { ...i, is_available: false } : i)));
+        alert(result.message);
+      } else {
+        setMenuItems(menuItems.filter((i) => i.id !== itemId));
+      }
     } catch (err: any) {
       alert(err.message);
     }

@@ -227,6 +227,26 @@ async def expire_stale_drafts(db: AsyncSession):
         await db.commit()
 
 
+async def anonymize_account(user, db: AsyncSession):
+    """Close an account but keep order history intact (orders still point at this row). Does not commit."""
+    merchant_ids = [m.id for m in (await db.execute(select(Merchant).where(Merchant.user_id == user.id))).scalars().all()]
+    involved = Order.customer_id == user.id
+    if merchant_ids:
+        involved = or_(involved, Order.merchant_id.in_(merchant_ids))
+    for order in (await db.execute(select(Order).where(involved, Order.status.in_(["draft", "pending_verification", "pending"])))).scalars().all():
+        order.status = "cancelled"
+        await release_slot(order, db)
+    if merchant_ids:
+        await db.execute(update(Merchant).where(Merchant.id.in_(merchant_ids)).values(is_active=False))
+        await db.execute(update(MenuItem).where(MenuItem.merchant_id.in_(merchant_ids)).values(is_available=False))
+    user.name = "Deleted User"
+    user.email = f"deleted-{user.id}@{DELETED_EMAIL_DOMAIN}"
+    user.phone_number = None
+    user.password_hash = hash_password(secrets.token_urlsafe(32))
+    user.is_deleted = True
+    user.deleted_at = datetime.now(timezone.utc)
+
+
 # --- BULLETPROOF CORS CONFIGURATION ---
 app.add_middleware(
     CORSMiddleware,
@@ -503,25 +523,13 @@ async def admin_delete_user(
             detail="Administrator accounts cannot be deleted."
         )
 
-    try:
-        # 1. Deactivate menu items and explicitly delete merchant records to avoid foreign key violations
-        merchant_result = await db.execute(select(Merchant).where(Merchant.user_id == target_user.id))
-        merchant_ids = [m.id for m in merchant_result.scalars().all()]
-
-        if merchant_ids:
-            await db.execute(update(MenuItem).where(MenuItem.merchant_id.in_(merchant_ids)).values(is_available=False))
-            await db.execute(Merchant.__table__.delete().where(Merchant.user_id == target_user.id))
-
-        # 3. Finally delete the user
-        await db.delete(target_user)
-        await db.commit()
-        return {"status": "success", "message": "User deleted successfully."}
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete user: {str(e)}"
-        )
+    if target_user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account here.")
+    # Hard-deleting fails once the user has orders (foreign keys), and would erase sales history.
+    # Anonymising keeps history, removes personal data, hides their stall and stops their logins.
+    await anonymize_account(target_user, db)
+    await db.commit()
+    return {"status": "success", "message": "User deleted successfully."}
 
 
 # --- NEW: Admin Update User Role Endpoint ---
@@ -1019,7 +1027,13 @@ async def delete_menu_item(
     merchant = await db.get(Merchant, item.merchant_id)
     if current_user.role != "admin" and (current_user.role != "merchant" or merchant.user_id != current_user.id):
         raise HTTPException(status_code=403, detail="Access denied.")
-    
+
+    used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
+    if used:
+        # Past orders point at this item; deleting it would break receipts and sales history.
+        item.is_available = False
+        await db.commit()
+        return {"message": "This item has past orders, so it was hidden instead of deleted.", "hidden": True}
     try:
         await db.delete(item)
         await db.commit()
@@ -1084,7 +1098,9 @@ async def delete_pickup_slot(
     merchant = await db.get(Merchant, slot.merchant_id)
     if current_user.role != "admin" and (current_user.role != "merchant" or merchant.user_id != current_user.id):
         raise HTTPException(status_code=403, detail="Access denied.")
-    
+    has_orders = (await db.execute(select(func.count(Order.id)).where(Order.pickup_slot_id == slot.id))).scalar_one()
+    if has_orders:
+        raise HTTPException(status_code=400, detail="This pickup slot already has orders, so it can't be deleted.")
     try:
         await db.delete(slot)
         await db.commit()
@@ -1807,8 +1823,18 @@ async def admin_delete_merchant(
     merchant = await db.get(Merchant, merchant_id)
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found.")
+    has_orders = (await db.execute(select(func.count(Order.id)).where(Order.merchant_id == merchant_id))).scalar_one()
+    if has_orders:
+        # Orders point at this stall; keep it for sales history but take it off the marketplace.
+        merchant.is_active = False
+        await db.execute(update(MenuItem).where(MenuItem.merchant_id == merchant_id).values(is_available=False))
+        await db.execute(EventMerchant.__table__.delete().where(EventMerchant.merchant_id == merchant_id))
+        await db.commit()
+        return {"message": "This stall has past orders, so it was deactivated and hidden instead of deleted."}
     try:
         await db.execute(EventMerchant.__table__.delete().where(EventMerchant.merchant_id == merchant_id))
+        await db.execute(MenuItem.__table__.delete().where(MenuItem.merchant_id == merchant_id))
+        await db.execute(PickupSlot.__table__.delete().where(PickupSlot.merchant_id == merchant_id))
         await db.delete(merchant)
         await db.commit()
         return {"message": "Merchant deleted successfully."}
@@ -1851,6 +1877,11 @@ async def admin_delete_menu_item(
     item = await db.get(MenuItem, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Menu item not found.")
+    used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
+    if used:
+        item.is_available = False
+        await db.commit()
+        return {"message": "This item has past orders, so it was hidden instead of deleted.", "hidden": True}
     try:
         await db.delete(item)
         await db.commit()
@@ -1871,6 +1902,9 @@ async def admin_delete_pickup_slot(
     slot = await db.get(PickupSlot, slot_id)
     if not slot:
         raise HTTPException(status_code=404, detail="Pickup slot not found.")
+    has_orders = (await db.execute(select(func.count(Order.id)).where(Order.pickup_slot_id == slot.id))).scalar_one()
+    if has_orders:
+        raise HTTPException(status_code=400, detail="This pickup slot already has orders, so it can't be deleted.")
     try:
         await db.delete(slot)
         await db.commit()
