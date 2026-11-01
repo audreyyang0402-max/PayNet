@@ -60,6 +60,14 @@ async def lifespan(app: FastAPIOffline):
         await connection.execute(text(
             "ALTER TABLE merchants ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0"
         ))
+        # ADD COLUMN IF NOT EXISTS never changes an existing column, so set the default separately.
+        # Existing stalls keep their current value; only stalls created from now on start hidden.
+        await connection.execute(text(
+            "ALTER TABLE merchants ALTER COLUMN is_preview SET DEFAULT TRUE"
+        ))
+        await connection.execute(text(
+            "ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS approval_status VARCHAR NOT NULL DEFAULT 'approved'"
+        ))
     yield
 
 app = FastAPIOffline(lifespan=lifespan)
@@ -495,6 +503,8 @@ async def update_user_role(
             detail="User not found."
         )
 
+    if target_user.id == current_user.id and payload.role != "admin":
+        raise HTTPException(status_code=400, detail="You cannot remove your own admin role.")
     target_user.role = payload.role
 
     if payload.role == "merchant":
@@ -503,8 +513,8 @@ async def update_user_role(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="store_name is required when promoting a user to the merchant role.",
             )
-        merchant_check = await db.execute(select(Merchant).where(Merchant.user_id == target_user.id))
-        if not merchant_check.scalars().first():
+        existing_merchant = (await db.execute(select(Merchant).where(Merchant.user_id == target_user.id))).scalars().first()
+        if not existing_merchant:
             new_merchant = Merchant(
                 user_id=target_user.id,
                 name=payload.store_name.strip(),
@@ -514,7 +524,6 @@ async def update_user_role(
             db.add(new_merchant)
         else:
             # Update existing merchant record with supplied details
-            existing_merchant = merchant_check.scalars().first()
             if existing_merchant:
                 existing_merchant.name = payload.store_name.strip()
                 if payload.description:
@@ -1769,7 +1778,7 @@ async def admin_approve_menu_item(
     item = await db.get(MenuItem, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Menu item not found.")
-    setattr(item, "approval_status", payload.approval_status)
+    item.approval_status = payload.approval_status
     item.is_available = payload.approval_status == "approved"
     try:
         await db.commit()
