@@ -95,8 +95,8 @@ export default function AnalyticsDashboard({ audience, embedded = false }: { aud
         <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              {!embedded && <Link href={isAdmin ? "/admin/rentals" : isCustomer ? "/profile" : "/vendor/dashboard"} className="inline-block rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-800">
-                Back to {isCustomer ? "my account" : `${isAdmin ? "admin" : "vendor"} dashboard`}
+              {!embedded && !isAdmin && <Link href={isCustomer ? "/profile" : "/vendor/dashboard"} className="inline-block rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-800">
+                Back to {isCustomer ? "my account" : "vendor dashboard"}
               </Link>}
               <p className="mt-4 text-xs font-bold uppercase tracking-[0.18em] text-orange-700">Analytics</p>
               <h2 className="mt-1 text-2xl font-bold text-slate-900">{isAdmin ? "Platform analytics" : isCustomer ? "Your spending" : "Store analytics"}</h2>

@@ -57,10 +57,7 @@ export default function SiteFooter() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p>
               Built with ❤️ by{" "}
-              <a
-                href="mailto:payvolutionwebsite@gmail.com"
-                className="font-semibold text-orange-600 hover:underline"
-              >
+              <a href="mailto:payvolutionwebsite@gmail.com" className="font-semibold text-orange-600 hover:underline">
                 Payvolution Team
               </a>
               {" "}· Sunway College, SDS
@@ -81,6 +78,14 @@ export default function SiteFooter() {
               Terms &amp; Conditions
             </button>
             {" "}and confirm that the information you provide is accurate. Payvolution is a campus food ordering service — all orders are for food pickup only.
+          </p>
+
+          {/* Credits */}
+          <p className="text-center text-stone-400">
+            Credit goes to{" "}
+            <a href="mailto:avaanandha@gmail.com" className="font-semibold text-orange-600 hover:underline">Aanandha James</a>
+            {" "}&amp;{" "}
+            <a href="mailto:audreyyang0402@gmail.com" className="font-semibold text-orange-600 hover:underline">Yang Wen Chin</a>
           </p>
         </div>
       </footer>
