@@ -9,7 +9,7 @@ from fastapi import UploadFile, File, Form, HTTPException
 import shutil
 
 from fastapi_offline import FastAPIOffline
-from fastapi import FastAPI, Depends, Query, status
+from fastapi import FastAPI, Depends, Query, status, BackgroundTasks
 from fastapi.staticfiles import StaticFiles  # <--- Added import for serving static upload files
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -183,6 +183,48 @@ def receipt_link(stored: Optional[str]) -> Optional[str]:
         return None
 
 
+# --- ORDER RULES ---
+
+MALAYSIA_TZ = timezone(timedelta(hours=8))   # Malaysia has no daylight saving
+DRAFT_HOLD_MINUTES = 15                       # an unpaid checkout keeps its pickup place this long
+
+# The only moves a stall may make. Drafts become pending_verification only when the customer uploads a receipt.
+ORDER_TRANSITIONS = {
+    "pending_verification": {"preparing", "rejected"},
+    "pending": {"preparing", "rejected"},
+    "preparing": {"ready"},
+    "ready": {"completed"},
+}
+
+
+def new_order_number() -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O or 1/I mix-ups
+    return "#EX-" + "".join(secrets.choice(alphabet) for _ in range(8))
+
+
+def as_malaysia_time(when: datetime) -> datetime:
+    """A time with no zone (e.g. from <input type=datetime-local>) means Malaysia time, not UTC."""
+    return when.replace(tzinfo=MALAYSIA_TZ) if when.tzinfo is None else when
+
+
+async def release_slot(order, db: AsyncSession):
+    if order.pickup_slot_id:
+        slot = await db.get(PickupSlot, order.pickup_slot_id)
+        if slot and slot.current_bookings > 0:
+            slot.current_bookings -= 1
+
+
+async def expire_stale_drafts(db: AsyncSession):
+    """Cancel checkouts that were never paid, so they stop blocking pickup slots."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=DRAFT_HOLD_MINUTES)
+    stale = (await db.execute(
+        select(Order).where(Order.status == "draft", Order.created_at < cutoff).with_for_update(skip_locked=True)
+    )).scalars().all()
+    for order in stale:
+        order.status = "cancelled"
+        await release_slot(order, db)
+    if stale:
+        await db.commit()
 
 
 # --- BULLETPROOF CORS CONFIGURATION ---
@@ -298,7 +340,7 @@ class SendCodeRequest(BaseModel):
 
 
 class OrderStatusUpdate(BaseModel):
-    status: Literal["draft", "pending_verification", "pending", "preparing", "ready", "completed"]
+    status: Literal["preparing", "ready", "completed", "rejected"]
 
 
 # NEW: Schemas for Events
@@ -1002,9 +1044,12 @@ async def create_pickup_slot(
     if current_user.role != "admin" and (current_user.role != "merchant" or merchant.user_id != current_user.id):
         raise HTTPException(status_code=403, detail="Access denied.")
 
+    when = as_malaysia_time(slot_data.time_slot)
+    if when < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Pickup time must be in the future.")
     new_slot = PickupSlot(
         merchant_id=merchant_id,
-        time_slot=slot_data.time_slot,
+        time_slot=when,
         max_capacity=slot_data.max_capacity
     )
     db.add(new_slot)
@@ -1020,7 +1065,8 @@ async def create_pickup_slot(
 # --- PUBLIC: List Pickup Slots ---
 @app.get("/merchants/{merchant_id}/pickup-slots")
 async def list_pickup_slots(merchant_id: UUID, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(PickupSlot).where(PickupSlot.merchant_id == merchant_id))
+    await expire_stale_drafts(db)
+    result = await db.execute(select(PickupSlot).where(PickupSlot.merchant_id == merchant_id).order_by(PickupSlot.time_slot))
     return result.scalars().all()
 
 
@@ -1088,11 +1134,20 @@ async def create_order(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    slot = await db.get(PickupSlot, order_data.pickup_slot_id)
+    merchant = await db.get(Merchant, order_data.merchant_id)
+    if not merchant or merchant.is_active is False:
+        raise HTTPException(status_code=400, detail="This stall is not taking orders right now.")
+    await expire_stale_drafts(db)
+    # Lock the slot row so two customers can't both take the last place.
+    slot = (await db.execute(
+        select(PickupSlot).where(PickupSlot.id == order_data.pickup_slot_id).with_for_update()
+    )).scalars().first()
     if not slot:
         raise HTTPException(status_code=404, detail="Pickup slot not found.")
     if slot.merchant_id != order_data.merchant_id:
         raise HTTPException(status_code=400, detail="Pickup slot does not belong to this merchant.")
+    if slot.time_slot < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="This pickup time has already passed.")
     if slot.current_bookings >= slot.max_capacity:
         raise HTTPException(status_code=400, detail="This pickup slot is fully booked.")
 
@@ -1104,14 +1159,16 @@ async def create_order(
             raise HTTPException(status_code=404, detail=f"Menu item {line.menu_item_id} not found.")
         if item.merchant_id != order_data.merchant_id:
             raise HTTPException(status_code=400, detail="Menu item does not belong to this merchant.")
-        if not item.is_available:
+        if not item.is_available or item.approval_status == "rejected" or float(item.price) <= 0:
             raise HTTPException(status_code=400, detail=f"'{item.name}' is currently unavailable.")
         line_total = float(item.price) * line.quantity
         total_price += line_total
         instructions = line.special_instructions.strip() if line.special_instructions else None
         line_items.append((item, line.quantity, instructions or None))
 
-    order_number = f"#EX-{datetime.now().strftime('%H%M%S')}"
+    order_number = new_order_number()
+    while (await db.execute(select(Order.id).where(Order.order_number == order_number))).first():
+        order_number = new_order_number()
 
     new_order = Order(
         customer_id=current_user.id,
@@ -1119,7 +1176,7 @@ async def create_order(
         pickup_slot_id=order_data.pickup_slot_id,
         order_number=order_number,
         status="draft", # <--- UPDATED: Initial state is draft so merchant is not notified yet
-        total_price=total_price,
+        total_price=round(total_price, 2),
         transaction_ref=None
     )
     db.add(new_order)
@@ -1155,6 +1212,8 @@ async def submit_order_receipt(
         raise HTTPException(status_code=404, detail="Order not found.")
     if order.customer_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied. You do not own this order.")
+    if order.status not in ("draft", "pending_verification", "pending"):
+        raise HTTPException(status_code=400, detail="This order has already been checked by the stall, so the receipt can't be changed.")
 
     # Receipts go to a PRIVATE bucket; the customer, the stall and admins get short-lived links.
     order.transaction_ref = await upload_to_supabase(receipt_file, private=True)
@@ -1298,77 +1357,69 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
 async def update_order_status(
     order_id: UUID,
     status_update: OrderStatusUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    order = await db.get(Order, order_id)
+    result = await db.execute(
+        select(Order).where(Order.id == order_id).options(
+            selectinload(Order.customer),
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+        )
+    )
+    order = result.scalars().first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
 
     if current_user.role != "merchant":
         raise HTTPException(status_code=403, detail="Only merchants can update order status.")
-    merchant_result = await db.execute(
-        select(Merchant).where(
-            Merchant.id == order.merchant_id,
-            Merchant.user_id == current_user.id,
-        )
-    )
-    merchant = merchant_result.scalars().first()
+    merchant = (await db.execute(
+        select(Merchant).where(Merchant.id == order.merchant_id, Merchant.user_id == current_user.id)
+    )).scalars().first()
     if not merchant:
         raise HTTPException(status_code=403, detail="You can only update orders for your own merchant account.")
-    
-    order.status = status_update.status
-    try:
-        await db.commit()
 
-        # ── Send "food is ready" email when merchant marks order ready ──
-        if status_update.status == "ready":
-            try:
-                full_order = await db.execute(
-                    select(Order)
-                    .where(Order.id == order_id)
-                    .options(
-                        selectinload(Order.customer),
-                        selectinload(Order.items).selectinload(OrderItem.menu_item),
-                    )
-                )
-                full_order = full_order.scalars().first()
-                slot = await db.get(PickupSlot, order.pickup_slot_id) if order.pickup_slot_id else None
-                pickup_time = (
-                    slot.time_slot.strftime("%I:%M %p") if slot else "your scheduled slot"
-                )
-                items_for_email = [
-                    {
-                        "name": oi.menu_item.name if oi.menu_item else "Item",
-                        "quantity": oi.quantity,
-                        "price": float(oi.price_at_order),
-                        "special_instructions": oi.special_instructions,
-                    }
-                    for oi in full_order.items
-                ]
-                send_order_ready_email(
-                    customer_email=full_order.customer.email,
-                    customer_name=full_order.customer.name,
-                    order_number=order.order_number or str(order.id)[:8].upper(),
-                    merchant_name=merchant.name,
-                    merchant_location=merchant.location or "Campus Stall",
-                    pickup_time=pickup_time,
-                    items=items_for_email,
-                    total_price=float(order.total_price),
-                )
-            except Exception as email_err:
-                # Email failure must NOT roll back the status update
-                logger.warning("Order-ready email failed for order %s: %s", order_id, email_err)
+    new_status = status_update.status
+    if order.status == "draft":
+        raise HTTPException(status_code=400, detail="The customer hasn't uploaded a payment receipt yet.")
+    if new_status not in ORDER_TRANSITIONS.get(order.status, set()):
+        raise HTTPException(status_code=400, detail=f"An order that is '{order.status}' can't be changed to '{new_status}'.")
 
-        await db.refresh(order)
-        return {
-            "message": "Order status updated successfully",
-            "order_id": str(order.id),
-            "new_status": order.status
-        }
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+    order.status = new_status
+    if new_status == "rejected":
+        await release_slot(order, db)
+    await db.commit()
+
+    customer = order.customer
+    if new_status == "ready" and customer and customer.email and not customer.email.endswith("@" + DELETED_EMAIL_DOMAIN):
+        slot = await db.get(PickupSlot, order.pickup_slot_id) if order.pickup_slot_id else None
+        pickup_time = slot.time_slot.astimezone(MALAYSIA_TZ).strftime("%I:%M %p") if slot else "your scheduled slot"
+        # Runs after the response is sent (in a worker thread), so slow SMTP never holds up the stall's screen.
+        background_tasks.add_task(
+            send_order_ready_email,
+            customer_email=customer.email,
+            customer_name=customer.name,
+            order_number=order.order_number or str(order.id)[:8].upper(),
+            merchant_name=merchant.name,
+            merchant_location=merchant.location or "Campus Stall",
+            pickup_time=pickup_time,
+            items=[
+                {
+                    "name": oi.menu_item.name if oi.menu_item else "Item",
+                    "quantity": oi.quantity,
+                    "price": float(oi.price_at_order),
+                    "special_instructions": oi.special_instructions,
+                }
+                for oi in order.items
+            ],
+            total_price=float(order.total_price),
+        )
+
+    return {
+        "message": "Order status updated successfully",
+        "order_id": str(order.id),
+        "new_status": order.status
+    }
 
 
 # --- ADMIN USERS ---

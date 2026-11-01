@@ -135,17 +135,14 @@ export default function MerchantDashboard() {
         if (!profileRes.ok) throw new Error("Could not load merchant profile.");
         const profileData = await profileRes.json();
 
-        const [bookingsRes, userRes, ordersRes] = await Promise.all([
-          fetch(`${BACKEND_URL}/boulevard/my-bookings`, { headers: { Authorization: `Bearer ${token}` } }),
+        // These three resources are independent once the merchant profile is
+        // known, so load them together instead of waiting for each request.
+        // (Boulevard rentals were removed from the backend, so their bookings call is gone too.)
+        const [userRes, ordersRes] = await Promise.all([
           fetch(`${BACKEND_URL}/auth/me`, { headers: { Authorization: `Bearer ${token}` } }),
           fetch(`${BACKEND_URL}/merchants/${profileData.id}/orders`, { headers: { Authorization: `Bearer ${token}` } }),
         ]);
-        let hasActiveRentals = false;
-        if (bookingsRes.ok) {
-          const bookingsData = await bookingsRes.json();
-          if (bookingsData.length > 0) hasActiveRentals = true;
-        }
-        setMerchant({ ...profileData, is_temporary: hasActiveRentals || profileData.location?.toLowerCase().includes("boulevard") });
+        setMerchant({ ...profileData, is_temporary: profileData.location?.toLowerCase().includes("boulevard") });
         setEditStoreName(profileData.name || "");
         setEditLocation(profileData.location || "");
         setEditDescription(profileData.description || "");
@@ -411,7 +408,8 @@ export default function MerchantDashboard() {
                         order.status === "pending_verification" ? "bg-yellow-100 text-yellow-800" :
                         order.status === "pending" ? "bg-yellow-100 text-yellow-800" :
                         order.status === "preparing" ? "bg-blue-100 text-blue-800" :
-                        order.status === "ready" ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-800"
+                        order.status === "ready" ? "bg-green-100 text-green-800" :
+                        order.status === "rejected" || order.status === "cancelled" ? "bg-red-100 text-red-800" : "bg-gray-200 text-gray-800"
                       }`}>{order.status}</span>
                     </div>
                     {order.transaction_ref && (
@@ -451,6 +449,12 @@ export default function MerchantDashboard() {
                         <span className="text-orange-600 text-sm">RM {Number(order.total_price).toFixed(2)}</span>
                       </div>
                       <div className="space-x-2">
+                        {(order.status === "pending_verification" || order.status === "pending") && (
+                          <button onClick={() => { if (confirm("Reject this order? Use this when the payment receipt is missing or not genuine. The pickup place is freed.")) handleUpdateOrderStatus(order.id, "rejected"); }}
+                            className="rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50">
+                            Reject
+                          </button>
+                        )}
                         {order.status === "pending_verification" && (
                           <button onClick={() => handleUpdateOrderStatus(order.id, "preparing")}
                             className="bg-green-600 hover:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all shadow-sm">
