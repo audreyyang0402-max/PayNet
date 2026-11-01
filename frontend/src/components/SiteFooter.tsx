@@ -77,7 +77,7 @@ export default function SiteFooter() {
             >
               Terms &amp; Conditions
             </button>
-            {" "}and confirm that the information you provide is accurate. Payvolution is a campus food ordering service — all orders are for food pickup only.
+            {" "}and confirm that the information you provide is accurate. Payvolution is a campus food ordering and click-and-collect platform for anyone in Sunway Campus — all orders are for food pickup only.
           </p>
 
           {/* Credits */}
@@ -120,7 +120,7 @@ export default function SiteFooter() {
 
               <section>
                 <h3 className="font-bold text-stone-900">2. Platform Purpose</h3>
-                <p className="mt-1">Payvolution is a campus food ordering and click-and-collect platform exclusively for Sunway College (Sunway Diploma Studies, SDS). All orders are for food pickup only — we do not offer delivery services.</p>
+                <p className="mt-1">Payvolution is a campus food ordering and click-and-collect platform for anyone in Sunway Campus who wishes to order food in advance. All orders are for food pickup only — we do not offer delivery services.</p>
               </section>
 
               <section>
