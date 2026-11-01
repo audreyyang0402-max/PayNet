@@ -21,7 +21,6 @@ import Link from "next/link";
 import ShopDetailsDialog from "@/components/ShopDetailsDialog";
 import RecommendationWidget from "@/components/RecommendationWidget";
 import FoodDetailsDialog from "@/components/FoodDetailsDialog";
-import SiteFooter from "@/components/SiteFooter";
 
 // ─── Type Definitions ────────────────────────────────────────────────────────
 
@@ -707,8 +706,6 @@ export default function Home() {
           }}
         />
       )}
-      <SiteFooter />
-
       {selectedMenuItem && (
         <FoodDetailsDialog
           key={selectedMenuItem.id}
