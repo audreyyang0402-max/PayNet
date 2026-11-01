@@ -83,7 +83,7 @@ export default function SiteFooter() {
           {/* Credits */}
           <p className="text-center text-stone-400">
             Credit goes to{" "}
-            <a href="mailto:avaanandha@gmail.com" className="font-semibold text-orange-600 hover:underline">Aanandha James</a>
+            <a href="https://www.linkedin.com/in/aanandha17" target="_blank" rel="noopener noreferrer" className="font-semibold text-orange-600 hover:underline">Aanandha James</a>
             {" "}&amp;{" "}
             <a href="mailto:audreyyang0402@gmail.com" className="font-semibold text-orange-600 hover:underline">Yang Wen Chin</a>
           </p>
