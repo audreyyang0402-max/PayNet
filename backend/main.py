@@ -1277,14 +1277,20 @@ async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db), current_
         }
         for item in order.items
     ]
-    
+
+    merchant = await db.get(Merchant, order.merchant_id)
+    slot = await db.get(PickupSlot, order.pickup_slot_id) if order.pickup_slot_id else None
+
     return {
         "id": str(order.id),
         "merchant_id": str(order.merchant_id),
+        "merchant_name": merchant.name if merchant else None,
+        "merchant_location": merchant.location if merchant else None,
         "status": order.status,
         "total_price": float(order.total_price),
         "created_at": order.created_at.isoformat() if order.created_at else None,
         "order_number": order.order_number,
+        "pickup_time": slot.time_slot.isoformat() if slot else None,
         "transaction_ref": receipt_link(order.transaction_ref),
         "items": items_data
     }
@@ -1429,6 +1435,8 @@ async def update_order_status(
                 for oi in order.items
             ],
             total_price=float(order.total_price),
+            order_id=str(order.id),
+            receipt_url=receipt_link(order.transaction_ref),
         )
 
     return {

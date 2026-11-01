@@ -396,12 +396,20 @@ export default function AdminMerchants() {
                   </summary>
                   <ul className="mt-3 text-sm text-stone-600">{o.items.map((i, n) => <li key={n}>{i.quantity} × {i.name}</li>)}</ul>
                   {o.transaction_ref && (
-                    <p className="mt-2 break-all text-xs text-stone-400">
-                      Receipt:{" "}
-                      {o.transaction_ref.startsWith("https://")
-                        ? <a className="underline text-orange-600" href={o.transaction_ref} target="_blank" rel="noopener noreferrer">View</a>
-                        : o.transaction_ref}
-                    </p>
+                    <div className="mt-3 border-t border-stone-200 pt-3">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1.5">Payment Receipt</p>
+                      {o.transaction_ref.startsWith("http") ? (
+                        <a href={o.transaction_ref} target="_blank" rel="noopener noreferrer">
+                          <img
+                            src={o.transaction_ref}
+                            alt="Payment receipt"
+                            className="h-28 w-auto rounded-lg border border-stone-200 bg-white object-contain hover:shadow-md transition"
+                          />
+                        </a>
+                      ) : (
+                        <p className="break-all text-xs text-stone-400">{o.transaction_ref}</p>
+                      )}
+                    </div>
                   )}
                 </details>
               ))}
