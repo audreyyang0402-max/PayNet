@@ -39,6 +39,13 @@ interface Order {
   items?: OrderItem[];
 }
 
+interface PickupSlot {
+  id: string;
+  time_slot: string;
+  max_capacity: number;
+  current_bookings: number;
+}
+
 type Tab = "analytics" | "profile" | "orders" | "menu" | "slots" | "payment";
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -59,7 +66,7 @@ export default function MerchantDashboard() {
   const [orderError, setOrderError] = useState("");
   const seenOrders = useRef<Set<string> | null>(null);
 
-  // Slot summary for tab label badge
+  // Slot summary for tab label badge — loaded at startup AND updated live
   const [slotBookings, setSlotBookings] = useState(0);
   const [slotCapacity, setSlotCapacity] = useState(0);
 
@@ -139,15 +146,19 @@ export default function MerchantDashboard() {
         if (!profileRes.ok) throw new Error("Could not load merchant profile.");
         const profileData = await profileRes.json();
 
-        const [userRes, ordersRes] = await Promise.all([
+        // Fetch user, orders AND slots together so the tab badge shows immediately
+        const [userRes, ordersRes, slotsRes] = await Promise.all([
           fetch(`${BACKEND_URL}/auth/me`, { headers: { Authorization: `Bearer ${token}` } }),
           fetch(`${BACKEND_URL}/merchants/${profileData.id}/orders`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${BACKEND_URL}/merchants/${profileData.id}/pickup-slots`),
         ]);
+
         setMerchant({ ...profileData, is_temporary: profileData.location?.toLowerCase().includes("boulevard") });
         setEditStoreName(profileData.name || "");
         setEditLocation(profileData.location || "");
         setEditDescription(profileData.description || "");
         setQrUrl(profileData.duitnow_qr_url || "");
+
         if (userRes.ok) {
           const userData = await userRes.json();
           setEditEmail(userData.email || "");
@@ -157,6 +168,13 @@ export default function MerchantDashboard() {
           const ordersData = await ordersRes.json();
           setOrders(ordersData);
           seenOrders.current = new Set(ordersData.map((o: Order) => o.id));
+        }
+        if (slotsRes.ok) {
+          const slotsData: PickupSlot[] = await slotsRes.json();
+          const totalBookings = slotsData.reduce((s, sl) => s + sl.current_bookings, 0);
+          const totalCapacity = slotsData.reduce((s, sl) => s + sl.max_capacity, 0);
+          setSlotBookings(totalBookings);
+          setSlotCapacity(totalCapacity);
         }
       } catch (err: any) {
         setError(err.message);
@@ -334,7 +352,6 @@ export default function MerchantDashboard() {
                     placeholder="+60123456789" />
                 </div>
               </div>
-              {/* Save + Change Password row */}
               <div className="flex items-center justify-between">
                 <button type="submit"
                   className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer">
