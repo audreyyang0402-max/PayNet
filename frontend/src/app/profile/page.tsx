@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import SiteFooter from "@/components/SiteFooter";
 import { useRouter } from "next/navigation";
 import { BACKEND_URL } from "@/lib/backend-url";
 import CustomerSpendingDashboard from "@/components/CustomerSpendingDashboard";
@@ -83,7 +84,7 @@ export default function ProfilePage() {
     reader.readAsDataURL(uploaded);
   }
   function logout() { ["token", "user_id", "userRole", "userName"].forEach(k => localStorage.removeItem(k)); router.replace("/login"); }
-  return <main className="min-h-screen bg-[#faf8f3] px-4 py-6 text-stone-900 sm:py-10">
+  return (<><main className="min-h-screen bg-[#faf8f3] px-4 py-6 text-stone-900 sm:py-10">
     <div className="mx-auto max-w-3xl space-y-5">
       <Link href="/" className={`${button} bg-white`}>Back to marketplace</Link>
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
@@ -129,5 +130,7 @@ export default function ProfilePage() {
         {user.role !== "admin" && <details className="rounded-xl border border-stone-200 bg-white p-4 text-sm text-stone-500"><summary className="cursor-pointer">Account management</summary><p className="my-3 text-xs">Permanently delete your account. This action cannot be undone.</p><DeleteAccountButton /></details>}
       </>}
     </div>
-  </main>;
+  </main>
+  <SiteFooter />
+  </>);
 }
