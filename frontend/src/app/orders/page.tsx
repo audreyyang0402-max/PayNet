@@ -89,6 +89,8 @@ export default function OrdersPage() {
                         ? 'bg-green-100 text-green-700' 
                         : order.status === 'draft'
                         ? 'bg-amber-100 text-amber-800'
+                        : order.status === 'rejected' || order.status === 'cancelled'
+                        ? 'bg-red-100 text-red-700'
                         : 'bg-yellow-100 text-yellow-700'
                     }`}>
                       {order.status}

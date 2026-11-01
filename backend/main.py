@@ -9,7 +9,7 @@ from fastapi import UploadFile, File, Form, HTTPException
 import shutil
 
 from fastapi_offline import FastAPIOffline
-from fastapi import FastAPI, Depends, Query, status
+from fastapi import FastAPI, Depends, Query, status, BackgroundTasks
 from fastapi.staticfiles import StaticFiles  # <--- Added import for serving static upload files
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,6 +59,14 @@ async def lifespan(app: FastAPIOffline):
         ))
         await connection.execute(text(
             "ALTER TABLE merchants ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0"
+        ))
+        # ADD COLUMN IF NOT EXISTS never changes an existing column, so set the default separately.
+        # Existing stalls keep their current value; only stalls created from now on start hidden.
+        await connection.execute(text(
+            "ALTER TABLE merchants ALTER COLUMN is_preview SET DEFAULT TRUE"
+        ))
+        await connection.execute(text(
+            "ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS approval_status VARCHAR NOT NULL DEFAULT 'approved'"
         ))
     yield
 
@@ -113,45 +121,130 @@ def public_menu_item(item: MenuItem) -> dict:
         "created_at": item.created_at,
     }
 
-async def upload_to_supabase(file: UploadFile) -> str:
-    """Helper function to upload files directly to Supabase Storage and return the public URL safely."""
+PUBLIC_BUCKET = os.getenv("SUPABASE_PUBLIC_BUCKET", "uploads")      # QR codes, menu photos, banners: meant to be public
+RECEIPT_BUCKET = os.getenv("SUPABASE_RECEIPT_BUCKET", "receipts")   # payment receipts: PRIVATE bucket, signed links only
+RECEIPT_LINK_SECONDS = 60 * 60
+
+
+def detect_image(data: bytes):
+    """Decide the image type from the file's first bytes, never from the filename or the browser's claim."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png", "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpg", "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp", "image/webp"
+    return None
+
+
+async def upload_to_supabase(file: UploadFile, private: bool = False) -> str:
+    """Validate an image and store it. Public uploads return a public URL; private ones return a storage path."""
     if not supabase:
         raise HTTPException(status_code=500, detail="Supabase Storage client is not configured on the backend.")
+    file_bytes = await file.read(MAX_IMAGE_BYTES + 1)
+    if len(file_bytes) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image must be 5 MB or smaller.")
+    detected = detect_image(file_bytes)
+    if not detected:
+        raise HTTPException(status_code=400, detail="Only JPG, PNG, and WebP images are supported.")
+    ext, content_type = detected
+    bucket = RECEIPT_BUCKET if private else PUBLIC_BUCKET
+    file_path = f"images/{secrets.token_hex(12)}.{ext}"
     try:
-        if file.content_type not in ALLOWED_IMAGE_CONTENT_TYPES:
-            raise HTTPException(status_code=400, detail="Only JPG, PNG, and WebP images are supported.")
-
-        file_bytes = await file.read(MAX_IMAGE_BYTES + 1)
-        if len(file_bytes) > MAX_IMAGE_BYTES:
-            raise HTTPException(status_code=413, detail="Image must be 5 MB or smaller.")
-        file_ext = file.filename.split(".")[-1] if file.filename and "." in file.filename else "png"
-        file_name = f"{os.urandom(12).hex()}.{file_ext}"
-        file_path = f"images/{file_name}"
-
-        # Upload bytes to Supabase Storage bucket named 'uploads' with upsert enabled
-        response = supabase.storage.from_("uploads").upload(
-            path=file_path,
-            file=file_bytes,
-            file_options={"content-type": file.content_type or "image/png", "upsert": "true"}
-        )
-
-        # Get the public URL safely handling both string and dictionary returns
-        public_url_res = supabase.storage.from_("uploads").get_public_url(file_path)
-        
-        if isinstance(public_url_res, dict):
-            public_url = public_url_res.get("publicUrl") or public_url_res.get("data", {}).get("publicUrl")
-        else:
-            public_url = str(public_url_res)
-
+        supabase.storage.from_(bucket).upload(path=file_path, file=file_bytes, file_options={"content-type": content_type})
+        if private:
+            return file_path
+        public_url = supabase.storage.from_(bucket).get_public_url(file_path)
+        if isinstance(public_url, dict):
+            public_url = public_url.get("publicUrl") or public_url.get("data", {}).get("publicUrl")
         if not public_url:
             raise HTTPException(status_code=500, detail="Failed to generate public URL from Supabase.")
-
-        return public_url
+        return str(public_url)
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"CRITICAL SUPABASE UPLOAD ERROR: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Supabase upload failed: {str(e)}")
+    except Exception:
+        logger.exception("Supabase storage upload failed")
+        raise HTTPException(status_code=502, detail="Could not store the image. Please try again.")
+
+
+def receipt_link(stored: Optional[str]) -> Optional[str]:
+    """Old rows hold full public URLs; new rows hold a private path that gets a 1-hour signed link."""
+    if not stored:
+        return None
+    if stored.startswith("http") or not supabase:
+        return stored if stored.startswith("http") else None
+    try:
+        signed = supabase.storage.from_(RECEIPT_BUCKET).create_signed_url(stored, RECEIPT_LINK_SECONDS)
+        if isinstance(signed, dict):
+            return signed.get("signedURL") or signed.get("signedUrl")
+        return str(signed)
+    except Exception:
+        logger.exception("Could not sign receipt link")
+        return None
+
+
+# --- ORDER RULES ---
+
+MALAYSIA_TZ = timezone(timedelta(hours=8))   # Malaysia has no daylight saving
+DRAFT_HOLD_MINUTES = 15                       # an unpaid checkout keeps its pickup place this long
+
+# The only moves a stall may make. Drafts become pending_verification only when the customer uploads a receipt.
+ORDER_TRANSITIONS = {
+    "pending_verification": {"preparing", "rejected"},
+    "pending": {"preparing", "rejected"},
+    "preparing": {"ready"},
+    "ready": {"completed"},
+}
+
+
+def new_order_number() -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O or 1/I mix-ups
+    return "#EX-" + "".join(secrets.choice(alphabet) for _ in range(8))
+
+
+def as_malaysia_time(when: datetime) -> datetime:
+    """A time with no zone (e.g. from <input type=datetime-local>) means Malaysia time, not UTC."""
+    return when.replace(tzinfo=MALAYSIA_TZ) if when.tzinfo is None else when
+
+
+async def release_slot(order, db: AsyncSession):
+    if order.pickup_slot_id:
+        slot = await db.get(PickupSlot, order.pickup_slot_id)
+        if slot and slot.current_bookings > 0:
+            slot.current_bookings -= 1
+
+
+async def expire_stale_drafts(db: AsyncSession):
+    """Cancel checkouts that were never paid, so they stop blocking pickup slots."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=DRAFT_HOLD_MINUTES)
+    stale = (await db.execute(
+        select(Order).where(Order.status == "draft", Order.created_at < cutoff).with_for_update(skip_locked=True)
+    )).scalars().all()
+    for order in stale:
+        order.status = "cancelled"
+        await release_slot(order, db)
+    if stale:
+        await db.commit()
+
+
+async def anonymize_account(user, db: AsyncSession):
+    """Close an account but keep order history intact (orders still point at this row). Does not commit."""
+    merchant_ids = [m.id for m in (await db.execute(select(Merchant).where(Merchant.user_id == user.id))).scalars().all()]
+    involved = Order.customer_id == user.id
+    if merchant_ids:
+        involved = or_(involved, Order.merchant_id.in_(merchant_ids))
+    for order in (await db.execute(select(Order).where(involved, Order.status.in_(["draft", "pending_verification", "pending"])))).scalars().all():
+        order.status = "cancelled"
+        await release_slot(order, db)
+    if merchant_ids:
+        await db.execute(update(Merchant).where(Merchant.id.in_(merchant_ids)).values(is_active=False))
+        await db.execute(update(MenuItem).where(MenuItem.merchant_id.in_(merchant_ids)).values(is_available=False))
+    user.name = "Deleted User"
+    user.email = f"deleted-{user.id}@{DELETED_EMAIL_DOMAIN}"
+    user.phone_number = None
+    user.password_hash = hash_password(secrets.token_urlsafe(32))
+    user.is_deleted = True
+    user.deleted_at = datetime.now(timezone.utc)
 
 
 # --- BULLETPROOF CORS CONFIGURATION ---
@@ -236,25 +329,25 @@ class MerchantPublic(BaseModel):
         from_attributes = True
 
 class MenuItemCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
-    price: float
+    name: str = Field(min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=1000)
+    price: float = Field(gt=0, le=10000)
     image_url: Optional[str] = None
     is_available: bool = True
 
 class OrderItemCreate(BaseModel):
     menu_item_id: UUID
-    quantity: int = Field(default=1, ge=1)
+    quantity: int = Field(default=1, ge=1, le=50)
     special_instructions: Optional[str] = Field(default=None, max_length=300)
 
 class OrderCreate(BaseModel):
     merchant_id: UUID
     pickup_slot_id: UUID
-    items: List[OrderItemCreate]
+    items: List[OrderItemCreate] = Field(min_length=1, max_length=50)
 
 class PickupSlotCreate(BaseModel):
     time_slot: datetime
-    max_capacity: int = 10
+    max_capacity: int = Field(default=10, ge=1, le=500)
 
 class ForgotPasswordRequest(BaseModel):
     email: str
@@ -267,7 +360,7 @@ class SendCodeRequest(BaseModel):
 
 
 class OrderStatusUpdate(BaseModel):
-    status: Literal["draft", "pending_verification", "pending", "preparing", "ready", "completed"]
+    status: Literal["preparing", "ready", "completed", "rejected"]
 
 
 # NEW: Schemas for Events
@@ -430,25 +523,13 @@ async def admin_delete_user(
             detail="Administrator accounts cannot be deleted."
         )
 
-    try:
-        # 1. Deactivate menu items and explicitly delete merchant records to avoid foreign key violations
-        merchant_result = await db.execute(select(Merchant).where(Merchant.user_id == target_user.id))
-        merchant_ids = [m.id for m in merchant_result.scalars().all()]
-
-        if merchant_ids:
-            await db.execute(update(MenuItem).where(MenuItem.merchant_id.in_(merchant_ids)).values(is_available=False))
-            await db.execute(Merchant.__table__.delete().where(Merchant.user_id == target_user.id))
-
-        # 3. Finally delete the user
-        await db.delete(target_user)
-        await db.commit()
-        return {"status": "success", "message": "User deleted successfully."}
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete user: {str(e)}"
-        )
+    if target_user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account here.")
+    # Hard-deleting fails once the user has orders (foreign keys), and would erase sales history.
+    # Anonymising keeps history, removes personal data, hides their stall and stops their logins.
+    await anonymize_account(target_user, db)
+    await db.commit()
+    return {"status": "success", "message": "User deleted successfully."}
 
 
 # --- NEW: Admin Update User Role Endpoint ---
@@ -472,6 +553,8 @@ async def update_user_role(
             detail="User not found."
         )
 
+    if target_user.id == current_user.id and payload.role != "admin":
+        raise HTTPException(status_code=400, detail="You cannot remove your own admin role.")
     target_user.role = payload.role
 
     if payload.role == "merchant":
@@ -480,8 +563,8 @@ async def update_user_role(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="store_name is required when promoting a user to the merchant role.",
             )
-        merchant_check = await db.execute(select(Merchant).where(Merchant.user_id == target_user.id))
-        if not merchant_check.scalars().first():
+        existing_merchant = (await db.execute(select(Merchant).where(Merchant.user_id == target_user.id))).scalars().first()
+        if not existing_merchant:
             new_merchant = Merchant(
                 user_id=target_user.id,
                 name=payload.store_name.strip(),
@@ -491,7 +574,6 @@ async def update_user_role(
             db.add(new_merchant)
         else:
             # Update existing merchant record with supplied details
-            existing_merchant = merchant_check.scalars().first()
             if existing_merchant:
                 existing_merchant.name = payload.store_name.strip()
                 if payload.description:
@@ -806,7 +888,9 @@ async def get_customer_analytics(days: int = Query(default=30, ge=7, le=90), db:
 
 
 @app.post("/merchants")
-async def create_merchant(merchant_data: MerchantCreate, db: AsyncSession = Depends(get_db)):
+async def create_merchant(merchant_data: MerchantCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required.")
     user_check = await db.get(User, merchant_data.user_id)
     if not user_check:
         raise HTTPException(status_code=404, detail="Associated User ID not found.")
@@ -943,7 +1027,13 @@ async def delete_menu_item(
     merchant = await db.get(Merchant, item.merchant_id)
     if current_user.role != "admin" and (current_user.role != "merchant" or merchant.user_id != current_user.id):
         raise HTTPException(status_code=403, detail="Access denied.")
-    
+
+    used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
+    if used:
+        # Past orders point at this item; deleting it would break receipts and sales history.
+        item.is_available = False
+        await db.commit()
+        return {"message": "This item has past orders, so it was hidden instead of deleted.", "hidden": True}
     try:
         await db.delete(item)
         await db.commit()
@@ -968,9 +1058,12 @@ async def create_pickup_slot(
     if current_user.role != "admin" and (current_user.role != "merchant" or merchant.user_id != current_user.id):
         raise HTTPException(status_code=403, detail="Access denied.")
 
+    when = as_malaysia_time(slot_data.time_slot)
+    if when < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Pickup time must be in the future.")
     new_slot = PickupSlot(
         merchant_id=merchant_id,
-        time_slot=slot_data.time_slot,
+        time_slot=when,
         max_capacity=slot_data.max_capacity
     )
     db.add(new_slot)
@@ -986,7 +1079,8 @@ async def create_pickup_slot(
 # --- PUBLIC: List Pickup Slots ---
 @app.get("/merchants/{merchant_id}/pickup-slots")
 async def list_pickup_slots(merchant_id: UUID, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(PickupSlot).where(PickupSlot.merchant_id == merchant_id))
+    await expire_stale_drafts(db)
+    result = await db.execute(select(PickupSlot).where(PickupSlot.merchant_id == merchant_id).order_by(PickupSlot.time_slot))
     return result.scalars().all()
 
 
@@ -1004,7 +1098,9 @@ async def delete_pickup_slot(
     merchant = await db.get(Merchant, slot.merchant_id)
     if current_user.role != "admin" and (current_user.role != "merchant" or merchant.user_id != current_user.id):
         raise HTTPException(status_code=403, detail="Access denied.")
-    
+    has_orders = (await db.execute(select(func.count(Order.id)).where(Order.pickup_slot_id == slot.id))).scalar_one()
+    if has_orders:
+        raise HTTPException(status_code=400, detail="This pickup slot already has orders, so it can't be deleted.")
     try:
         await db.delete(slot)
         await db.commit()
@@ -1054,11 +1150,20 @@ async def create_order(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    slot = await db.get(PickupSlot, order_data.pickup_slot_id)
+    merchant = await db.get(Merchant, order_data.merchant_id)
+    if not merchant or merchant.is_active is False:
+        raise HTTPException(status_code=400, detail="This stall is not taking orders right now.")
+    await expire_stale_drafts(db)
+    # Lock the slot row so two customers can't both take the last place.
+    slot = (await db.execute(
+        select(PickupSlot).where(PickupSlot.id == order_data.pickup_slot_id).with_for_update()
+    )).scalars().first()
     if not slot:
         raise HTTPException(status_code=404, detail="Pickup slot not found.")
     if slot.merchant_id != order_data.merchant_id:
         raise HTTPException(status_code=400, detail="Pickup slot does not belong to this merchant.")
+    if slot.time_slot < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="This pickup time has already passed.")
     if slot.current_bookings >= slot.max_capacity:
         raise HTTPException(status_code=400, detail="This pickup slot is fully booked.")
 
@@ -1070,14 +1175,16 @@ async def create_order(
             raise HTTPException(status_code=404, detail=f"Menu item {line.menu_item_id} not found.")
         if item.merchant_id != order_data.merchant_id:
             raise HTTPException(status_code=400, detail="Menu item does not belong to this merchant.")
-        if not item.is_available:
+        if not item.is_available or item.approval_status == "rejected" or float(item.price) <= 0:
             raise HTTPException(status_code=400, detail=f"'{item.name}' is currently unavailable.")
         line_total = float(item.price) * line.quantity
         total_price += line_total
         instructions = line.special_instructions.strip() if line.special_instructions else None
         line_items.append((item, line.quantity, instructions or None))
 
-    order_number = f"#EX-{datetime.now().strftime('%H%M%S')}"
+    order_number = new_order_number()
+    while (await db.execute(select(Order.id).where(Order.order_number == order_number))).first():
+        order_number = new_order_number()
 
     new_order = Order(
         customer_id=current_user.id,
@@ -1085,7 +1192,7 @@ async def create_order(
         pickup_slot_id=order_data.pickup_slot_id,
         order_number=order_number,
         status="draft", # <--- UPDATED: Initial state is draft so merchant is not notified yet
-        total_price=total_price,
+        total_price=round(total_price, 2),
         transaction_ref=None
     )
     db.add(new_order)
@@ -1121,11 +1228,11 @@ async def submit_order_receipt(
         raise HTTPException(status_code=404, detail="Order not found.")
     if order.customer_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied. You do not own this order.")
+    if order.status not in ("draft", "pending_verification", "pending"):
+        raise HTTPException(status_code=400, detail="This order has already been checked by the stall, so the receipt can't be changed.")
 
-    # Upload directly to Supabase Storage bucket for permanent cloud storage
-    public_url = await upload_to_supabase(receipt_file)
-
-    order.transaction_ref = public_url
+    # Receipts go to a PRIVATE bucket; the customer, the stall and admins get short-lived links.
+    order.transaction_ref = await upload_to_supabase(receipt_file, private=True)
     order.status = "pending_verification" # <--- UPDATED: Transitions status from draft to pending_verification
 
     try:
@@ -1135,7 +1242,7 @@ async def submit_order_receipt(
             "message": "Payment receipt screenshot submitted successfully.",
             "order_number": order.order_number,
             "status": order.status,
-            "receipt_url": order.transaction_ref
+            "receipt_url": receipt_link(order.transaction_ref)
         }
     except Exception as e:
         await db.rollback()
@@ -1143,7 +1250,7 @@ async def submit_order_receipt(
 
 
 @app.get("/orders/{order_id}")
-async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     result = await db.execute(
         select(Order)
         .where(Order.id == order_id)
@@ -1152,7 +1259,14 @@ async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
     order = result.scalars().first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
-    
+    allowed = order.customer_id == current_user.id or current_user.role == "admin"
+    if not allowed:
+        owner = await db.get(Merchant, order.merchant_id)
+        allowed = owner is not None and owner.user_id == current_user.id
+    if not allowed:
+        # Same answer as "not found" so order IDs can't be probed.
+        raise HTTPException(status_code=404, detail="Order not found.")
+
     items_data = [
         {
             "id": str(item.id),
@@ -1170,7 +1284,8 @@ async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
         "status": order.status,
         "total_price": float(order.total_price),
         "created_at": order.created_at.isoformat() if order.created_at else None,
-        "transaction_ref": getattr(order, "transaction_ref", None), # Added so frontend can check transaction_ref
+        "order_number": order.order_number,
+        "transaction_ref": receipt_link(order.transaction_ref),
         "items": items_data
     }
 
@@ -1247,7 +1362,7 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
             "status": order.status,
             "total_price": float(order.total_price),
             "created_at": order.created_at.isoformat() if order.created_at else None,
-            "transaction_ref": getattr(order, "transaction_ref", None),
+            "transaction_ref": receipt_link(order.transaction_ref),
             "order_number": getattr(order, "order_number", None),
             "items": items_data
         })
@@ -1258,77 +1373,69 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
 async def update_order_status(
     order_id: UUID,
     status_update: OrderStatusUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    order = await db.get(Order, order_id)
+    result = await db.execute(
+        select(Order).where(Order.id == order_id).options(
+            selectinload(Order.customer),
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+        )
+    )
+    order = result.scalars().first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
 
     if current_user.role != "merchant":
         raise HTTPException(status_code=403, detail="Only merchants can update order status.")
-    merchant_result = await db.execute(
-        select(Merchant).where(
-            Merchant.id == order.merchant_id,
-            Merchant.user_id == current_user.id,
-        )
-    )
-    merchant = merchant_result.scalars().first()
+    merchant = (await db.execute(
+        select(Merchant).where(Merchant.id == order.merchant_id, Merchant.user_id == current_user.id)
+    )).scalars().first()
     if not merchant:
         raise HTTPException(status_code=403, detail="You can only update orders for your own merchant account.")
-    
-    order.status = status_update.status
-    try:
-        await db.commit()
 
-        # ── Send "food is ready" email when merchant marks order ready ──
-        if status_update.status == "ready":
-            try:
-                full_order = await db.execute(
-                    select(Order)
-                    .where(Order.id == order_id)
-                    .options(
-                        selectinload(Order.customer),
-                        selectinload(Order.items).selectinload(OrderItem.menu_item),
-                    )
-                )
-                full_order = full_order.scalars().first()
-                slot = await db.get(PickupSlot, order.pickup_slot_id) if order.pickup_slot_id else None
-                pickup_time = (
-                    slot.time_slot.strftime("%I:%M %p") if slot else "your scheduled slot"
-                )
-                items_for_email = [
-                    {
-                        "name": oi.menu_item.name if oi.menu_item else "Item",
-                        "quantity": oi.quantity,
-                        "price": float(oi.price_at_order),
-                        "special_instructions": oi.special_instructions,
-                    }
-                    for oi in full_order.items
-                ]
-                send_order_ready_email(
-                    customer_email=full_order.customer.email,
-                    customer_name=full_order.customer.name,
-                    order_number=order.order_number or str(order.id)[:8].upper(),
-                    merchant_name=merchant.name,
-                    merchant_location=merchant.location or "Campus Stall",
-                    pickup_time=pickup_time,
-                    items=items_for_email,
-                    total_price=float(order.total_price),
-                )
-            except Exception as email_err:
-                # Email failure must NOT roll back the status update
-                logger.warning("Order-ready email failed for order %s: %s", order_id, email_err)
+    new_status = status_update.status
+    if order.status == "draft":
+        raise HTTPException(status_code=400, detail="The customer hasn't uploaded a payment receipt yet.")
+    if new_status not in ORDER_TRANSITIONS.get(order.status, set()):
+        raise HTTPException(status_code=400, detail=f"An order that is '{order.status}' can't be changed to '{new_status}'.")
 
-        await db.refresh(order)
-        return {
-            "message": "Order status updated successfully",
-            "order_id": str(order.id),
-            "new_status": order.status
-        }
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+    order.status = new_status
+    if new_status == "rejected":
+        await release_slot(order, db)
+    await db.commit()
+
+    customer = order.customer
+    if new_status == "ready" and customer and customer.email and not customer.email.endswith("@" + DELETED_EMAIL_DOMAIN):
+        slot = await db.get(PickupSlot, order.pickup_slot_id) if order.pickup_slot_id else None
+        pickup_time = slot.time_slot.astimezone(MALAYSIA_TZ).strftime("%I:%M %p") if slot else "your scheduled slot"
+        # Runs after the response is sent (in a worker thread), so slow SMTP never holds up the stall's screen.
+        background_tasks.add_task(
+            send_order_ready_email,
+            customer_email=customer.email,
+            customer_name=customer.name,
+            order_number=order.order_number or str(order.id)[:8].upper(),
+            merchant_name=merchant.name,
+            merchant_location=merchant.location or "Campus Stall",
+            pickup_time=pickup_time,
+            items=[
+                {
+                    "name": oi.menu_item.name if oi.menu_item else "Item",
+                    "quantity": oi.quantity,
+                    "price": float(oi.price_at_order),
+                    "special_instructions": oi.special_instructions,
+                }
+                for oi in order.items
+            ],
+            total_price=float(order.total_price),
+        )
+
+    return {
+        "message": "Order status updated successfully",
+        "order_id": str(order.id),
+        "new_status": order.status
+    }
 
 
 # --- ADMIN USERS ---
@@ -1716,8 +1823,18 @@ async def admin_delete_merchant(
     merchant = await db.get(Merchant, merchant_id)
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found.")
+    has_orders = (await db.execute(select(func.count(Order.id)).where(Order.merchant_id == merchant_id))).scalar_one()
+    if has_orders:
+        # Orders point at this stall; keep it for sales history but take it off the marketplace.
+        merchant.is_active = False
+        await db.execute(update(MenuItem).where(MenuItem.merchant_id == merchant_id).values(is_available=False))
+        await db.execute(EventMerchant.__table__.delete().where(EventMerchant.merchant_id == merchant_id))
+        await db.commit()
+        return {"message": "This stall has past orders, so it was deactivated and hidden instead of deleted."}
     try:
         await db.execute(EventMerchant.__table__.delete().where(EventMerchant.merchant_id == merchant_id))
+        await db.execute(MenuItem.__table__.delete().where(MenuItem.merchant_id == merchant_id))
+        await db.execute(PickupSlot.__table__.delete().where(PickupSlot.merchant_id == merchant_id))
         await db.delete(merchant)
         await db.commit()
         return {"message": "Merchant deleted successfully."}
@@ -1738,7 +1855,7 @@ async def admin_approve_menu_item(
     item = await db.get(MenuItem, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Menu item not found.")
-    setattr(item, "approval_status", payload.approval_status)
+    item.approval_status = payload.approval_status
     item.is_available = payload.approval_status == "approved"
     try:
         await db.commit()
@@ -1760,6 +1877,11 @@ async def admin_delete_menu_item(
     item = await db.get(MenuItem, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Menu item not found.")
+    used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
+    if used:
+        item.is_available = False
+        await db.commit()
+        return {"message": "This item has past orders, so it was hidden instead of deleted.", "hidden": True}
     try:
         await db.delete(item)
         await db.commit()
@@ -1780,6 +1902,9 @@ async def admin_delete_pickup_slot(
     slot = await db.get(PickupSlot, slot_id)
     if not slot:
         raise HTTPException(status_code=404, detail="Pickup slot not found.")
+    has_orders = (await db.execute(select(func.count(Order.id)).where(Order.pickup_slot_id == slot.id))).scalar_one()
+    if has_orders:
+        raise HTTPException(status_code=400, detail="This pickup slot already has orders, so it can't be deleted.")
     try:
         await db.delete(slot)
         await db.commit()

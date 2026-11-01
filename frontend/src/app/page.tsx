@@ -4,7 +4,7 @@
 //
 // Features:
 //  • Mobile-first, responsive, compact UI with warm PayNet brand colours.
-//  • Header with Payvolution logo, Boulevard Rentals, and user Profile.
+//  • Header with Payvolution logo and user Profile.
 //  • Animated jumping profile avatar & toast banner when items are added to cart.
 //  • Payvolution Events interactive promo section.
 //  • Tab-based AI & Smart Recommendation Widget (Hot Deals, Rahmah RM5, etc.).
@@ -795,7 +795,7 @@ export default function Home() {
                     </label>
                     {(() => {
                       // Customers only see slots that aren't full yet
-                      const availableSlots = pickupSlots.filter(s => s.current_bookings < s.max_capacity);
+                      const availableSlots = pickupSlots.filter(s => s.current_bookings < s.max_capacity && new Date(s.time_slot).getTime() > Date.now());
                       if (availableSlots.length === 0) return <p className="text-xs text-red-600">No pickup slots available right now.</p>;
                       return (
                         <select
