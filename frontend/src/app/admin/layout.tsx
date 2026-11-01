@@ -8,6 +8,7 @@ import Link from "next/link";
 const NAV_ITEMS = [
   { href: "/admin/users", label: "Users", icon: "👥", description: "Manage all platform accounts" },
   { href: "/admin/merchants", label: "Vendors", icon: "🏪", description: "Stalls, menus, slots & QR" },
+  { href: "/admin/events", label: "Events", icon: "🎉", description: "Campus events & announcements" },
   { href: "/admin/analytics", label: "Analytics", icon: "📊", description: "Orders & revenue insights" },
 ];
 
