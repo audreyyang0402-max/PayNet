@@ -42,7 +42,7 @@ def _send_via_gmail(to_email: str, subject: str, html: str) -> bool:
         msg["To"]      = to_email
         msg.attach(MIMEText(html, "html"))
 
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:  # a blocked port fails in 15 s instead of hanging
             server.ehlo()
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
@@ -69,6 +69,13 @@ def send_order_ready_email(
     Send a 'Your food is ready!' email to the customer.
     Returns True on success, False on failure (order status update still proceeds).
     """
+    # Names, store details and order numbers can be typed by users, so escape them before they go into HTML.
+    customer_name = escape(customer_name or "there")
+    merchant_name = escape(merchant_name or "")
+    merchant_location = escape(merchant_location or "")
+    order_number = escape(order_number or "")
+    pickup_time = escape(pickup_time or "")
+
     # Build item rows
     item_rows = "".join(
         f"""

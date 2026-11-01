@@ -113,45 +113,68 @@ def public_menu_item(item: MenuItem) -> dict:
         "created_at": item.created_at,
     }
 
-async def upload_to_supabase(file: UploadFile) -> str:
-    """Helper function to upload files directly to Supabase Storage and return the public URL safely."""
+PUBLIC_BUCKET = os.getenv("SUPABASE_PUBLIC_BUCKET", "uploads")      # QR codes, menu photos, banners: meant to be public
+RECEIPT_BUCKET = os.getenv("SUPABASE_RECEIPT_BUCKET", "receipts")   # payment receipts: PRIVATE bucket, signed links only
+RECEIPT_LINK_SECONDS = 60 * 60
+
+
+def detect_image(data: bytes):
+    """Decide the image type from the file's first bytes, never from the filename or the browser's claim."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png", "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpg", "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp", "image/webp"
+    return None
+
+
+async def upload_to_supabase(file: UploadFile, private: bool = False) -> str:
+    """Validate an image and store it. Public uploads return a public URL; private ones return a storage path."""
     if not supabase:
         raise HTTPException(status_code=500, detail="Supabase Storage client is not configured on the backend.")
+    file_bytes = await file.read(MAX_IMAGE_BYTES + 1)
+    if len(file_bytes) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image must be 5 MB or smaller.")
+    detected = detect_image(file_bytes)
+    if not detected:
+        raise HTTPException(status_code=400, detail="Only JPG, PNG, and WebP images are supported.")
+    ext, content_type = detected
+    bucket = RECEIPT_BUCKET if private else PUBLIC_BUCKET
+    file_path = f"images/{secrets.token_hex(12)}.{ext}"
     try:
-        if file.content_type not in ALLOWED_IMAGE_CONTENT_TYPES:
-            raise HTTPException(status_code=400, detail="Only JPG, PNG, and WebP images are supported.")
-
-        file_bytes = await file.read(MAX_IMAGE_BYTES + 1)
-        if len(file_bytes) > MAX_IMAGE_BYTES:
-            raise HTTPException(status_code=413, detail="Image must be 5 MB or smaller.")
-        file_ext = file.filename.split(".")[-1] if file.filename and "." in file.filename else "png"
-        file_name = f"{os.urandom(12).hex()}.{file_ext}"
-        file_path = f"images/{file_name}"
-
-        # Upload bytes to Supabase Storage bucket named 'uploads' with upsert enabled
-        response = supabase.storage.from_("uploads").upload(
-            path=file_path,
-            file=file_bytes,
-            file_options={"content-type": file.content_type or "image/png", "upsert": "true"}
-        )
-
-        # Get the public URL safely handling both string and dictionary returns
-        public_url_res = supabase.storage.from_("uploads").get_public_url(file_path)
-        
-        if isinstance(public_url_res, dict):
-            public_url = public_url_res.get("publicUrl") or public_url_res.get("data", {}).get("publicUrl")
-        else:
-            public_url = str(public_url_res)
-
+        supabase.storage.from_(bucket).upload(path=file_path, file=file_bytes, file_options={"content-type": content_type})
+        if private:
+            return file_path
+        public_url = supabase.storage.from_(bucket).get_public_url(file_path)
+        if isinstance(public_url, dict):
+            public_url = public_url.get("publicUrl") or public_url.get("data", {}).get("publicUrl")
         if not public_url:
             raise HTTPException(status_code=500, detail="Failed to generate public URL from Supabase.")
-
-        return public_url
+        return str(public_url)
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"CRITICAL SUPABASE UPLOAD ERROR: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Supabase upload failed: {str(e)}")
+    except Exception:
+        logger.exception("Supabase storage upload failed")
+        raise HTTPException(status_code=502, detail="Could not store the image. Please try again.")
+
+
+def receipt_link(stored: Optional[str]) -> Optional[str]:
+    """Old rows hold full public URLs; new rows hold a private path that gets a 1-hour signed link."""
+    if not stored:
+        return None
+    if stored.startswith("http") or not supabase:
+        return stored if stored.startswith("http") else None
+    try:
+        signed = supabase.storage.from_(RECEIPT_BUCKET).create_signed_url(stored, RECEIPT_LINK_SECONDS)
+        if isinstance(signed, dict):
+            return signed.get("signedURL") or signed.get("signedUrl")
+        return str(signed)
+    except Exception:
+        logger.exception("Could not sign receipt link")
+        return None
+
+
 
 
 # --- BULLETPROOF CORS CONFIGURATION ---
@@ -806,7 +829,9 @@ async def get_customer_analytics(days: int = Query(default=30, ge=7, le=90), db:
 
 
 @app.post("/merchants")
-async def create_merchant(merchant_data: MerchantCreate, db: AsyncSession = Depends(get_db)):
+async def create_merchant(merchant_data: MerchantCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required.")
     user_check = await db.get(User, merchant_data.user_id)
     if not user_check:
         raise HTTPException(status_code=404, detail="Associated User ID not found.")
@@ -1122,10 +1147,8 @@ async def submit_order_receipt(
     if order.customer_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied. You do not own this order.")
 
-    # Upload directly to Supabase Storage bucket for permanent cloud storage
-    public_url = await upload_to_supabase(receipt_file)
-
-    order.transaction_ref = public_url
+    # Receipts go to a PRIVATE bucket; the customer, the stall and admins get short-lived links.
+    order.transaction_ref = await upload_to_supabase(receipt_file, private=True)
     order.status = "pending_verification" # <--- UPDATED: Transitions status from draft to pending_verification
 
     try:
@@ -1135,7 +1158,7 @@ async def submit_order_receipt(
             "message": "Payment receipt screenshot submitted successfully.",
             "order_number": order.order_number,
             "status": order.status,
-            "receipt_url": order.transaction_ref
+            "receipt_url": receipt_link(order.transaction_ref)
         }
     except Exception as e:
         await db.rollback()
@@ -1143,7 +1166,7 @@ async def submit_order_receipt(
 
 
 @app.get("/orders/{order_id}")
-async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     result = await db.execute(
         select(Order)
         .where(Order.id == order_id)
@@ -1152,7 +1175,14 @@ async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
     order = result.scalars().first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
-    
+    allowed = order.customer_id == current_user.id or current_user.role == "admin"
+    if not allowed:
+        owner = await db.get(Merchant, order.merchant_id)
+        allowed = owner is not None and owner.user_id == current_user.id
+    if not allowed:
+        # Same answer as "not found" so order IDs can't be probed.
+        raise HTTPException(status_code=404, detail="Order not found.")
+
     items_data = [
         {
             "id": str(item.id),
@@ -1170,7 +1200,8 @@ async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db)):
         "status": order.status,
         "total_price": float(order.total_price),
         "created_at": order.created_at.isoformat() if order.created_at else None,
-        "transaction_ref": getattr(order, "transaction_ref", None), # Added so frontend can check transaction_ref
+        "order_number": order.order_number,
+        "transaction_ref": receipt_link(order.transaction_ref),
         "items": items_data
     }
 
@@ -1247,7 +1278,7 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
             "status": order.status,
             "total_price": float(order.total_price),
             "created_at": order.created_at.isoformat() if order.created_at else None,
-            "transaction_ref": getattr(order, "transaction_ref", None),
+            "transaction_ref": receipt_link(order.transaction_ref),
             "order_number": getattr(order, "order_number", None),
             "items": items_data
         })
