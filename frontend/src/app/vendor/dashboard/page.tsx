@@ -59,6 +59,10 @@ export default function MerchantDashboard() {
   const [orderError, setOrderError] = useState("");
   const seenOrders = useRef<Set<string> | null>(null);
 
+  // Slot summary for tab label badge
+  const [slotBookings, setSlotBookings] = useState(0);
+  const [slotCapacity, setSlotCapacity] = useState(0);
+
   const playNotificationSound = () => {
     try {
       const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
@@ -135,9 +139,6 @@ export default function MerchantDashboard() {
         if (!profileRes.ok) throw new Error("Could not load merchant profile.");
         const profileData = await profileRes.json();
 
-        // These three resources are independent once the merchant profile is
-        // known, so load them together instead of waiting for each request.
-        // (Boulevard rentals were removed from the backend, so their bookings call is gone too.)
         const [userRes, ordersRes] = await Promise.all([
           fetch(`${BACKEND_URL}/auth/me`, { headers: { Authorization: `Bearer ${token}` } }),
           fetch(`${BACKEND_URL}/merchants/${profileData.id}/orders`, { headers: { Authorization: `Bearer ${token}` } }),
@@ -276,7 +277,7 @@ export default function MerchantDashboard() {
             <button onClick={handleLogout} className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700">Log Out</button>
           </div>
 
-          {/* Nav tabs: Overview, Store Profile, Manage Orders, Menu, Pickup Slots, Payment Setup */}
+          {/* Nav tabs */}
           <nav aria-label="Merchant portal" className="grid grid-cols-2 gap-2 border-t border-stone-100 pt-4 text-center sm:flex sm:flex-wrap sm:justify-center">
             {(["analytics", "profile", "orders", "menu", "slots", "payment"] as Tab[]).map(t => (
               <button
@@ -285,7 +286,11 @@ export default function MerchantDashboard() {
                 onClick={() => setTab(t)}
                 className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors ${tab === t ? "bg-orange-700 text-white" : "bg-orange-50 text-orange-900 hover:bg-orange-100"}`}
               >
-                {TAB_LABELS[t]}{t === "orders" ? ` (${activeOrderCount})` : ""}
+                {t === "orders"
+                  ? `${TAB_LABELS[t]} (${activeOrderCount})`
+                  : t === "slots" && slotCapacity > 0
+                  ? `${TAB_LABELS[t]} (${slotBookings}/${slotCapacity})`
+                  : TAB_LABELS[t]}
               </button>
             ))}
           </nav>
@@ -346,7 +351,15 @@ export default function MerchantDashboard() {
 
         {tab === "analytics" && <AnalyticsDashboard audience="merchant" embedded />}
         {tab === "menu" && <MerchantMenuManager embedded />}
-        {tab === "slots" && merchant?.id && <MerchantPickupSlots merchantId={merchant.id} />}
+        {tab === "slots" && merchant?.id && (
+          <MerchantPickupSlots
+            merchantId={merchant.id}
+            onSlotsChange={(booked, capacity) => {
+              setSlotBookings(booked);
+              setSlotCapacity(capacity);
+            }}
+          />
+        )}
 
         {tab === "payment" && (
           <div className="bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-6 rounded-2xl shadow-sm border border-indigo-200">
