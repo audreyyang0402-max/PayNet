@@ -1,38 +1,16 @@
 # backend/cleanup.py
-import asyncio
-from sqlalchemy import text
-from database import AsyncSessionLocal 
+#
+# DISABLED. This script used to wipe almost every order, merchant, pickup
+# slot and menu item in the database down to a single hardcoded store ID.
+# It is a leftover dev/testing tool, not part of the live app — nothing in
+# main.py imports it, schedules it, or calls it. It has been neutralized so
+# that even running it by accident does nothing destructive.
+#
+# If a one-off cleanup of test data is ever needed again, write a fresh
+# script scoped exactly to what you want removed — don't re-enable this one.
 
-# The exact ID of the Subway that has your Chicken Katsu Sando
-GOOD_STORE_ID = "49741a94-14a1-4b69-92aa-11323b0d4957"
-
-async def clean_house():
-    async with AsyncSessionLocal() as db:
-        try:
-            # 1. Nuke test orders and order items
-            try:
-                await db.execute(text("DELETE FROM order_items"))
-                await db.execute(text("DELETE FROM orders"))
-            except Exception:
-                pass 
-                
-            # 2. Delete pickup slots linked to the bad merchants! (The missing piece)
-            try:
-                await db.execute(text("DELETE FROM pickup_slots WHERE merchant_id != :good_id"), {"good_id": GOOD_STORE_ID})
-            except Exception:
-                pass
-
-            # 3. Delete the bad menu items
-            await db.execute(text("DELETE FROM menu_items WHERE merchant_id != :good_id"), {"good_id": GOOD_STORE_ID})
-            
-            # 4. Finally, delete the bad merchants
-            await db.execute(text("DELETE FROM merchants WHERE id != :good_id"), {"good_id": GOOD_STORE_ID})
-            
-            await db.commit()
-            print("🧹 Cleaned house! Nuked the pickup slots, test orders, and duplicate stores.")
-        except Exception as e:
-            print(f"Error during cleanup: {e}")
-            await db.rollback()
+def clean_house():
+    print("This script has been disabled for safety. It used to delete most of the database. Write a new, narrowly-scoped script instead of re-enabling this one.")
 
 if __name__ == "__main__":
-    asyncio.run(clean_house())
+    clean_house()

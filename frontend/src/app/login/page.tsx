@@ -5,6 +5,7 @@ import { BACKEND_URL } from "@/lib/backend-url";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { markAdminSessionStart } from "@/lib/admin-session";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -43,6 +44,7 @@ export default function LoginPage() {
 
       // Everyone logs in here — system routes them to the right dashboard
       if (data.role === "admin") {
+        markAdminSessionStart();
         router.push("/admin/users");
       } else if (data.role === "merchant") {
         router.push("/vendor/dashboard");

@@ -105,6 +105,26 @@ export default function OrderReceiptPage() {
               </div>
             )}
 
+            {/* Rejected-order banner: explains why and points to a fresh order */}
+            {data.status === "rejected" && (
+              <div className="rounded-2xl bg-red-50 border border-red-200 px-5 py-4 text-center space-y-3">
+                <p className="text-sm font-semibold text-red-800">
+                  This order was rejected — the stall could not verify your payment receipt.
+                </p>
+                <p className="text-xs text-red-600">
+                  Your pickup slot has been released. Please place a new order and upload a clear, matching payment receipt.
+                </p>
+                {data.merchant_id && (
+                  <Link
+                    href={`/merchants/${data.merchant_id}`}
+                    className="inline-block rounded-xl bg-red-700 px-4 py-2 text-xs font-bold text-white hover:bg-red-800 transition"
+                  >
+                    Order again from this stall →
+                  </Link>
+                )}
+              </div>
+            )}
+
             {/* Header card */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 space-y-5">
               <div className="flex justify-between items-start border-b border-gray-100 pb-5">

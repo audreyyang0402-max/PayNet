@@ -292,6 +292,7 @@ export default function AdminMerchants() {
                 <img
                   src={merchant.duitnow_qr_url.startsWith("http") ? merchant.duitnow_qr_url : `${BACKEND_URL}${merchant.duitnow_qr_url}`}
                   alt={`DuitNow QR – ${merchant.name}`}
+                  loading="lazy"
                   className="h-36 rounded-xl border border-orange-100 bg-white p-2 object-contain hover:shadow-md transition" />
               </a>
             </div>
@@ -319,7 +320,7 @@ export default function AdminMerchants() {
                     {item.image_url ? (
                       <img
                         src={item.image_url.startsWith("/") ? `${BACKEND_URL}${item.image_url}` : item.image_url}
-                        alt={item.name} className="h-24 w-full object-cover" />
+                        alt={item.name} loading="lazy" className="h-24 w-full object-cover" />
                     ) : (
                       <div className="h-14 bg-gradient-to-br from-orange-50 to-stone-100 flex items-center justify-center text-2xl">🍽️</div>
                     )}
@@ -408,6 +409,7 @@ export default function AdminMerchants() {
                           <img
                             src={o.transaction_ref}
                             alt="Payment receipt"
+                            loading="lazy"
                             className="h-28 w-auto rounded-lg border border-stone-200 bg-white object-contain hover:shadow-md transition"
                           />
                         </a>

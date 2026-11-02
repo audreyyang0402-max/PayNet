@@ -9,6 +9,7 @@ import AnalyticsDashboard from "@/components/AnalyticsDashboard";
 import DeleteAccountButton from "@/components/DeleteAccountButton";
 import { MerchantMenuManager } from "@/components/MerchantMenuManager";
 import MerchantPickupSlots from "@/components/MerchantPickupSlots";
+import ChangePasswordButton from "@/components/ChangePasswordButton";
 
 interface MerchantProfile {
   id: string;
@@ -357,10 +358,7 @@ export default function MerchantDashboard() {
                   className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer">
                   Save Changes
                 </button>
-                <a href="/forgot-password"
-                  className="text-sm font-semibold text-orange-700 hover:underline">
-                  Change Password With An Email Code
-                </a>
+                <ChangePasswordButton />
               </div>
             </form>
           )}
@@ -448,7 +446,7 @@ export default function MerchantDashboard() {
                         <a href={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`} target="_blank" rel="noopener noreferrer">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`}
-                            alt="Payment Receipt Screenshot" className="w-32 h-32 object-cover rounded-lg border hover:opacity-90 transition cursor-pointer" />
+                            alt="Payment Receipt Screenshot" loading="lazy" className="w-32 h-32 object-cover rounded-lg border hover:opacity-90 transition cursor-pointer" />
                         </a>
                         <p className="text-[10px] text-gray-400">Click image to view full size</p>
                       </div>

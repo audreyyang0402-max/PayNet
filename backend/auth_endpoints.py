@@ -122,3 +122,22 @@ async def delete_account(req, current_user, db):
     current_user.phone_number = None
     await db.commit()
     return {"message": "Account deleted successfully"}
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+async def change_password(req, current_user, db):
+    # Requires proof of the CURRENT password — unlike /auth/verify-code (purpose="reset"),
+    # which only proves control of an email and is meant for a logged-out recovery flow.
+    # Mixing the two let anyone with a borrowed, already-logged-in session change the
+    # account's password using an email of their own choosing. This endpoint is scoped
+    # strictly to the authenticated account and never touches email/OTP at all.
+    if not verify_password(req.current_password, current_user.password_hash):
+        raise HTTPException(400, "Current password is incorrect.")
+    validate_password(req.new_password)
+    current_user.password_hash = hash_password(req.new_password)
+    await db.commit()
+    return {"message": "Password changed successfully. Please log in again."}

@@ -48,6 +48,7 @@ from auth_endpoints import (
     send_verification,
     verify_code,
     delete_account, DeleteCodeRequest, send_delete_code,
+    ChangePasswordRequest, change_password,
 )
 
 
@@ -798,6 +799,15 @@ async def send_verification_endpoint(req: SendVerificationRequest, db: AsyncSess
 @app.post("/auth/verify-code")
 async def verify_code_endpoint(req: VerifyCodeRequest, db: AsyncSession = Depends(get_db)):
     return await verify_code(req, db)
+
+
+@app.post("/auth/change-password")
+async def change_password_endpoint(
+    req: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await change_password(req, current_user, db)
 
 
 @app.delete("/users/me/account")

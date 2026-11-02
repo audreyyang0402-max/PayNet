@@ -217,6 +217,7 @@ function FoodCard({
           <img
             src={imgSrc}
             alt={item.name}
+            loading="lazy"
             onError={() => onImageFail(item.id)}
             className="h-full w-full object-cover"
           />

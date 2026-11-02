@@ -4,6 +4,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { isAdminSessionLive, clearAdminSession } from "@/lib/admin-session";
 
 const NAV_ITEMS = [
   { href: "/admin/users", label: "Users", icon: "👥", description: "Manage all platform accounts" },
@@ -20,25 +21,46 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // Skip layout for the login page
   const isLoginPage = pathname === "/admin/login";
 
+  function forceLogout() {
+    clearAdminSession();
+    localStorage.removeItem("token");
+    localStorage.removeItem("userRole");
+    router.push("/admin/login");
+  }
+
+  // Admin sessions are deliberately short-lived: a real page reload always resets
+  // the in-memory marker below (see @/lib/admin-session), so even a technically
+  // still-valid token in localStorage won't get in past this check after a reload.
   useEffect(() => {
     if (isLoginPage) { setAuthed(true); return; }
     const role = localStorage.getItem("userRole");
     const token = localStorage.getItem("token");
     if (!token || role !== "admin") {
       router.push("/admin/login");
-    } else {
-      setAuthed(true);
+      return;
     }
-  }, [isLoginPage, router]);
+    if (!isAdminSessionLive()) {
+      forceLogout();
+      return;
+    }
+    setAuthed(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoginPage, pathname]);
+
+  // Hard 8-minute ceiling even if the admin never reloads or navigates again.
+  useEffect(() => {
+    if (isLoginPage) return;
+    const timer = setInterval(() => {
+      if (!isAdminSessionLive()) forceLogout();
+    }, 15000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoginPage]);
 
   if (!authed) return null;
   if (isLoginPage) return <>{children}</>;
 
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("userRole");
-    router.push("/admin/login");
-  };
+  const handleLogout = () => { forceLogout(); };
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">

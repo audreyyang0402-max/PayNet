@@ -983,6 +983,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
                       <img
                         src={item.image_url}
                         alt={item.name}
+                        loading="lazy"
                         className="h-full w-full object-cover"
                       />
                     ) : (

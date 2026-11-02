@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { BACKEND_URL } from "@/lib/backend-url";
 import CustomerSpendingDashboard from "@/components/CustomerSpendingDashboard";
 import DeleteAccountButton from "@/components/DeleteAccountButton";
+import ChangePasswordButton from "@/components/ChangePasswordButton";
 
 type User = { id: string; name: string; email: string; phone_number?: string; role: string };
 type Order = { id: string; status: string };
@@ -113,7 +114,7 @@ export default function ProfilePage() {
             {editing && <form className="mt-6 space-y-3 rounded-xl bg-stone-50 p-4" onSubmit={e => { e.preventDefault(); const next = draft.trim(); if (save({ photo, name: next, diets: preferences })) { setName(next); setEditing(false); } }}>
               <label className="block text-sm font-medium">Preferred name<input value={draft} maxLength={60} onChange={e => setDraft(e.target.value)} className="mt-1 w-full rounded-lg border border-stone-300 bg-white p-2" /></label>
               <p className="text-xs text-stone-500">Photo, preferred name and dietary preferences are saved for this account on this browser. Contact support to change registered details.</p>
-              <div className="flex flex-wrap items-center gap-3"><button className={button}>Save preferences</button><Link href="/forgot-password" className="text-sm text-orange-700 underline">Change password with email code</Link></div>
+              <div className="flex flex-wrap items-center gap-3"><button className={button}>Save preferences</button><ChangePasswordButton /></div>
             </form>}
           </div>
           <nav aria-label="Account pages" className="grid grid-cols-2 gap-3 border-t border-stone-100 p-5 sm:p-7">
