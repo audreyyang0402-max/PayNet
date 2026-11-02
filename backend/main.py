@@ -198,7 +198,7 @@ def receipt_link(stored: Optional[str]) -> Optional[str]:
 # --- ORDER RULES ---
 
 MALAYSIA_TZ = timezone(timedelta(hours=8))   # Malaysia has no daylight saving
-DRAFT_HOLD_MINUTES = 180                      # TEMPORARY: raised from 15 while Supabase Storage uploads are broken, so customers aren't auto-cancelled before we fix it
+DRAFT_HOLD_MINUTES = 15                       # an unpaid checkout keeps its pickup place this long
 
 # The only moves a stall may make. Drafts become pending_verification only when the customer uploads a receipt.
 ORDER_TRANSITIONS = {
@@ -1492,7 +1492,9 @@ async def list_all_users(db: AsyncSession = Depends(get_db), current_user: User 
             "email": u.email,
             "phone_number": u.phone_number or "N/A",
             "role": u.role,
-            "created_at": u.created_at.isoformat() if u.created_at else None
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "is_deleted": bool(u.is_deleted),
+            "deleted_at": u.deleted_at.isoformat() if u.deleted_at else None
         })
     return response_data
 
