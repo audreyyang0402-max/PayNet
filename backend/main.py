@@ -1,6 +1,7 @@
 import os
 import base64
 import binascii
+import io
 import logging
 import secrets
 from datetime import datetime, date, timedelta, timezone
@@ -26,6 +27,7 @@ from uuid import UUID
 
 # --- NEW SUPABASE STORAGE IMPORTS ---
 from supabase import create_client, Client
+from PIL import Image, ImageOps
 
 from database import engine, get_db
 from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem, Event, EventMerchant
@@ -150,7 +152,48 @@ def detect_image(data: bytes):
     return None
 
 
-async def upload_to_supabase(file: UploadFile, private: bool = False) -> str:
+DISPLAY_IMAGE_MAX_DIMENSION = 1280  # px on the longer side — plenty for thumbnails and detail views alike
+DISPLAY_IMAGE_JPEG_QUALITY = 82
+
+
+def compress_display_image(file_bytes: bytes, ext: str, content_type: str):
+    """
+    Shrink a food-photo / banner upload down to something fast to load on campus wifi.
+    Vendors often upload straight-from-phone photos (several MB, 4000px+ wide) that are
+    only ever shown in small cards — this resizes to a sane max dimension and re-encodes
+    at a reasonable quality so the marketplace stops shipping multi-megabyte thumbnails.
+    Never used for QR codes or payment receipts, which need to stay pixel-accurate.
+    """
+    try:
+        image = Image.open(io.BytesIO(file_bytes))
+        image = ImageOps.exif_transpose(image)  # bake in correct orientation, strip EXIF bloat
+
+        if image.width > DISPLAY_IMAGE_MAX_DIMENSION or image.height > DISPLAY_IMAGE_MAX_DIMENSION:
+            image.thumbnail((DISPLAY_IMAGE_MAX_DIMENSION, DISPLAY_IMAGE_MAX_DIMENSION), Image.LANCZOS)
+
+        has_alpha = image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info)
+        buffer = io.BytesIO()
+        if has_alpha:
+            image = image.convert("RGBA")
+            image.save(buffer, format="PNG", optimize=True)
+            new_ext, new_content_type = "png", "image/png"
+        else:
+            image = image.convert("RGB")
+            image.save(buffer, format="JPEG", quality=DISPLAY_IMAGE_JPEG_QUALITY, optimize=True)
+            new_ext, new_content_type = "jpg", "image/jpeg"
+
+        compressed = buffer.getvalue()
+        # Guard against the rare case a tiny/already-optimized image grows back — keep the smaller one.
+        if len(compressed) < len(file_bytes):
+            return compressed, new_ext, new_content_type
+        return file_bytes, ext, content_type
+    except Exception:
+        # Never let a photo-compression hiccup block the upload — fall back to the original file.
+        logger.exception("Image compression failed; storing the original file instead")
+        return file_bytes, ext, content_type
+
+
+async def upload_to_supabase(file: UploadFile, private: bool = False, optimize_for_display: bool = False) -> str:
     """Validate an image and store it. Public uploads return a public URL; private ones return a storage path."""
     if not supabase:
         raise HTTPException(status_code=500, detail="Supabase Storage client is not configured on the backend.")
@@ -161,6 +204,8 @@ async def upload_to_supabase(file: UploadFile, private: bool = False) -> str:
     if not detected:
         raise HTTPException(status_code=400, detail="Only JPG, PNG, and WebP images are supported.")
     ext, content_type = detected
+    if optimize_for_display and not private:
+        file_bytes, ext, content_type = compress_display_image(file_bytes, ext, content_type)
     bucket = RECEIPT_BUCKET if private else PUBLIC_BUCKET
     file_path = f"images/{secrets.token_hex(12)}.{ext}"
     try:
@@ -701,7 +746,7 @@ async def upload_menu_image(
     if current_user.role != "merchant":
         raise HTTPException(status_code=403, detail="Access denied. Merchant privileges required.")
 
-    public_url = await upload_to_supabase(image_file)
+    public_url = await upload_to_supabase(image_file, optimize_for_display=True)
     return {"image_url": public_url}
 
 
@@ -2145,7 +2190,7 @@ async def admin_upload_event_banner(
     event = await db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
-    public_url = await upload_to_supabase(banner_file)
+    public_url = await upload_to_supabase(banner_file, optimize_for_display=True)
     event.banner_image_url = public_url
     try:
         await db.commit()
