@@ -60,12 +60,14 @@ async def build_customer_analytics(db, customer_id, days):
     # Only this authenticated customer's lightweight order fields; no order-detail N+1 calls.
     rows = (await db.execute(select(Order.created_at, Order.status, Order.total_price).where(Order.customer_id == customer_id))).all()
     result = summarize(rows, days, now)
+    from analytics_statistics import daily_statistics
+    result['statistics'] = daily_statistics(result['daily'], 'spent')
     start = (now.astimezone(MYT) - timedelta(days=days-1)).replace(hour=0, minute=0, second=0, microsecond=0)
     items = await db.execute(select(MenuItem.id, MenuItem.name,
         func.sum(OrderItem.quantity).label("quantity"),
         func.sum(OrderItem.quantity * OrderItem.price_at_order).label("spent"))
         .join(OrderItem, OrderItem.menu_item_id == MenuItem.id).join(Order, Order.id == OrderItem.order_id)
         .where(Order.customer_id == customer_id, Order.status.in_(PAID), Order.created_at >= start, Order.created_at <= now)
-        .group_by(MenuItem.id, MenuItem.name).order_by(func.sum(OrderItem.quantity).desc(), MenuItem.name).limit(5))
+        .group_by(MenuItem.id, MenuItem.name).order_by(func.sum(OrderItem.quantity).desc(), MenuItem.name).limit(3))
     result["top_items"] = [{"id": str(r.id), "name": r.name, "quantity": int(r.quantity), "spent": float(r.spent)} for r in items]
     return result

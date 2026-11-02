@@ -816,6 +816,8 @@ async def delete_account_endpoint(req: DeleteAccountRequest, current_user: User 
 
 
 async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID | None = None, customer_id: UUID | None = None):
+    from customer_analytics import PAID
+    from analytics_statistics import daily_statistics
     now = datetime.now(timezone.utc)
     start = now.astimezone(timezone(timedelta(hours=8))).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days - 1)
     filters = [Order.created_at >= start, Order.created_at <= now]
@@ -828,11 +830,12 @@ async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID |
         select(
             func.count(Order.id),
             func.sum(case((Order.status == "completed", 1), else_=0)),
-            func.coalesce(func.sum(case((Order.status == "completed", Order.total_price), else_=0)), 0),
+            func.coalesce(func.sum(case((Order.status.in_(PAID), Order.total_price), else_=0)), 0),
             func.count(func.distinct(Order.customer_id)),
+            func.sum(case((Order.status.in_(PAID), 1), else_=0)),
         ).where(*filters)
     )
-    total_orders, completed_orders, revenue, customers = summary_result.one()
+    total_orders, completed_orders, revenue, customers, confirmed_orders = summary_result.one()
     active_filters = [Order.status.in_(["pending_verification", "pending", "preparing", "ready"])]
     if merchant_id is not None:
         active_filters.append(Order.merchant_id == merchant_id)
@@ -846,7 +849,7 @@ async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID |
         select(
             day_expr.label("day"),
             func.count(Order.id).label("orders"),
-            func.coalesce(func.sum(case((Order.status == "completed", Order.total_price), else_=0)), 0).label("revenue"),
+            func.coalesce(func.sum(case((Order.status.in_(PAID), Order.total_price), else_=0)), 0).label("revenue"),
         ).where(*filters).group_by(day_expr).order_by(day_expr)
     )
     trend_by_day = {
@@ -859,7 +862,7 @@ async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID |
         values = trend_by_day.get(day, {"orders": 0, "revenue": 0.0})
         trends.append({"date": day, **values})
 
-    item_filters = [Order.created_at >= start, Order.created_at <= now, Order.status == "completed"]
+    item_filters = [Order.created_at >= start, Order.created_at <= now, Order.status.in_(PAID)]
     if merchant_id is not None:
         item_filters.append(Order.merchant_id == merchant_id)
         item_filters.append(MenuItem.merchant_id == merchant_id)
@@ -871,26 +874,31 @@ async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID |
             MenuItem.name,
             func.sum(OrderItem.quantity).label("quantity"),
             func.sum(OrderItem.quantity * OrderItem.price_at_order).label("revenue"),
+            func.count(func.distinct(Order.id)).label("order_count"),
         ).join(OrderItem, OrderItem.menu_item_id == MenuItem.id)
         .join(Order, Order.id == OrderItem.order_id)
         .where(*item_filters).group_by(MenuItem.id, MenuItem.name)
-        .order_by(func.sum(OrderItem.quantity).desc()).limit(5)
+        .order_by(func.sum(OrderItem.quantity).desc(), MenuItem.id)
     )
     top_items = [
-        {"id": str(row.id), "name": row.name, "quantity": int(row.quantity), "revenue": round(float(row.revenue or 0), 2)}
+        {"id": str(row.id), "name": row.name, "quantity": int(row.quantity), "revenue": round(float(row.revenue or 0), 2), "order_count": int(row.order_count),
+         "order_share": round(100 * row.order_count / confirmed_orders, 1) if confirmed_orders else 0}
         for row in item_result
     ]
     return {
         "period_days": days,
+        "updated_at": now.isoformat(),
+        "statistics": daily_statistics(trends, "revenue"),
         "summary": {
             "total_revenue": round(float(revenue or 0), 2),
             "total_orders": int(total_orders or 0),
             "completed_orders": int(completed_orders or 0),
+            "confirmed_orders": int(confirmed_orders or 0),
             "active_orders": int(active_orders or 0),
             "customers": int(customers or 0),
         },
         "revenue_trend": trends,
-        "top_items": top_items,
+        "top_items": top_items[:3],
     }
 
 

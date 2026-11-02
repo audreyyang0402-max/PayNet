@@ -2,9 +2,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BACKEND_URL } from "@/lib/backend-url";
+import DailyStatistics, { type DailyStats } from "./DailyStatistics";
 
 type Spending = {
   updated_at: string;
+  statistics?: DailyStats;
   summary: { total_spent: number; today_spent: number; pending_amount: number; total_orders: number; active_orders: number; completed_orders: number; average_completed_order: number; daily_average: number; ordering_streak: number };
   daily: { date: string; spent: number; orders: number }[];
   top_items: { id: string; name: string; quantity: number; spent: number }[];
@@ -60,6 +62,7 @@ export default function CustomerSpendingDashboard() {
     <p className="text-xs text-stone-500" role="status">{data ? `Updated ${new Date(data.updated_at).toLocaleTimeString("en-MY", { timeZone: "Asia/Kuala_Lumpur" })} MYT · refreshes every 15 seconds while visible` : "Loading your spending…"}</p>
     {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
     {data && <>
+      <DailyStatistics stats={data.statistics} />
       <section className="grid gap-4 sm:grid-cols-2">
         <article className="rounded-2xl bg-[#263e35] p-6 text-white"><p className="text-sm text-white/75">Total spent · last {days} days</p><p className="mt-2 text-4xl font-semibold tracking-tight">{money(data.summary.total_spent)}</p><p className="mt-4 text-xs leading-relaxed text-white/70">Vendor-confirmed orders: preparing, ready and completed. Grouped by the date you placed the order.</p><p className="mt-3 border-t border-white/20 pt-3 text-sm">{money(data.summary.pending_amount)} awaiting payment verification</p></article>
         <article className="rounded-2xl border border-stone-200 bg-white p-6"><div className="flex items-baseline justify-between gap-2"><h2 className="font-semibold">Today’s spending</h2><span className="text-xl font-bold">{money(data.summary.today_spent)}</span></div>

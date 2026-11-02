@@ -4,24 +4,33 @@ import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import DailyStatistics, { type DailyStats } from "./DailyStatistics";
+import CustomerSpendingDashboard from "./CustomerSpendingDashboard";
 
 type Analytics = {
   period_days: number;
+  statistics?: DailyStats;
   summary: {
     total_revenue: number;
     total_orders: number;
     completed_orders: number;
+    confirmed_orders: number;
     active_orders: number;
     customers: number;
   };
   revenue_trend: { date: string; orders: number; revenue: number }[];
-  top_items: { id: string; name: string; quantity: number; revenue: number }[];
+  top_items: { id: string; name: string; quantity: number; revenue: number; order_count: number; order_share: number }[];
 };
 
 const API_URL = `${BACKEND_URL}`;
 const money = (amount: number) => `RM ${amount.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function AnalyticsDashboard({ audience, embedded = false }: { audience: "admin" | "merchant" | "customer"; embedded?: boolean }) {
+  if (audience === "customer") return <CustomerSpendingDashboard />;
+  return <SalesDashboard audience={audience} embedded={embedded} />;
+}
+
+function SalesDashboard({ audience, embedded = false }: { audience: string; embedded?: boolean }) {
   const router = useRouter();
   const [updatedAt, setUpdatedAt] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -72,7 +81,9 @@ export default function AnalyticsDashboard({ audience, embedded = false }: { aud
     }
     load();
     const timer = setInterval(() => { if (!document.hidden) load(); }, 15000);
-    return () => { cancelled = true; clearInterval(timer); };
+    const onVisible = () => { if (!document.hidden) load(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { cancelled = true; clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
   }, [days, isAdmin, isCustomer, loginPath, router, refreshKey]);
 
   const maxRevenue = Math.max(1, ...(data?.revenue_trend.map((point) => point.revenue) ?? [0]));
@@ -104,7 +115,7 @@ export default function AnalyticsDashboard({ audience, embedded = false }: { aud
             </div>
             <label className="text-sm font-medium text-slate-700">
               Date range
-              <select value={days} onChange={(event) => setDays(Number(event.target.value))} className="ml-3 rounded-lg border border-slate-300 bg-white px-3 py-2">
+              <select value={days} onChange={(event) => { setData(null); setLoading(true); setDays(Number(event.target.value)); }} className="ml-3 rounded-lg border border-slate-300 bg-white px-3 py-2">
                 <option value={7}>Last 7 days</option>
                 <option value={30}>Last 30 days</option>
                 <option value={90}>Last 90 days</option>
@@ -124,10 +135,10 @@ export default function AnalyticsDashboard({ audience, embedded = false }: { aud
               { label: "Active orders", value: data.summary.active_orders.toLocaleString(), detail: "Currently in progress" },
               { label: "Average completed order", value: money(data.summary.completed_orders ? data.summary.total_revenue / data.summary.completed_orders : 0), detail: "Completed orders only" },
             ] : [
-              { label: "Completed sales", value: money(data.summary.total_revenue), detail: `${data.summary.completed_orders} completed orders` },
+              { label: "Confirmed sales", value: money(data.summary.total_revenue), detail: `${data.summary.confirmed_orders} confirmed · ${data.summary.completed_orders} completed` },
               { label: "All orders", value: data.summary.total_orders.toLocaleString(), detail: `${data.summary.active_orders} active now` },
               { label: "Customers", value: data.summary.customers.toLocaleString(), detail: `In the last ${days} days` },
-              { label: "Average order", value: money(data.summary.completed_orders ? data.summary.total_revenue / data.summary.completed_orders : 0), detail: "Completed orders only" },
+              { label: "Average confirmed order", value: money(data.summary.confirmed_orders ? data.summary.total_revenue / data.summary.confirmed_orders : 0), detail: "Preparing, ready and completed" },
             ]).map((metric, index) => <article key={metric.label} className={`rounded-2xl border p-5 shadow-sm ${["border-orange-200 bg-orange-50", "border-sky-200 bg-sky-50", "border-violet-200 bg-violet-50", "border-rose-200 bg-rose-50"][index]}`}>
               <p className="text-sm font-medium text-slate-500">{metric.label}</p>
               <p className="mt-3 text-xl sm:text-2xl font-bold text-slate-900">{metric.value}</p>
@@ -135,10 +146,11 @@ export default function AnalyticsDashboard({ audience, embedded = false }: { aud
             </article>)}
           </section>
 
+          <DailyStatistics stats={data.statistics} merchant={!isAdmin} />
           <section className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
             <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div><h2 className="font-bold text-slate-900">{isCustomer ? "Daily spending" : "Daily revenue"}</h2><p className="mt-1 text-xs text-slate-500">Completed orders · MYR</p></div>
+                <div><h2 className="font-bold text-slate-900">Daily confirmed revenue</h2><p className="mt-1 text-xs text-slate-500">Vendor-confirmed orders · MYR · by order date</p></div>
                 <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">{days} days</span>
               </div>
               <div className="mt-5 overflow-hidden">
@@ -163,13 +175,13 @@ export default function AnalyticsDashboard({ audience, embedded = false }: { aud
           </section>
 
           <details className="rounded-2xl border bg-white p-5"><summary className="cursor-pointer list-none font-semibold text-orange-700">View daily sales and order counts</summary><div className="mt-4 max-h-80 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th>Date (MYT)</th><th>Orders</th><th>Completed sales</th></tr></thead><tbody>{data.revenue_trend.map(d => <tr key={d.date} className="border-t"><td className="py-2">{d.date}</td><td>{d.orders}</td><td>{money(d.revenue)}</td></tr>)}</tbody></table></div></details>
-          <p className="text-xs text-stone-500">Sales include completed orders only. Pending payments and cancelled orders are excluded. These are order totals, not bank reconciliation or net profit.</p>
+          <p className="text-xs text-stone-500">Sales include preparing, ready and completed orders, grouped by order date. Pending payments and cancelled orders are excluded. Refunds, ingredient costs and bank settlement are not recorded here, so these totals are not net profit.</p>
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-            <div className="mb-5"><h2 className="font-bold text-slate-900">{isCustomer ? "Your most ordered items" : "Top-selling items"}</h2><p className="mt-1 text-xs text-slate-500">{isCustomer ? "Items from your completed orders" : "Ranked by quantities in completed orders"}</p></div>
-            {data.top_items.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">{isCustomer ? "No completed purchases in this period yet." : "No completed item sales in this period yet."}</p> : <div className="space-y-4">
+            <div className="mb-5"><h2 className="font-bold text-slate-900">Top three dishes</h2><p className="mt-1 text-xs text-slate-500">Ranked by units in vendor-confirmed orders. Compare quantities and revenue when planning stock.</p></div>
+            {data.top_items.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">No confirmed item sales in this period yet.</p> : <div className="space-y-4">
               {data.top_items.map((item, index) => <div key={item.id} className="grid grid-cols-[2rem_1fr_auto] items-center gap-3">
                 <span className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-50 text-xs font-bold text-orange-800">{index + 1}</span>
-                <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-800">{item.name}</p><p className="text-xs text-slate-500">{item.quantity} {isCustomer ? "ordered" : "sold"}</p></div>
+                <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-800">{item.name}</p><p className="text-xs text-slate-500">{item.quantity} units · {item.order_count} confirmed orders · {item.order_share}% of confirmed orders</p><p className="mt-1 text-xs text-slate-500">Observed purchase frequency, not a future probability. An order can contain multiple dishes.</p></div>
                 <p className="text-sm font-semibold text-slate-800">{money(item.revenue)}</p>
               </div>)}
             </div>}
