@@ -14,7 +14,10 @@ const SUPABASE_HOST = "https://imxobwmjctlptqtxmfyh.supabase.co";
 const csp = [
   "default-src 'self'",
   `connect-src 'self' ${BACKEND_HOST} ${SUPABASE_HOST}`,
-  `img-src 'self' data: blob: ${BACKEND_HOST} ${SUPABASE_HOST}`,
+  // Menu/QR/banner images aren't restricted to specific hosts on the backend
+  // (vendors can set any image URL), so img-src allows any HTTPS source rather
+  // than a fixed allowlist — a mismatch here silently blocks real product images.
+  "img-src 'self' data: blob: https:",
   "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
