@@ -97,12 +97,7 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Password</label>
-                <Link href="/forgot-password" className="text-xs text-orange-600 font-semibold hover:underline">
-                  Forgot password?
-                </Link>
-              </div>
+              <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-1.5">Password</label>
               <div className="relative">
                 <input
                   type={showPassword ? "text" : "password"}
@@ -131,6 +126,11 @@ export default function LoginPage() {
                     </svg>
                   )}
                 </button>
+              </div>
+              <div className="flex justify-end mt-1.5">
+                <Link href="/forgot-password" className="text-xs text-orange-600 font-semibold hover:underline">
+                  Forgot password?
+                </Link>
               </div>
             </div>
 
