@@ -1867,14 +1867,14 @@ async def admin_delete_merchant(
         await db.execute(update(MenuItem).where(MenuItem.merchant_id == merchant_id).values(is_available=False))
         await db.execute(EventMerchant.__table__.delete().where(EventMerchant.merchant_id == merchant_id))
         await db.commit()
-        return {"message": "This stall has past orders, so it was deactivated and hidden instead of deleted."}
+        return {"message": "This stall has past orders, so it was deactivated and hidden instead of deleted.", "deleted": False, "deactivated": True}
     try:
         await db.execute(EventMerchant.__table__.delete().where(EventMerchant.merchant_id == merchant_id))
         await db.execute(MenuItem.__table__.delete().where(MenuItem.merchant_id == merchant_id))
         await db.execute(PickupSlot.__table__.delete().where(PickupSlot.merchant_id == merchant_id))
         await db.delete(merchant)
         await db.commit()
-        return {"message": "Merchant deleted successfully."}
+        return {"message": "Merchant deleted successfully.", "deleted": True, "deactivated": False}
     except Exception as e:
         await db.rollback()
         logger.exception("Database error in admin merchant delete")

@@ -145,13 +145,18 @@ export default function AdminMerchants() {
     if (!window.confirm(`Permanently delete ${m.name}? This cannot be undone.`)) return;
     setBusy(true);
     try {
-      await api(`/admin/merchants/${m.id}`, { method: "DELETE" });
-      const remaining = merchants.filter(x => x.id !== m.id);
-      setMerchants(remaining);
-      setOrderedIds(ids => ids.filter(id => id !== m.id));
-      setSelectedId(remaining[0]?.id || "");
-      setMobileView("list");
-      showToast("Merchant deleted.");
+      const r = await api(`/admin/merchants/${m.id}`, { method: "DELETE" });
+      if (r.deleted) {
+        const remaining = merchants.filter(x => x.id !== m.id);
+        setMerchants(remaining);
+        setOrderedIds(ids => ids.filter(id => id !== m.id));
+        setSelectedId(remaining[0]?.id || "");
+        setMobileView("list");
+      } else {
+        // Had past orders — backend deactivated it instead of deleting. Reflect that, don't pretend it's gone.
+        setMerchants(ms => ms.map(x => x.id === m.id ? { ...x, is_active: false } : x));
+      }
+      showToast(r.message);
     } catch (ex: any) { showToast(ex.message, "err"); }
     finally { setBusy(false); }
   }
@@ -486,7 +491,8 @@ export default function AdminMerchants() {
                               <p className={`text-sm font-bold truncate ${selectedId === m.id ? "text-orange-700" : "text-slate-800"}`}>{m.name}</p>
                               <div className="flex items-center gap-1.5 mt-0.5">
                                 <p className="text-[11px] text-stone-400 truncate">{m.location}</p>
-                                {!isLive && <span className="shrink-0 rounded-full bg-stone-100 px-1.5 py-0.5 text-[9px] font-black uppercase text-stone-400">Hidden</span>}
+                                {!m.is_active && <span className="shrink-0 rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-black uppercase text-red-500">Deactivated</span>}
+                                {m.is_active && !isLive && <span className="shrink-0 rounded-full bg-stone-100 px-1.5 py-0.5 text-[9px] font-black uppercase text-stone-400">Hidden</span>}
                               </div>
                             </div>
                             <span className="text-stone-300 text-xs shrink-0">›</span>
