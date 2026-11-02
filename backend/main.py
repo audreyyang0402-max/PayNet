@@ -198,7 +198,7 @@ def receipt_link(stored: Optional[str]) -> Optional[str]:
 # --- ORDER RULES ---
 
 MALAYSIA_TZ = timezone(timedelta(hours=8))   # Malaysia has no daylight saving
-DRAFT_HOLD_MINUTES = 15                       # an unpaid checkout keeps its pickup place this long
+DRAFT_HOLD_MINUTES = 180                      # TEMPORARY: raised from 15 while Supabase Storage uploads are broken, so customers aren't auto-cancelled before we fix it
 
 # The only moves a stall may make. Drafts become pending_verification only when the customer uploads a receipt.
 ORDER_TRANSITIONS = {
