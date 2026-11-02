@@ -7,7 +7,7 @@ import { BACKEND_URL } from "@/lib/backend-url";
 type Merchant = {
   id: string; name: string; location: string; description: string;
   email: string; phone_number: string; owner_name: string;
-  is_active: boolean; is_preview?: boolean; duitnow_qr_url?: string; display_order?: number;
+  is_active: boolean; is_preview?: boolean; is_deleted?: boolean; duitnow_qr_url?: string; display_order?: number;
 };
 type Slot = { id: string; time_slot: string; current_bookings: number; max_capacity: number; is_full?: boolean };
 type Item = { id: string; name: string; price: number; is_available: boolean; image_url?: string | null; approval_status?: string };
@@ -54,8 +54,12 @@ export default function AdminMerchants() {
 
   const [reorderMode, setReorderMode] = useState(false);
   const [orderedIds, setOrderedIds] = useState<string[]>([]);
+  const [vendorTab, setVendorTab] = useState<"active" | "closed">("active");
 
   const merchant = merchants.find(m => m.id === selectedId);
+  const visibleMerchants = merchants.filter(m => vendorTab === "active" ? !m.is_deleted : !!m.is_deleted);
+  const closedCount = merchants.filter(m => m.is_deleted).length;
+  const activeCount = merchants.length - closedCount;
 
   const showToast = useCallback((msg: string, type: "ok" | "err" = "ok") => {
     setToast({ msg, type });
@@ -80,8 +84,8 @@ export default function AdminMerchants() {
       .then((m) => {
         const valid = (m as Merchant[]).filter(x => x.name && x.name.trim() !== "--");
         setMerchants(valid);
-        setOrderedIds(valid.map(x => x.id));
-        setSelectedId(valid[0]?.id || "");
+        setOrderedIds(valid.filter(x => !x.is_deleted).map(x => x.id));
+        setSelectedId(valid.find(x => !x.is_deleted)?.id || valid[0]?.id || "");
       })
       .catch(e => showToast(e.message, "err"))
       .finally(() => setLoading(false));
@@ -141,21 +145,17 @@ export default function AdminMerchants() {
     finally { setBusy(false); }
   }
 
-  async function deleteMerchant(m: Merchant) {
-    if (!window.confirm(`Permanently delete ${m.name}? This cannot be undone.`)) return;
+  async function closeMerchant(m: Merchant) {
+    if (!window.confirm(`Close ${m.name}? This hides it from the Vendors list and the customer marketplace right away. You can still find it under the Closed tab.`)) return;
     setBusy(true);
     try {
       const r = await api(`/admin/merchants/${m.id}`, { method: "DELETE" });
-      if (r.deleted) {
-        const remaining = merchants.filter(x => x.id !== m.id);
-        setMerchants(remaining);
-        setOrderedIds(ids => ids.filter(id => id !== m.id));
-        setSelectedId(remaining[0]?.id || "");
-        setMobileView("list");
-      } else {
-        // Had past orders — backend deactivated it instead of deleting. Reflect that, don't pretend it's gone.
-        setMerchants(ms => ms.map(x => x.id === m.id ? { ...x, is_active: false } : x));
-      }
+      const remainingActive = merchants.filter(x => x.id !== m.id && !x.is_deleted);
+      setMerchants(ms => ms.map(x => x.id === m.id ? { ...x, is_active: false, is_deleted: true } : x));
+      setOrderedIds(ids => ids.filter(id => id !== m.id));
+      setVendorTab("active");
+      setSelectedId(remainingActive[0]?.id || "");
+      setMobileView("list");
       showToast(r.message);
     } catch (ex: any) { showToast(ex.message, "err"); }
     finally { setBusy(false); }
@@ -240,7 +240,7 @@ export default function AdminMerchants() {
                 <h2 className="text-xl font-black text-slate-900 leading-tight">{merchant.name}</h2>
                 <p className="text-sm text-stone-500 mt-0.5">📍 {merchant.location}</p>
               </div>
-              <button onClick={() => togglePreview(merchant)} disabled={busy}
+              <button onClick={() => togglePreview(merchant)} disabled={busy || merchant.is_deleted}
                 className={`flex items-center gap-2 rounded-2xl px-4 py-2.5 font-bold text-sm transition disabled:opacity-60 shadow-sm ${
                   isLive
                     ? "bg-emerald-500 text-white hover:bg-emerald-600"
@@ -268,20 +268,26 @@ export default function AdminMerchants() {
             </div>
             <p className="mt-2 text-[11px] text-stone-400 italic">📧 Email and phone are editable by the merchant only.</p>
 
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button onClick={() => openEdit(merchant)}
-                className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 transition">
-                ✏️ Edit Profile
-              </button>
-              <button onClick={() => toggleActive(merchant)} disabled={busy}
-                className={`rounded-xl px-4 py-2 text-xs font-bold transition disabled:opacity-60 ${merchant.is_active ? "border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" : "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}>
-                {merchant.is_active ? "Deactivate Stall" : "Activate Stall"}
-              </button>
-              <button onClick={() => deleteMerchant(merchant)} disabled={busy}
-                className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs font-bold text-red-700 hover:bg-red-100 transition disabled:opacity-60">
-                🗑️ Delete
-              </button>
-            </div>
+            {!merchant.is_deleted ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button onClick={() => openEdit(merchant)}
+                  className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 transition">
+                  ✏️ Edit Profile
+                </button>
+                <button onClick={() => toggleActive(merchant)} disabled={busy}
+                  className={`rounded-xl px-4 py-2 text-xs font-bold transition disabled:opacity-60 ${merchant.is_active ? "border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" : "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}>
+                  {merchant.is_active ? "Deactivate Stall" : "Activate Stall"}
+                </button>
+                <button onClick={() => closeMerchant(merchant)} disabled={busy}
+                  className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs font-bold text-red-700 hover:bg-red-100 transition disabled:opacity-60">
+                  🔒 Close Stall
+                </button>
+              </div>
+            ) : (
+              <p className="mt-4 rounded-xl border border-stone-200 bg-stone-50 px-4 py-2.5 text-xs font-semibold text-stone-500">
+                🔒 This vendor has been closed by an admin and removed from the marketplace.
+              </p>
+            )}
           </div>
 
           {merchant.duitnow_qr_url && (
@@ -444,15 +450,31 @@ export default function AdminMerchants() {
           {/* Sidebar */}
           <aside className={`lg:w-72 lg:shrink-0 lg:sticky lg:top-[89px] ${mobileView === "detail" ? "hidden lg:block" : "block"}`}>
             <div className="rounded-2xl border border-stone-200 bg-white shadow-sm overflow-hidden">
-              <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3">
-                <p className="text-xs font-black uppercase tracking-widest text-stone-400">
-                  {reorderMode ? "Reorder Vendors" : `Vendors (${merchants.length})`}
-                </p>
-                <button
-                  onClick={() => setReorderMode(r => !r)}
-                  className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${reorderMode ? "bg-orange-600 text-white" : "text-orange-600 hover:bg-orange-50"}`}>
-                  {reorderMode ? "Cancel" : "⇅ Reorder"}
-                </button>
+              <div className="border-b border-stone-100 px-4 py-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-black uppercase tracking-widest text-stone-400">
+                    {reorderMode ? "Reorder Vendors" : "Vendors"}
+                  </p>
+                  {vendorTab === "active" && (
+                    <button
+                      onClick={() => setReorderMode(r => !r)}
+                      className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${reorderMode ? "bg-orange-600 text-white" : "text-orange-600 hover:bg-orange-50"}`}>
+                      {reorderMode ? "Cancel" : "⇅ Reorder"}
+                    </button>
+                  )}
+                </div>
+                {!reorderMode && (
+                  <div className="flex gap-1.5">
+                    <button onClick={() => setVendorTab("active")}
+                      className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${vendorTab === "active" ? "bg-orange-100 text-orange-700" : "text-stone-400 hover:bg-stone-50"}`}>
+                      Active ({activeCount})
+                    </button>
+                    <button onClick={() => setVendorTab("closed")}
+                      className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${vendorTab === "closed" ? "bg-stone-200 text-stone-700" : "text-stone-400 hover:bg-stone-50"}`}>
+                      Closed ({closedCount})
+                    </button>
+                  </div>
+                )}
               </div>
 
               {reorderMode ? (
@@ -480,7 +502,12 @@ export default function AdminMerchants() {
                 </div>
               ) : (
                 <ul className="divide-y divide-stone-50 max-h-[70vh] overflow-y-auto">
-                  {merchants.map(m => {
+                  {visibleMerchants.length === 0 && (
+                    <li className="px-4 py-6 text-center text-xs text-stone-400">
+                      {vendorTab === "closed" ? "No closed vendors." : "No active vendors."}
+                    </li>
+                  )}
+                  {visibleMerchants.map(m => {
                     const isLive = !m.is_preview;
                     return (
                       <li key={m.id}>
@@ -488,13 +515,14 @@ export default function AdminMerchants() {
                           onClick={() => { setSelectedId(m.id); setMobileView("detail"); }}
                           className={`w-full px-4 py-3.5 text-left transition ${selectedId === m.id ? "bg-orange-50" : "hover:bg-stone-50"}`}>
                           <div className="flex items-center gap-2.5">
-                            <div className={`h-2.5 w-2.5 shrink-0 rounded-full ${isLive && m.is_active ? "bg-emerald-500" : "bg-stone-300"}`} />
+                            <div className={`h-2.5 w-2.5 shrink-0 rounded-full ${!m.is_deleted && isLive && m.is_active ? "bg-emerald-500" : "bg-stone-300"}`} />
                             <div className="min-w-0 flex-1">
                               <p className={`text-sm font-bold truncate ${selectedId === m.id ? "text-orange-700" : "text-slate-800"}`}>{m.name}</p>
                               <div className="flex items-center gap-1.5 mt-0.5">
                                 <p className="text-[11px] text-stone-400 truncate">{m.location}</p>
-                                {!m.is_active && <span className="shrink-0 rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-black uppercase text-red-500">Deactivated</span>}
-                                {m.is_active && !isLive && <span className="shrink-0 rounded-full bg-stone-100 px-1.5 py-0.5 text-[9px] font-black uppercase text-stone-400">Hidden</span>}
+                                {m.is_deleted && <span className="shrink-0 rounded-full bg-stone-200 px-1.5 py-0.5 text-[9px] font-black uppercase text-stone-500">🔒 Closed</span>}
+                                {!m.is_deleted && !m.is_active && <span className="shrink-0 rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-black uppercase text-red-500">Deactivated</span>}
+                                {!m.is_deleted && m.is_active && !isLive && <span className="shrink-0 rounded-full bg-stone-100 px-1.5 py-0.5 text-[9px] font-black uppercase text-stone-400">Hidden</span>}
                               </div>
                             </div>
                             <span className="text-stone-300 text-xs shrink-0">›</span>

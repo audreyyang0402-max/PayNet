@@ -1509,6 +1509,68 @@ async def list_all_users(db: AsyncSession = Depends(get_db), current_user: User 
     return response_data
 
 
+# --- ADMIN TRANSACTIONS ---
+
+@app.get("/admin/orders")
+async def admin_list_all_orders(
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    merchant_id: Optional[UUID] = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Site-wide order/transaction ledger for the admin Transactions tab — every stall, newest first."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required.")
+
+    query = (
+        select(Order)
+        .where(Order.status != "draft")
+        .options(
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+            selectinload(Order.customer),
+        )
+        .order_by(Order.created_at.desc())
+        .limit(limit)
+    )
+    if status_filter:
+        query = query.where(Order.status == status_filter)
+    if merchant_id:
+        query = query.where(Order.merchant_id == merchant_id)
+    orders = (await db.execute(query)).scalars().all()
+
+    # Resolve merchant names in one query rather than one lookup per order.
+    merchant_ids = {o.merchant_id for o in orders if o.merchant_id}
+    merchant_names: dict[str, str] = {}
+    if merchant_ids:
+        rows = (await db.execute(select(Merchant.id, Merchant.name).where(Merchant.id.in_(merchant_ids)))).all()
+        merchant_names = {str(mid): name for mid, name in rows}
+
+    response = []
+    for order in orders:
+        items_data = [
+            {
+                "name": item.menu_item.name if item.menu_item else "Dish",
+                "quantity": item.quantity,
+                "price_at_order": float(item.price_at_order),
+            }
+            for item in order.items
+        ]
+        response.append({
+            "id": str(order.id),
+            "order_number": getattr(order, "order_number", None),
+            "status": order.status,
+            "total_price": float(order.total_price),
+            "created_at": order.created_at.isoformat() if order.created_at else None,
+            "customer_name": order.customer.name if order.customer else "Customer",
+            "merchant_id": str(order.merchant_id),
+            "merchant_name": merchant_names.get(str(order.merchant_id), "Unknown stall"),
+            "transaction_ref": receipt_link(order.transaction_ref),
+            "items": items_data,
+        })
+    return response
+
+
 # --- EVENT ENDPOINTS ---
 
 @app.post("/events", response_model=dict)
@@ -1861,6 +1923,29 @@ async def admin_toggle_merchant_active(
     return {"message": f"Merchant {'activated' if merchant.is_active else 'deactivated'}.", "is_active": merchant.is_active}
 
 
+@app.patch("/merchants/me/toggle-active")
+async def toggle_my_merchant_active(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lets a vendor pause/resume their own stall — same effect as the admin toggle, scoped to their own merchant."""
+    if current_user.role != "merchant":
+        raise HTTPException(status_code=403, detail="Merchant privileges required.")
+    result = await db.execute(select(Merchant).where(Merchant.user_id == current_user.id))
+    merchant = result.scalars().first()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="No merchant profile found for this user.")
+    if merchant.is_deleted:
+        raise HTTPException(status_code=400, detail="This stall has been closed by an admin and can't be reactivated here. Please contact support.")
+    merchant.is_active = not merchant.is_active
+    await db.commit()
+    await db.refresh(merchant)
+    return {
+        "message": f"Your stall is now {'visible to customers.' if merchant.is_active else 'paused and hidden from customers.'}",
+        "is_active": merchant.is_active,
+    }
+
+
 @app.delete("/admin/merchants/{merchant_id}")
 async def admin_delete_merchant(
     merchant_id: UUID,
@@ -1872,24 +1957,18 @@ async def admin_delete_merchant(
     merchant = await db.get(Merchant, merchant_id)
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found.")
-    has_orders = (await db.execute(select(func.count(Order.id)).where(Order.merchant_id == merchant_id))).scalar_one()
-    if has_orders:
-        # Orders point at this stall; keep it for sales history but take it off the marketplace.
+    # Closing a vendor never purges it from the database — it's always just hidden.
+    # A vendor may come back one day, and order history has to stay intact either way.
+    try:
         merchant.is_active = False
+        merchant.is_deleted = True
         await db.execute(update(MenuItem).where(MenuItem.merchant_id == merchant_id).values(is_available=False))
         await db.execute(EventMerchant.__table__.delete().where(EventMerchant.merchant_id == merchant_id))
         await db.commit()
-        return {"message": "This stall has past orders, so it was deactivated and hidden instead of deleted.", "deleted": False, "deactivated": True}
-    try:
-        await db.execute(EventMerchant.__table__.delete().where(EventMerchant.merchant_id == merchant_id))
-        await db.execute(MenuItem.__table__.delete().where(MenuItem.merchant_id == merchant_id))
-        await db.execute(PickupSlot.__table__.delete().where(PickupSlot.merchant_id == merchant_id))
-        await db.delete(merchant)
-        await db.commit()
-        return {"message": "Merchant deleted successfully.", "deleted": True, "deactivated": False}
-    except Exception as e:
+        return {"message": "This stall has been closed and removed from the vendors list. It's still available under the Closed tab.", "closed": True}
+    except Exception:
         await db.rollback()
-        logger.exception("Database error in admin merchant delete")
+        logger.exception("Database error in admin merchant close")
         raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
@@ -2036,6 +2115,7 @@ async def admin_list_merchants_ordered(
             "duitnow_qr_url": m.duitnow_qr_url,
             "is_active": m.is_active,
             "is_preview": getattr(m, "is_preview", False),
+            "is_deleted": bool(getattr(m, "is_deleted", False)),
             "display_order": getattr(m, "display_order", 0),
             "owner_name": u.name,
             "email": u.email,

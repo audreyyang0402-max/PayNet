@@ -9,6 +9,7 @@ import { isAdminSessionLive, clearAdminSession } from "@/lib/admin-session";
 const NAV_ITEMS = [
   { href: "/admin/users", label: "Users", icon: "👥", description: "Manage all platform accounts" },
   { href: "/admin/merchants", label: "Vendors", icon: "🏪", description: "Stalls, menus, slots & QR" },
+  { href: "/admin/transactions", label: "Transactions", icon: "💳", description: "Site-wide orders & payments" },
   { href: "/admin/events", label: "Events", icon: "🎉", description: "Campus events & announcements" },
   { href: "/admin/analytics", label: "Analytics", icon: "📊", description: "Orders & revenue insights" },
 ];

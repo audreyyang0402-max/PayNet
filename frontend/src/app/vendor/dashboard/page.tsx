@@ -18,6 +18,8 @@ interface MerchantProfile {
   description: string;
   duitnow_qr_url?: string;
   is_temporary?: boolean;
+  is_active?: boolean;
+  is_deleted?: boolean;
 }
 
 interface OrderItem {
@@ -134,6 +136,8 @@ export default function MerchantDashboard() {
   const [qrUpdating, setQrUpdating] = useState(false);
   const [qrUpdateMessage, setQrUpdateMessage] = useState("");
 
+  const [stallBusy, setStallBusy] = useState(false);
+
   useEffect(() => {
     async function loadDashboardData() {
       try {
@@ -231,6 +235,28 @@ export default function MerchantDashboard() {
       } else { alert("Failed to upload QR code."); }
     } catch (err) { console.error(err); }
     finally { setQrUpdating(false); }
+  };
+
+  const handleToggleStallActive = async () => {
+    if (!merchant) return;
+    const turningOff = merchant.is_active !== false;
+    if (turningOff && !window.confirm("Pause your stall? Customers won't be able to see or order from you until you turn it back on.")) return;
+    setStallBusy(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${BACKEND_URL}/merchants/me/toggle-active`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Could not update your stall status.");
+      setMerchant(prev => prev ? { ...prev, is_active: data.is_active } : prev);
+      setProfileUpdateSuccess(data.message);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setStallBusy(false);
+    }
   };
 
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
@@ -360,6 +386,27 @@ export default function MerchantDashboard() {
                 </button>
                 <ChangePasswordButton />
               </div>
+
+              {merchant?.is_deleted ? (
+                <p className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs font-semibold text-stone-500">
+                  🔒 This stall has been closed by an admin. Contact support if you believe this is a mistake.
+                </p>
+              ) : (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-stone-50 p-4">
+                  <div>
+                    <p className="text-sm font-semibold text-stone-800">
+                      {merchant?.is_active !== false ? "Your stall is live" : "Your stall is paused"}
+                    </p>
+                    <p className="mt-0.5 text-xs text-stone-500">
+                      {merchant?.is_active !== false ? "Customers can see and order from you." : "Hidden from customers until you turn it back on."}
+                    </p>
+                  </div>
+                  <button type="button" disabled={stallBusy} onClick={handleToggleStallActive}
+                    className={`rounded-xl px-4 py-2 text-xs font-bold transition disabled:opacity-50 ${merchant?.is_active !== false ? "border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" : "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}>
+                    {stallBusy ? "Please wait…" : merchant?.is_active !== false ? "Pause my stall" : "Resume my stall"}
+                  </button>
+                </div>
+              )}
             </form>
           )}
         </div>
