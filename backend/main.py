@@ -1004,12 +1004,17 @@ async def delete_pickup_slot(
         raise HTTPException(status_code=403, detail="Access denied.")
     
     try:
+        # Null out pickup_slot_id on any orders referencing this slot
+        linked_orders = await db.execute(select(Order).where(Order.pickup_slot_id == slot_id))
+        for order in linked_orders.scalars().all():
+            order.pickup_slot_id = None
+        await db.flush()
         await db.delete(slot)
         await db.commit()
         return {"message": "Pickup slot deleted successfully"}
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error details: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to delete pickup slot: {str(e)}")
 
 
 # --- PUBLIC: List Menu Items ---

@@ -76,7 +76,7 @@ class Order(Base):
     transaction_ref = Column(String, nullable=True)  # <--- ADDED: Bank reference code entered by the student
     order_number = Column(String, nullable=True)
     
-    pickup_slot_id = Column(UUID(as_uuid=True), ForeignKey("pickup_slots.id"))
+    pickup_slot_id = Column(UUID(as_uuid=True), ForeignKey("pickup_slots.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # --- RELATIONSHIPS ---
