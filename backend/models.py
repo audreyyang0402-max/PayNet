@@ -34,7 +34,8 @@ class Merchant(Base):
     location = Column(String)
     duitnow_qr_url = Column(Text, nullable=True)  # <--- ADDED: Store vendor's static DuitNow QR image URL
     is_active = Column(Boolean, default=True)
-    is_preview = Column(Boolean, nullable=False, default=False)
+    is_preview = Column(Boolean, nullable=False, default=True, server_default="true")  # new stalls stay hidden until an admin shows them
+    is_deleted = Column(Boolean, nullable=False, default=False, server_default="false")  # admin closed this stall for good (reversible only by support, not shown in the vendors list)
     display_order = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -49,6 +50,7 @@ class MenuItem(Base):
     price = Column(Numeric(10, 2), nullable=False)
     image_url = Column(String)
     is_available = Column(Boolean, default=True)
+    approval_status = Column(String, nullable=False, default="approved", server_default="approved")  # approved / rejected
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

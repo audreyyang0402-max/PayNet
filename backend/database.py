@@ -13,7 +13,10 @@ DATABASE_URL = os.getenv("DATABASE_URL").replace(
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    connect_args={"statement_cache_size": 0}
+    # "ssl": "require" pins the connection to always be encrypted. Without this,
+    # asyncpg's default ("prefer") tries TLS first but silently falls back to a
+    # plaintext connection if that negotiation ever fails — this closes that gap.
+    connect_args={"statement_cache_size": 0, "ssl": "require"}
 )
 
 AsyncSessionLocal = sessionmaker(

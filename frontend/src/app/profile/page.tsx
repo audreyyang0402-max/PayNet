@@ -1,10 +1,12 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import SiteFooter from "@/components/SiteFooter";
 import { useRouter } from "next/navigation";
 import { BACKEND_URL } from "@/lib/backend-url";
 import CustomerSpendingDashboard from "@/components/CustomerSpendingDashboard";
 import DeleteAccountButton from "@/components/DeleteAccountButton";
+import ChangePasswordButton from "@/components/ChangePasswordButton";
 
 type User = { id: string; name: string; email: string; phone_number?: string; role: string };
 type Order = { id: string; status: string };
@@ -83,7 +85,7 @@ export default function ProfilePage() {
     reader.readAsDataURL(uploaded);
   }
   function logout() { ["token", "user_id", "userRole", "userName"].forEach(k => localStorage.removeItem(k)); router.replace("/login"); }
-  return <main className="min-h-screen bg-[#faf8f3] px-4 py-6 text-stone-900 sm:py-10">
+  return (<><main className="min-h-screen bg-[#faf8f3] px-4 py-6 text-stone-900 sm:py-10">
     <div className="mx-auto max-w-3xl space-y-5">
       <Link href="/" className={`${button} bg-white`}>Back to marketplace</Link>
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
@@ -112,11 +114,11 @@ export default function ProfilePage() {
             {editing && <form className="mt-6 space-y-3 rounded-xl bg-stone-50 p-4" onSubmit={e => { e.preventDefault(); const next = draft.trim(); if (save({ photo, name: next, diets: preferences })) { setName(next); setEditing(false); } }}>
               <label className="block text-sm font-medium">Preferred name<input value={draft} maxLength={60} onChange={e => setDraft(e.target.value)} className="mt-1 w-full rounded-lg border border-stone-300 bg-white p-2" /></label>
               <p className="text-xs text-stone-500">Photo, preferred name and dietary preferences are saved for this account on this browser. Contact support to change registered details.</p>
-              <div className="flex flex-wrap items-center gap-3"><button className={button}>Save preferences</button><Link href="/forgot-password" className="text-sm text-orange-700 underline">Change password with email code</Link></div>
+              <div className="flex flex-wrap items-center gap-3"><button className={button}>Save preferences</button><ChangePasswordButton /></div>
             </form>}
           </div>
           <nav aria-label="Account pages" className="grid grid-cols-2 gap-3 border-t border-stone-100 p-5 sm:p-7">
-            {user.role === "customer" ? <Link href="/orders" className={`${button} bg-orange-50 text-orange-800`}>Order history</Link> : <Link href={user.role === "admin" ? "/admin/rentals" : "/vendor/dashboard"} className={button}>Dashboard</Link>}
+            {user.role === "customer" ? <Link href="/orders" className={`${button} bg-orange-50 text-orange-800`}>Order history</Link> : <Link href={user.role === "admin" ? "/admin/users" : "/vendor/dashboard"} className={button}>Dashboard</Link>}
             <button onClick={logout} className={`${button} border-red-200 bg-red-50 text-red-700 hover:bg-red-100`}>Log out</button>
           </nav>
           </section>
@@ -129,5 +131,7 @@ export default function ProfilePage() {
         {user.role !== "admin" && <details className="rounded-xl border border-stone-200 bg-white p-4 text-sm text-stone-500"><summary className="cursor-pointer">Account management</summary><p className="my-3 text-xs">Permanently delete your account. This action cannot be undone.</p><DeleteAccountButton /></details>}
       </>}
     </div>
-  </main>;
+  </main>
+  <SiteFooter />
+  </>);
 }

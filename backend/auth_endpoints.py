@@ -43,8 +43,11 @@ async def find_user(db, email):
 
 async def send_verification(req, db):
     user = await find_user(db, req.email)
+    # Both branches below return the SAME generic message whether or not the account
+    # exists, and skip sending a code in that case — this prevents an attacker from
+    # using this endpoint to probe which campus emails already have accounts.
     if req.purpose == "register" and user:
-        raise HTTPException(400, "Email already registered. Please log in or reset your password.")
+        return {"message": "If this account is eligible, a verification code has been sent."}
     if req.purpose == "reset" and (not user or user.is_deleted):
         return {"message": "If this account exists, a verification code has been sent."}
     await issue_code(db, req.email, req.purpose)
@@ -119,3 +122,22 @@ async def delete_account(req, current_user, db):
     current_user.phone_number = None
     await db.commit()
     return {"message": "Account deleted successfully"}
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+async def change_password(req, current_user, db):
+    # Requires proof of the CURRENT password — unlike /auth/verify-code (purpose="reset"),
+    # which only proves control of an email and is meant for a logged-out recovery flow.
+    # Mixing the two let anyone with a borrowed, already-logged-in session change the
+    # account's password using an email of their own choosing. This endpoint is scoped
+    # strictly to the authenticated account and never touches email/OTP at all.
+    if not verify_password(req.current_password, current_user.password_hash):
+        raise HTTPException(400, "Current password is incorrect.")
+    validate_password(req.new_password)
+    current_user.password_hash = hash_password(req.new_password)
+    await db.commit()
+    return {"message": "Password changed successfully. Please log in again."}

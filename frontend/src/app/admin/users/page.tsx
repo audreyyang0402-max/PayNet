@@ -12,6 +12,8 @@ interface UserProfile {
   phone_number: string;
   role: string;
   created_at: string;
+  is_deleted?: boolean;
+  deleted_at?: string | null;
 }
 
 type NewRole = "admin" | "merchant" | "customer";
@@ -130,8 +132,11 @@ export default function AdminUsersPage() {
   };
 
   // ── Filtered + searched list ─────────────────────────────────────────────
+  // Deleted accounts only ever show under the "Deleted" tab — every other tab excludes them.
   const filteredUsers = users.filter((u) => {
-    const matchRole = filterRole === "all" || u.role === filterRole;
+    const matchRole =
+      filterRole === "deleted" ? !!u.is_deleted :
+      !u.is_deleted && (filterRole === "all" || u.role === filterRole);
     const q = search.toLowerCase();
     const matchSearch =
       !q ||
@@ -182,7 +187,7 @@ export default function AdminUsersPage() {
 
           {/* Role Filter Tabs */}
           <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-semibold w-fit">
-            {["all", "customer", "merchant", "admin"].map((role) => (
+            {["all", "customer", "merchant", "admin", "deleted"].map((role) => (
               <button
                 key={role}
                 onClick={() => setFilterRole(role)}
@@ -231,21 +236,30 @@ export default function AdminUsersPage() {
                       </td>
                       <td className="py-3 px-4 text-gray-400 text-xs">
                         {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
+                        {u.is_deleted && u.deleted_at && (
+                          <div className="text-red-400 mt-0.5">Deleted {new Date(u.deleted_at).toLocaleDateString()}</div>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-right space-x-2">
-                        <button
-                          onClick={() => openRoleModal(u)}
-                          className="px-3 py-1 bg-orange-50 hover:bg-orange-100 text-orange-700 text-xs font-semibold rounded-lg transition"
-                        >
-                          Assign Role
-                        </button>
-                        {u.role !== "admin" && (
-                          <button
-                            onClick={() => handleDeleteUser(u.id, u.name)}
-                            className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold rounded-lg transition"
-                          >
-                            Delete
-                          </button>
+                        {u.is_deleted ? (
+                          <span className="text-xs text-gray-400 italic">Account deleted</span>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => openRoleModal(u)}
+                              className="px-3 py-1 bg-orange-50 hover:bg-orange-100 text-orange-700 text-xs font-semibold rounded-lg transition"
+                            >
+                              Assign Role
+                            </button>
+                            {u.role !== "admin" && (
+                              <button
+                                onClick={() => handleDeleteUser(u.id, u.name)}
+                                className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold rounded-lg transition"
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </>
                         )}
                       </td>
                     </tr>

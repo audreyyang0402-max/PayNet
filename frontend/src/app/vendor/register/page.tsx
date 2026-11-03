@@ -6,9 +6,61 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import PasswordInput from "@/components/PasswordInput";
 
+const COUNTRY_CODES = [
+  { code: "+60", name: "Malaysia" },
+  { code: "+93", name: "Afghanistan" },
+  { code: "+355", name: "Albania" },
+  { code: "+213", name: "Algeria" },
+  { code: "+54", name: "Argentina" },
+  { code: "+61", name: "Australia" },
+  { code: "+43", name: "Austria" },
+  { code: "+973", name: "Bahrain" },
+  { code: "+880", name: "Bangladesh" },
+  { code: "+32", name: "Belgium" },
+  { code: "+673", name: "Brunei" },
+  { code: "+855", name: "Cambodia" },
+  { code: "+1", name: "Canada / USA" },
+  { code: "+86", name: "China" },
+  { code: "+20", name: "Egypt" },
+  { code: "+33", name: "France" },
+  { code: "+49", name: "Germany" },
+  { code: "+852", name: "Hong Kong" },
+  { code: "+91", name: "India" },
+  { code: "+62", name: "Indonesia" },
+  { code: "+81", name: "Japan" },
+  { code: "+962", name: "Jordan" },
+  { code: "+82", name: "South Korea" },
+  { code: "+965", name: "Kuwait" },
+  { code: "+856", name: "Laos" },
+  { code: "+961", name: "Lebanon" },
+  { code: "+960", name: "Maldives" },
+  { code: "+95", name: "Myanmar" },
+  { code: "+977", name: "Nepal" },
+  { code: "+31", name: "Netherlands" },
+  { code: "+64", name: "New Zealand" },
+  { code: "+234", name: "Nigeria" },
+  { code: "+968", name: "Oman" },
+  { code: "+92", name: "Pakistan" },
+  { code: "+63", name: "Philippines" },
+  { code: "+974", name: "Qatar" },
+  { code: "+966", name: "Saudi Arabia" },
+  { code: "+65", name: "Singapore" },
+  { code: "+27", name: "South Africa" },
+  { code: "+34", name: "Spain" },
+  { code: "+94", name: "Sri Lanka" },
+  { code: "+46", name: "Sweden" },
+  { code: "+41", name: "Switzerland" },
+  { code: "+886", name: "Taiwan" },
+  { code: "+66", name: "Thailand" },
+  { code: "+90", name: "Turkey" },
+  { code: "+971", name: "UAE" },
+  { code: "+44", name: "United Kingdom" },
+  { code: "+84", name: "Vietnam" },
+].sort((a, b) => (a.name === "Malaysia" ? -1 : a.name.localeCompare(b.name)));
+
 function passwordError(value: string): string {
   if (new TextEncoder().encode(value).length > 72)
-    return "Password is too long. Please shorten it; emoji and accented characters use more space.";
+    return "Password is too long. Please shorten it.";
   if (
     Array.from(value).length < 12 ||
     !/[a-z]/.test(value) ||
@@ -24,14 +76,15 @@ type Step = "details" | "verification";
 
 export default function RegisterPage() {
   const router = useRouter();
-
   const [step, setStep] = useState<Step>("details");
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [phoneNumber, setPhoneNumber] = useState("");
+  const [phonePrefix, setPhonePrefix] = useState("+60");
+  const [phoneNum, setPhoneNum] = useState("");
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [verificationCode, setVerificationCode] = useState("");
 
   const [error, setError] = useState("");
@@ -41,9 +94,17 @@ export default function RegisterPage() {
   const handleSendCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    if (!name.trim()) { setError("Full name is required."); return; }
+
     const issue = passwordError(password);
     if (issue) { setError(issue); return; }
     if (password !== confirmPassword) { setError("Passwords do not match."); return; }
+
+    const cleanPhone = phoneNum.replace(/\D/g, "").replace(/^0+/, "");
+    if (!cleanPhone || cleanPhone.length < 6) { setError("Please enter a valid phone number."); return; }
+
+    if (!agreedToTerms) { setError("Please agree to the Terms and Conditions to continue."); return; }
 
     setLoading(true);
     try {
@@ -72,6 +133,8 @@ export default function RegisterPage() {
     if (password !== confirmPassword) { setStep("details"); setError("Passwords do not match."); return; }
     if (!/^[0-9]{6,8}$/.test(verificationCode)) { setError("Enter all 6–8 digits from your latest email."); return; }
 
+    const fullPhone = `${phonePrefix}${phoneNum.replace(/\D/g, "").replace(/^0+/, "")}`;
+
     setLoading(true);
     try {
       const res = await fetch(`${BACKEND_URL}/auth/verify-code`, {
@@ -83,14 +146,14 @@ export default function RegisterPage() {
           purpose: "register",
           name,
           password,
-          phone_number: phoneNumber,
+          phone_number: fullPhone,
           account_type: "customer",
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         const msg = typeof data.detail === "string" ? data.detail : "Could not verify your details.";
-        if (/password|uppercase|UTF-8/i.test(msg)) { setStep("details"); }
+        if (/password|uppercase|UTF-8/i.test(msg)) setStep("details");
         setError(msg);
         return;
       }
@@ -134,17 +197,10 @@ export default function RegisterPage() {
           <h1 className="text-2xl font-bold text-gray-900">Create an Account</h1>
           <p className="text-gray-500 text-sm mt-1">
             {step === "verification"
-              ? "Verify your email to finish creating your account."
+              ? `Enter the verification code sent to ${email}`
               : "Sign up to start ordering from campus merchants."}
           </p>
         </div>
-
-        {/* Info banner — merchant access is admin-approved */}
-        {step === "details" && (
-          <div className="p-3 bg-blue-50 border border-blue-200 text-blue-700 text-xs rounded-xl">
-            <span className="font-semibold">Are you a merchant?</span> Register as a customer first — an admin will upgrade your account to merchant after reviewing your application.
-          </div>
-        )}
 
         {error && (
           <div role="alert" className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">
@@ -154,8 +210,11 @@ export default function RegisterPage() {
 
         {step === "details" && (
           <form onSubmit={handleSendCode} className="space-y-4">
+            {/* Full Name */}
             <div>
-              <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Full Name</label>
+              <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">
+                Full Name <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text" required value={name}
                 onChange={(e) => setName(e.target.value)} placeholder="John Doe"
@@ -163,8 +222,11 @@ export default function RegisterPage() {
               />
             </div>
 
+            {/* Email */}
             <div>
-              <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Email Address</label>
+              <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">
+                Email Address <span className="text-red-500">*</span>
+              </label>
               <input
                 type="email" required value={email}
                 onChange={(e) => setEmail(e.target.value)} placeholder="name@email.com"
@@ -172,17 +234,37 @@ export default function RegisterPage() {
               />
             </div>
 
+            {/* Phone Number with country code */}
             <div>
-              <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Phone Number</label>
-              <input
-                type="tel" value={phoneNumber}
-                onChange={(e) => setPhoneNumber(e.target.value)} placeholder="+60123456789"
-                className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-              />
+              <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">
+                Phone Number <span className="text-red-500">*</span>
+              </label>
+              <div className="flex rounded-xl border border-gray-300 bg-white focus-within:ring-2 focus-within:ring-orange-500 overflow-hidden">
+                <select
+                  value={phonePrefix}
+                  onChange={(e) => setPhonePrefix(e.target.value)}
+                  className="bg-gray-100 border-r border-gray-300 px-2 py-2 text-xs font-medium text-gray-700 focus:outline-none cursor-pointer w-28 truncate"
+                >
+                  {COUNTRY_CODES.map((c) => (
+                    <option key={c.code + c.name} value={c.code}>
+                      {c.code} {c.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="tel" required value={phoneNum}
+                  onChange={(e) => setPhoneNum(e.target.value.replace(/\D/g, ""))}
+                  placeholder="12345678"
+                  className="w-full px-3 py-2 bg-transparent focus:outline-none text-sm text-gray-900"
+                />
+              </div>
             </div>
 
+            {/* Password */}
             <div>
-              <label htmlFor="register-password" className="block text-xs font-semibold text-gray-700 uppercase mb-1">Password</label>
+              <label htmlFor="register-password" className="block text-xs font-semibold text-gray-700 uppercase mb-1">
+                Password <span className="text-red-500">*</span>
+              </label>
               <PasswordInput
                 id="register-password" label="Password" minLength={12}
                 autoComplete="new-password" required
@@ -190,13 +272,16 @@ export default function RegisterPage() {
                 placeholder="••••••••"
                 className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
               />
-              <p className="mt-2 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-gray-500">
                 At least 12 characters with uppercase, lowercase, a number and a symbol.
               </p>
             </div>
 
+            {/* Confirm Password */}
             <div>
-              <label htmlFor="confirm-password" className="block text-xs font-semibold text-gray-700 uppercase mb-1">Confirm Password</label>
+              <label htmlFor="confirm-password" className="block text-xs font-semibold text-gray-700 uppercase mb-1">
+                Confirm Password <span className="text-red-500">*</span>
+              </label>
               <PasswordInput
                 id="confirm-password" label="Confirm password"
                 autoComplete="new-password" required
@@ -204,6 +289,28 @@ export default function RegisterPage() {
                 placeholder="Enter your password again"
                 className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
               />
+            </div>
+
+            {/* Terms and Conditions */}
+            <div className="flex items-start gap-2 pt-1">
+              <input
+                type="checkbox"
+                id="terms"
+                checked={agreedToTerms}
+                onChange={(e) => setAgreedToTerms(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-gray-300 accent-orange-600 cursor-pointer"
+              />
+              <label htmlFor="terms" className="text-xs text-gray-600 cursor-pointer leading-relaxed">
+                I agree to the{" "}
+                <Link href="/terms" className="text-orange-600 font-semibold hover:underline">
+                  Terms and Conditions
+                </Link>{" "}
+                and{" "}
+                <Link href="/privacy" className="text-orange-600 font-semibold hover:underline">
+                  Privacy Policy
+                </Link>
+                .
+              </label>
             </div>
 
             <button

@@ -21,8 +21,12 @@ export default function OrderVerificationPage() {
     localStorage.removeItem("cart");
 
     // 1. Fetch order details from FastAPI
-    fetch(`${BACKEND_URL}/orders/${orderId}`)
-      .then((res) => res.json())
+    const token = localStorage.getItem("token") || localStorage.getItem("access_token");
+    fetch(`${BACKEND_URL}/orders/${orderId}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => {
+        if (!res.ok) throw new Error("Please log in to view this order.");
+        return res.json();
+      })
       .then((data) => {
         setOrder(data);
         // FIX: Only set submitted to true if a receipt has actually been uploaded (has transaction_ref)

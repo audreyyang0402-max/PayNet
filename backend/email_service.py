@@ -16,6 +16,7 @@ SMTP_HOST     = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER     = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+FRONTEND_URL  = os.getenv("FRONTEND_URL", "https://payvolution.app")
 
 
 def _currency(amount) -> str:
@@ -42,7 +43,7 @@ def _send_via_gmail(to_email: str, subject: str, html: str) -> bool:
         msg["To"]      = to_email
         msg.attach(MIMEText(html, "html"))
 
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:  # a blocked port fails in 15 s instead of hanging
             server.ehlo()
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
@@ -64,11 +65,36 @@ def send_order_ready_email(
     pickup_time: str,
     items: list[dict],   # [{"name": str, "quantity": int, "price": float}]
     total_price: float,
+    order_id: str = "",
+    receipt_url: str | None = None,
 ) -> bool:
     """
     Send a 'Your food is ready!' email to the customer.
     Returns True on success, False on failure (order status update still proceeds).
     """
+    # Names, store details and order numbers can be typed by users, so escape them before they go into HTML.
+    customer_name = escape(customer_name or "there")
+    merchant_name = escape(merchant_name or "")
+    merchant_location = escape(merchant_location or "")
+    order_number = escape(order_number or "")
+    pickup_time = escape(pickup_time or "")
+
+    order_link = f"{FRONTEND_URL}/orders/{order_id}" if order_id else FRONTEND_URL
+
+    if receipt_url:
+        receipt_block = f"""
+        <a href="{receipt_url}" target="_blank" rel="noopener noreferrer">
+          <img src="{receipt_url}" alt="Payment receipt"
+            style="max-width:220px;max-height:220px;border-radius:10px;border:1px solid #bfdbfe;
+                   margin-bottom:12px;display:inline-block;" />
+        </a>
+        <p style="margin:0 0 12px;font-size:11px;color:#94a3b8;">
+          (This thumbnail link is only valid for about an hour — use the button below any time after that.)
+        </p>
+        """
+    else:
+        receipt_block = ""
+
     # Build item rows
     item_rows = "".join(
         f"""
@@ -150,6 +176,26 @@ def send_order_ready_email(
                     </p>
                     <p style="margin:0;font-size:14px;color:#1e293b;">
                       🕐 Slot: <strong>{pickup_time}</strong>
+                    </p>
+                  </td></tr>
+                </table>
+
+                <!-- Proof of Order / Payment -->
+                <table width="100%" cellpadding="0" cellspacing="0"
+                  style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:12px;
+                         padding:18px 24px;margin-bottom:24px;text-align:center;">
+                  <tr><td>
+                    <p style="margin:0 0 10px;font-size:11px;font-weight:700;color:#2563eb;
+                               text-transform:uppercase;letter-spacing:1px;">Show This At The Stall</p>
+                    {receipt_block}
+                    <a href="{order_link}"
+                      style="display:inline-block;margin-top:4px;background:#1e293b;color:#ffffff;
+                             text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;
+                             border-radius:10px;">
+                      View My Order &amp; Receipt →
+                    </a>
+                    <p style="margin:10px 0 0;font-size:11px;color:#64748b;">
+                      This link always shows your order details and payment receipt — handy if the stall asks for proof.
                     </p>
                   </td></tr>
                 </table>

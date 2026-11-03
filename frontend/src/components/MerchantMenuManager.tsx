@@ -354,7 +354,10 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error("Failed to delete pickup slot.");
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail || "Failed to delete pickup slot.");
+      }
 
       setSlots(slots.filter((s) => s.id !== slotId));
     } catch (err: any) {
@@ -427,9 +430,16 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
           "Authorization": `Bearer ${token}`
         },
       });
-      if (!res.ok) throw new Error("Failed to delete item.");
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.detail || "Failed to delete item.");
 
-      setMenuItems(menuItems.filter((i) => i.id !== itemId));
+      if (result.hidden) {
+        // The item has past orders, so the backend hid it instead of deleting it.
+        setMenuItems(menuItems.map((i) => (i.id === itemId ? { ...i, is_available: false } : i)));
+        alert(result.message);
+      } else {
+        setMenuItems(menuItems.filter((i) => i.id !== itemId));
+      }
     } catch (err: any) {
       alert(err.message);
     }
@@ -519,7 +529,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
         {/* ────────────────────────────────────────────────────────────────
             FORMS GRID: Food Product Information & Pickup Slots
         ──────────────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className={`grid gap-6 ${embedded ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-3"}`}>
           {/* ── Form: Add Food Product (2 Columns on lg) ── */}
           <div className="lg:col-span-2 bg-white p-5 sm:p-6 rounded-2xl shadow-sm border border-orange-100 space-y-5">
             <div>
@@ -840,8 +850,8 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
             </form>
           </div>
 
-          {/* ── Pickup Slot Generator (1 Column on lg) ── */}
-          <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-sm border border-orange-100 h-fit space-y-4">
+          {/* ── Pickup Slot Generator (1 Column on lg) — hidden when embedded in dashboard Pickup Slots tab ── */}
+          {!embedded && <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-sm border border-orange-100 h-fit space-y-4">
             <div>
               <span className="text-[10px] font-bold uppercase tracking-wider text-orange-600">
                 Capacity & Timing
@@ -929,7 +939,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
                 </div>
               )}
             </div>
-          </div>
+          </div>}
         </div>
 
         {/* ────────────────────────────────────────────────────────────────
@@ -973,6 +983,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
                       <img
                         src={item.image_url}
                         alt={item.name}
+                        loading="lazy"
                         className="h-full w-full object-cover"
                       />
                     ) : (

@@ -1,2 +1,13 @@
-// This page has been removed. Rental functionality is no longer part of this project.
-export default function RemovedPage() { return null; }
+// src/app/vendor/rental/page.tsx
+// Rentals have been removed from Payvolution. Redirect to home.
+"use client";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+
+export default function RentalRedirect() {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace("/");
+  }, [router]);
+  return null;
+}
