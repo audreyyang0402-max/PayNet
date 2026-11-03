@@ -1,6 +1,6 @@
 // src/app/admin/transactions/page.tsx
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BACKEND_URL } from "@/lib/backend-url";
 
@@ -37,32 +37,70 @@ const STATUS_STYLES: Record<string, string> = {
   cancelled: "bg-red-100 text-red-700",
 };
 
+// Filter dropdown options — pending_verification and the legacy "pending" status both mean
+// the same thing to a human ("Verifying Payment"), so they share one filter entry instead of
+// showing up as two identical-looking options in the dropdown.
+const STATUS_FILTER_OPTIONS: { value: string; label: string; matches: string[] }[] = [
+  { value: "pending_verification", label: "Verifying Payment", matches: ["pending_verification", "pending"] },
+  { value: "preparing", label: "Preparing", matches: ["preparing"] },
+  { value: "ready", label: "Ready For Pickup", matches: ["ready"] },
+  { value: "completed", label: "Completed", matches: ["completed"] },
+  { value: "rejected", label: "Rejected", matches: ["rejected"] },
+  { value: "cancelled", label: "Cancelled", matches: ["cancelled"] },
+];
+
+const AUTO_REFRESH_MS = 20_000;
+
 const money = (n: number) => `RM ${Number(n).toFixed(2)}`;
 const fmt = (ts: string) => new Date(ts).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", dateStyle: "medium", timeStyle: "short" });
+const fmtClock = (d: Date) => d.toLocaleTimeString("en-MY", { timeZone: "Asia/Kuala_Lumpur", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
 export default function AdminTransactions() {
   const router = useRouter();
 
   const [orders, setOrders] = useState<TxOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const [statusFilter, setStatusFilter] = useState("all");
   const [merchantFilter, setMerchantFilter] = useState("all");
   const [search, setSearch] = useState("");
 
+  const loadOrders = useCallback(async (opts: { silent?: boolean } = {}) => {
+    const token = localStorage.getItem("token");
+    if (opts.silent) setRefreshing(true); else setLoading(true);
+    try {
+      const r = await fetch(`${BACKEND_URL}/admin/orders`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+      if (r.status === 401) { router.replace("/login"); return; }
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.detail || "Could not load transactions.");
+      const data = await r.json();
+      setOrders(data);
+      setError("");
+      setLastUpdated(new Date());
+    } catch (e: any) {
+      // A background refresh hiccup shouldn't blow away a table that's already loaded —
+      // only surface the error banner on the very first load.
+      if (!opts.silent) setError(e.message);
+    } finally {
+      if (opts.silent) setRefreshing(false); else setLoading(false);
+    }
+  }, [router]);
+
   useEffect(() => {
     if (localStorage.getItem("userRole") !== "admin") { router.replace("/login"); return; }
-    const token = localStorage.getItem("token");
-    fetch(`${BACKEND_URL}/admin/orders`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
-      .then(async (r) => {
-        if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.detail || "Could not load transactions.");
-        return r.json();
-      })
-      .then((data) => setOrders(data))
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [router]);
+    loadOrders();
+  }, [router, loadOrders]);
+
+  // Keep the ledger live without the admin needing to refresh the page — paused while the
+  // tab isn't visible so we're not polling the backend for a screen nobody's looking at.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") loadOrders({ silent: true });
+    }, AUTO_REFRESH_MS);
+    return () => clearInterval(interval);
+  }, [loadOrders]);
 
   const merchants = useMemo(() => {
     const map = new Map<string, string>();
@@ -73,7 +111,10 @@ export default function AdminTransactions() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return orders.filter((o) => {
-      if (statusFilter !== "all" && o.status !== statusFilter) return false;
+      if (statusFilter !== "all") {
+        const group = STATUS_FILTER_OPTIONS.find((opt) => opt.value === statusFilter);
+        if (group && !group.matches.includes(o.status)) return false;
+      }
       if (merchantFilter !== "all" && o.merchant_id !== merchantFilter) return false;
       if (q && !(o.order_number?.toLowerCase().includes(q) || o.customer_name.toLowerCase().includes(q))) return false;
       return true;
@@ -99,10 +140,30 @@ export default function AdminTransactions() {
             <p className="text-xs font-black uppercase tracking-widest text-stone-400">Site-wide ledger</p>
             <h1 className="mt-0.5 text-xl font-black text-slate-900">Transactions</h1>
           </div>
-          <p className="text-xs text-stone-500">
-            {filtered.length} of {orders.length} orders{orders.length >= 500 ? " (showing the 500 most recent)" : ""}
-            {statusFilter === "all" && <> &middot; <strong className="text-emerald-700">{money(totalRevenue)}</strong> completed in view</>}
-          </p>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1 text-[10px] font-bold uppercase text-emerald-600">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /> Live
+              </span>
+              {lastUpdated && (
+                <span className="text-[11px] text-stone-400">Updated {fmtClock(lastUpdated)}</span>
+              )}
+              <button
+                type="button"
+                onClick={() => loadOrders({ silent: true })}
+                disabled={refreshing}
+                title="Refresh now"
+                className="flex items-center gap-1 rounded-lg border border-stone-200 bg-white px-2.5 py-1 text-[11px] font-bold text-stone-600 hover:bg-stone-50 disabled:opacity-50"
+              >
+                <span className={refreshing ? "inline-block animate-spin" : "inline-block"}>⟳</span>
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
+            <p className="text-xs text-stone-500">
+              {filtered.length} of {orders.length} orders{orders.length >= 500 ? " (showing the 500 most recent)" : ""}
+              {statusFilter === "all" && <> &middot; <strong className="text-emerald-700">{money(totalRevenue)}</strong> completed in view</>}
+            </p>
+          </div>
         </div>
 
         {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
@@ -112,8 +173,8 @@ export default function AdminTransactions() {
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs font-semibold text-stone-700">
             <option value="all">All statuses</option>
-            {Object.entries(STATUS_LABELS).map(([key, label]) => (
-              <option key={key} value={key}>{label}</option>
+            {STATUS_FILTER_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
           <select value={merchantFilter} onChange={(e) => setMerchantFilter(e.target.value)}
