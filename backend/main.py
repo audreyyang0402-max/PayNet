@@ -1495,7 +1495,15 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
         .order_by(Order.created_at.desc())
     )
     orders = result.scalars().all()
-    
+
+    # Vendors need the pickup time to actually prep in time — batch-fetch every
+    # slot referenced by these orders in one query instead of one lookup each.
+    slot_ids = {order.pickup_slot_id for order in orders if order.pickup_slot_id}
+    pickup_times: dict[str, Optional[str]] = {}
+    if slot_ids:
+        slot_rows = (await db.execute(select(PickupSlot.id, PickupSlot.time_slot).where(PickupSlot.id.in_(slot_ids)))).all()
+        pickup_times = {str(slot_id): (time_slot.isoformat() if time_slot else None) for slot_id, time_slot in slot_rows}
+
     response = []
     for order in orders:
         items_data = [
@@ -1515,6 +1523,7 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
             "status": order.status,
             "total_price": float(order.total_price),
             "created_at": order.created_at.isoformat() if order.created_at else None,
+            "pickup_time": pickup_times.get(str(order.pickup_slot_id)) if order.pickup_slot_id else None,
             "transaction_ref": receipt_link(order.transaction_ref),
             "order_number": getattr(order, "order_number", None),
             "items": items_data

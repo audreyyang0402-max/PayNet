@@ -2,7 +2,7 @@
 "use client";
 
 import { BACKEND_URL } from "@/lib/backend-url";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import BackLink from "@/components/BackLink";
@@ -56,6 +56,9 @@ export default function OrderReceiptPage() {
   const [data, setData] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const receiptRef = useRef<HTMLDivElement>(null);
+  const [exporting, setExporting] = useState<"image" | "pdf" | null>(null);
+  const [exportError, setExportError] = useState("");
 
   useEffect(() => {
     async function fetchOrderDetails() {
@@ -82,6 +85,72 @@ export default function OrderReceiptPage() {
     fetchOrderDetails();
   }, [orderId]);
 
+  // Export libraries (html2canvas + jsPDF) are loaded from CDN on demand, not
+  // bundled, so saving a receipt doesn't cost every visitor extra JS.
+  function loadScript(src: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[src="${src}"]`) as HTMLScriptElement | null;
+      if (existing) {
+        if ((existing as any)._loaded) { resolve(); return; }
+        existing.addEventListener("load", () => resolve());
+        existing.addEventListener("error", () => reject(new Error("Could not load a required library. Check your connection and try again.")));
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = src;
+      script.async = true;
+      script.onload = () => { (script as any)._loaded = true; resolve(); };
+      script.onerror = () => reject(new Error("Could not load a required library. Check your connection and try again."));
+      document.body.appendChild(script);
+    });
+  }
+
+  async function ensureExportLibs(): Promise<{ html2canvas: any; jsPDF: any }> {
+    if (!(window as any).html2canvas) {
+      await loadScript("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js");
+    }
+    if (!(window as any).jspdf) {
+      await loadScript("https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js");
+    }
+    return { html2canvas: (window as any).html2canvas, jsPDF: (window as any).jspdf.jsPDF };
+  }
+
+  const receiptFileBase = () => (data?.order_number || String(orderId || "receipt")).replace(/[^a-zA-Z0-9-]/g, "");
+
+  const handleExportImage = async () => {
+    if (!receiptRef.current || exporting) return;
+    setExportError(""); setExporting("image");
+    try {
+      const { html2canvas } = await ensureExportLibs();
+      const canvas = await html2canvas(receiptRef.current, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+      const link = document.createElement("a");
+      link.download = `receipt-${receiptFileBase()}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "Could not save the receipt. Please try again.");
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    if (!receiptRef.current || exporting) return;
+    setExportError(""); setExporting("pdf");
+    try {
+      const { html2canvas, jsPDF } = await ensureExportLibs();
+      const canvas = await html2canvas(receiptRef.current, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ orientation: "portrait", unit: "px", format: [canvas.width, canvas.height] });
+      pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
+      pdf.save(`receipt-${receiptFileBase()}.pdf`);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "Could not save the receipt. Please try again.");
+    } finally {
+      setExporting(null);
+    }
+  };
+
   const statusLabel = data ? (STATUS_LABELS[data.status] || data.status) : "";
   const statusStyle = data ? (STATUS_STYLES[data.status] || "bg-gray-200 text-gray-800") : "";
 
@@ -96,13 +165,29 @@ export default function OrderReceiptPage() {
         {data && (
           <div className="space-y-5">
 
-            {/* Proof-of-order banner */}
-            {(data.status === "preparing" || data.status === "ready" || data.status === "pending_verification" || data.status === "pending") && (
-              <div className="rounded-2xl bg-slate-900 text-white px-5 py-4 text-center">
-                <p className="text-xs font-bold uppercase tracking-widest text-slate-300 mb-1">Proof of Order</p>
-                <p className="text-sm text-slate-100">Show this screen to the stall at pickup if asked.</p>
+            {/* Save/export receipt */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+              <p className="text-xs text-gray-500 flex-1">Save a copy of this receipt to show at pickup or keep for your records.</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportImage}
+                  disabled={exporting !== null}
+                  className="flex-1 sm:flex-none rounded-xl border border-orange-200 bg-orange-50 px-4 py-2 text-xs font-semibold text-orange-700 hover:bg-orange-100 disabled:opacity-50 transition"
+                >
+                  {exporting === "image" ? "Saving..." : "Save as Picture"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportPdf}
+                  disabled={exporting !== null}
+                  className="flex-1 sm:flex-none rounded-xl border border-orange-200 bg-orange-50 px-4 py-2 text-xs font-semibold text-orange-700 hover:bg-orange-100 disabled:opacity-50 transition"
+                >
+                  {exporting === "pdf" ? "Saving..." : "Save as PDF"}
+                </button>
               </div>
-            )}
+              {exportError && <p className="text-xs text-red-600 w-full">{exportError}</p>}
+            </div>
 
             {/* Rejected-order banner: explains why and points to a fresh order */}
             {data.status === "rejected" && (
@@ -123,6 +208,9 @@ export default function OrderReceiptPage() {
                 )}
               </div>
             )}
+
+            {/* Receipt (captured together for export) */}
+            <div ref={receiptRef} className="space-y-5">
 
             {/* Header card */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 space-y-5">
@@ -194,6 +282,7 @@ export default function OrderReceiptPage() {
                   <img
                     src={data.transaction_ref}
                     alt="Payment receipt screenshot"
+                    crossOrigin="anonymous"
                     className="w-full max-w-xs mx-auto rounded-xl border border-gray-200 object-contain hover:opacity-90 transition cursor-pointer"
                   />
                   <p className="text-center text-xs text-gray-400 mt-2">Tap to view full size</p>
@@ -201,6 +290,8 @@ export default function OrderReceiptPage() {
               ) : (
                 <p className="text-sm text-gray-400 text-center py-6">No receipt uploaded for this order yet.</p>
               )}
+            </div>
+
             </div>
 
           </div>

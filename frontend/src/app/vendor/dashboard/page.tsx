@@ -39,6 +39,7 @@ interface Order {
   customer_id: string;
   customer_name?: string;
   transaction_ref?: string;
+  pickup_time?: string | null;
   items?: OrderItem[];
 }
 
@@ -488,6 +489,9 @@ export default function MerchantDashboard() {
                         <p className="text-xs font-bold text-blue-600 font-mono">{order.order_number || `#EX-${order.id.slice(0, 6)}`}</p>
                         <p className="text-xs font-semibold text-gray-800 mt-0.5">👤 Customer: {order.customer_name || "Customer"}</p>
                         <p className="text-xs text-gray-500">Placed on: {new Date(order.created_at).toLocaleString()}</p>
+                        {order.pickup_time && (
+                          <p className="text-xs font-semibold text-orange-700 mt-0.5">🕐 Pickup slot: {new Date(order.pickup_time).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" })}</p>
+                        )}
                       </div>
                       <span className={`text-xs font-semibold px-2.5 py-1 rounded-md uppercase ${
                         order.status === "pending_verification" ? "bg-yellow-100 text-yellow-800" :
