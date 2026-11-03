@@ -254,6 +254,8 @@ ORDER_TRANSITIONS = {
     "ready": {"completed"},
 }
 
+TERMINAL_ORDER_STATUSES = ("completed", "rejected", "cancelled", "cancelled_timeout")
+
 
 def new_order_number() -> str:
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O or 1/I mix-ups
@@ -1184,20 +1186,34 @@ async def delete_pickup_slot(
         raise HTTPException(status_code=404, detail="Pickup slot not found.")
     
     merchant = await db.get(Merchant, slot.merchant_id)
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant not found.")
     if current_user.role != "admin" and (current_user.role != "merchant" or merchant.user_id != current_user.id):
         raise HTTPException(status_code=403, detail="Access denied.")
-    has_orders = (await db.execute(select(func.count(Order.id)).where(Order.pickup_slot_id == slot.id))).scalar_one()
-    if has_orders:
-        raise HTTPException(status_code=400, detail="This pickup slot already has orders, so it can't be deleted.")
+
+    # Expire abandoned drafts before deciding whether this slot is still in use.
+    await expire_stale_drafts(db)
+    active_orders = (await db.execute(
+        select(func.count(Order.id)).where(
+            Order.pickup_slot_id == slot.id,
+            Order.status.notin_(TERMINAL_ORDER_STATUSES),
+        )
+    )).scalar_one()
+    if active_orders:
+        raise HTTPException(
+            status_code=400,
+            detail="This pickup slot still has active orders. Complete or reject them before deleting it.",
+        )
     try:
-        # Null out pickup_slot_id on any orders referencing this slot
+        # Completed/cancelled orders stay in history, but no longer need to hold
+        # a foreign-key reference to a schedule entry the merchant is removing.
         linked_orders = await db.execute(select(Order).where(Order.pickup_slot_id == slot_id))
         for order in linked_orders.scalars().all():
             order.pickup_slot_id = None
         await db.flush()
         await db.delete(slot)
         await db.commit()
-        return {"message": "Pickup slot deleted successfully"}
+        return {"message": "Pickup slot deleted successfully. Completed order history was preserved."}
     except Exception as e:
         await db.rollback()
         logger.exception("Database error deleting pickup slot")
@@ -2091,13 +2107,23 @@ async def admin_delete_pickup_slot(
     slot = await db.get(PickupSlot, slot_id)
     if not slot:
         raise HTTPException(status_code=404, detail="Pickup slot not found.")
-    has_orders = (await db.execute(select(func.count(Order.id)).where(Order.pickup_slot_id == slot.id))).scalar_one()
-    if has_orders:
-        raise HTTPException(status_code=400, detail="This pickup slot already has orders, so it can't be deleted.")
+    await expire_stale_drafts(db)
+    active_orders = (await db.execute(
+        select(func.count(Order.id)).where(
+            Order.pickup_slot_id == slot.id,
+            Order.status.notin_(TERMINAL_ORDER_STATUSES),
+        )
+    )).scalar_one()
+    if active_orders:
+        raise HTTPException(status_code=400, detail="This pickup slot still has active orders.")
     try:
+        linked_orders = await db.execute(select(Order).where(Order.pickup_slot_id == slot_id))
+        for order in linked_orders.scalars().all():
+            order.pickup_slot_id = None
+        await db.flush()
         await db.delete(slot)
         await db.commit()
-        return {"message": "Pickup slot deleted."}
+        return {"message": "Pickup slot deleted. Completed order history was preserved."}
     except Exception as e:
         await db.rollback()
         logger.exception("Database error in admin pickup slot delete")
