@@ -18,7 +18,9 @@ const csp = [
   // (vendors can set any image URL), so img-src allows any HTTPS source rather
   // than a fixed allowlist — a mismatch here silently blocks real product images.
   "img-src 'self' data: blob: https:",
-  "script-src 'self' 'unsafe-inline'",
+  // cdn.jsdelivr.net is explicitly trusted (not a wildcard) so the order-receipt
+  // export feature can load html2canvas/jsPDF on demand; nothing else is allowed.
+  "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
   "frame-ancestors 'none'",

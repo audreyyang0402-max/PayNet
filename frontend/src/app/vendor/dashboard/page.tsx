@@ -61,6 +61,23 @@ const TAB_LABELS: Record<Tab, string> = {
   payment: "Payment Setup",
 };
 
+// Single place that decides how each order status reads and is colored in
+// the Manage Orders card — keeps the badge, the left accent stripe and the
+// label in sync instead of three separate ad-hoc checks.
+const ORDER_STATUS_META: Record<string, { label: string; badge: string; accent: string }> = {
+  pending_verification: { label: "Verifying Payment", badge: "bg-amber-100 text-amber-800", accent: "border-l-amber-400" },
+  pending: { label: "Verifying Payment", badge: "bg-amber-100 text-amber-800", accent: "border-l-amber-400" },
+  preparing: { label: "Preparing", badge: "bg-blue-100 text-blue-800", accent: "border-l-blue-400" },
+  ready: { label: "Ready for Pickup", badge: "bg-emerald-100 text-emerald-800", accent: "border-l-emerald-400" },
+  completed: { label: "Completed", badge: "bg-stone-100 text-stone-600", accent: "border-l-stone-300" },
+  rejected: { label: "Rejected", badge: "bg-red-100 text-red-800", accent: "border-l-red-400" },
+  cancelled: { label: "Cancelled", badge: "bg-red-100 text-red-800", accent: "border-l-red-400" },
+};
+const DEFAULT_STATUS_META = { badge: "bg-stone-100 text-stone-600", accent: "border-l-stone-300" };
+function statusMeta(status: string) {
+  return ORDER_STATUS_META[status] || { ...DEFAULT_STATUS_META, label: status };
+}
+
 export default function MerchantDashboard() {
   const router = useRouter();
   const [merchant, setMerchant] = useState<MerchantProfile | null>(null);
@@ -483,61 +500,66 @@ export default function MerchantDashboard() {
             ) : (
               <div className="space-y-4">
                 {orders.filter(o => orderFilter === "all" || (orderFilter === "active" ? ["pending", "pending_verification", "preparing", "ready"].includes(o.status) : o.status === orderFilter)).map((order) => (
-                  <div key={order.id} className="p-5 rounded-xl border border-gray-200 bg-gray-50 space-y-3">
-                    <div className="flex justify-between items-start">
+                  <div key={order.id} className={`rounded-2xl border border-gray-200 border-l-4 ${statusMeta(order.status).accent} bg-white p-5 shadow-sm transition hover:shadow-md`}>
+                    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 pb-4">
                       <div>
-                        <p className="text-xs font-bold text-blue-600 font-mono">{order.order_number || `#EX-${order.id.slice(0, 6)}`}</p>
-                        <p className="text-xs font-semibold text-gray-800 mt-0.5">👤 Customer: {order.customer_name || "Customer"}</p>
-                        <p className="text-xs text-gray-500">Placed on: {new Date(order.created_at).toLocaleString()}</p>
-                        {order.pickup_time && (
-                          <p className="text-xs font-semibold text-orange-700 mt-0.5">🕐 Pickup slot: {new Date(order.pickup_time).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" })}</p>
-                        )}
+                        <p className="font-mono text-sm font-bold text-gray-900">{order.order_number || `#EX-${order.id.slice(0, 6)}`}</p>
+                        <dl className="mt-2 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs">
+                          <dt className="text-gray-400">Customer</dt>
+                          <dd className="font-semibold text-gray-800">{order.customer_name || "Customer"}</dd>
+                          <dt className="text-gray-400">Placed on</dt>
+                          <dd className="text-gray-600">{new Date(order.created_at).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", dateStyle: "medium", timeStyle: "short" })}</dd>
+                          {order.pickup_time && (
+                            <>
+                              <dt className="text-gray-400">Pickup slot</dt>
+                              <dd className="font-semibold text-orange-700">{new Date(order.pickup_time).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</dd>
+                            </>
+                          )}
+                        </dl>
                       </div>
-                      <span className={`text-xs font-semibold px-2.5 py-1 rounded-md uppercase ${
-                        order.status === "pending_verification" ? "bg-yellow-100 text-yellow-800" :
-                        order.status === "pending" ? "bg-yellow-100 text-yellow-800" :
-                        order.status === "preparing" ? "bg-blue-100 text-blue-800" :
-                        order.status === "ready" ? "bg-green-100 text-green-800" :
-                        order.status === "rejected" || order.status === "cancelled" ? "bg-red-100 text-red-800" : "bg-gray-200 text-gray-800"
-                      }`}>{order.status}</span>
+                      <span className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${statusMeta(order.status).badge}`}>{statusMeta(order.status).label}</span>
                     </div>
                     {order.transaction_ref && (
-                      <div className="bg-white p-3 rounded-lg border border-yellow-200 space-y-2">
-                        <p className="text-xs font-semibold text-gray-700">Student Uploaded Payment Receipt:</p>
-                        <a href={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`} target="_blank" rel="noopener noreferrer">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`}
-                            alt="Payment Receipt Screenshot" loading="lazy" className="w-32 h-32 object-cover rounded-lg border hover:opacity-90 transition cursor-pointer" />
-                        </a>
-                        <p className="text-[10px] text-gray-400">Click image to view full size</p>
-                      </div>
+                      <a href={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`} target="_blank" rel="noopener noreferrer"
+                        className="mt-4 flex items-center gap-3 rounded-xl border border-stone-200 bg-stone-50 p-3 transition hover:bg-stone-100">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`}
+                          alt="Payment receipt screenshot" loading="lazy" className="h-14 w-14 shrink-0 rounded-lg border border-stone-200 object-cover" />
+                        <div className="text-xs">
+                          <p className="font-semibold text-stone-700">Payment receipt uploaded</p>
+                          <p className="text-stone-400">Tap to view full size</p>
+                        </div>
+                      </a>
                     )}
-                    <div className="border-t border-gray-200 pt-2 space-y-1">
-                      <p className="text-xs font-bold text-gray-700 uppercase tracking-wider">Dishes Ordered:</p>
+                    <div className="mt-4 border-t border-gray-100 pt-4">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Items</p>
                       {!order.items || order.items.length === 0 ? (
                         <p className="text-xs text-gray-400">No items found.</p>
                       ) : (
-                        order.items.map((item, idx) => (
-                          <div key={idx} className="flex justify-between gap-3 text-xs text-gray-700 py-0.5">
-                            <div className="min-w-0">
-                              <span className="font-medium">{item.name} <span className="text-gray-500 font-normal">x{item.quantity}</span></span>
-                              {item.special_instructions && (
-                                <p className="mt-1 rounded-md bg-orange-50 px-2 py-1 text-[11px] font-semibold leading-relaxed text-orange-800">
-                                  Customer request: {item.special_instructions}
-                                </p>
-                              )}
-                            </div>
-                            <span>RM {Number(item.price_at_order * item.quantity).toFixed(2)}</span>
-                          </div>
-                        ))
+                        <ul className="space-y-2">
+                          {order.items.map((item, idx) => (
+                            <li key={idx} className="flex items-start justify-between gap-3 text-sm">
+                              <div className="min-w-0">
+                                <span className="font-medium text-gray-800">{item.name}</span>
+                                <span className="ml-1.5 text-gray-400">×{item.quantity}</span>
+                                {item.special_instructions && (
+                                  <p className="mt-1 rounded-md bg-orange-50 px-2 py-1 text-xs font-medium text-orange-700">
+                                    Note: {item.special_instructions}
+                                  </p>
+                                )}
+                              </div>
+                              <span className="shrink-0 text-gray-700">RM {Number(item.price_at_order * item.quantity).toFixed(2)}</span>
+                            </li>
+                          ))}
+                        </ul>
                       )}
                     </div>
-                    <div className="border-t border-gray-200 pt-3 flex justify-between items-center font-bold text-gray-900">
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
                       <div>
-                        <span className="text-xs uppercase text-gray-500 font-semibold mr-2">Total Amount</span>
-                        <span className="text-orange-600 text-sm">RM {Number(order.total_price).toFixed(2)}</span>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Total</p>
+                        <p className="text-base font-bold text-gray-900">RM {Number(order.total_price).toFixed(2)}</p>
                       </div>
-                      <div className="space-x-2">
+                      <div className="flex gap-2">
                         {(order.status === "pending_verification" || order.status === "pending") && (
                           <button onClick={() => { if (confirm("Reject this order? Use this when the payment receipt is missing or not genuine. The pickup place is freed.")) handleUpdateOrderStatus(order.id, "rejected"); }}
                             disabled={updatingOrderId === order.id}
@@ -549,7 +571,7 @@ export default function MerchantDashboard() {
                           <button onClick={() => handleUpdateOrderStatus(order.id, "preparing")}
                             disabled={updatingOrderId === order.id}
                             className="bg-green-600 hover:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all shadow-sm disabled:cursor-wait disabled:opacity-60">
-                            {updatingOrderId === order.id ? "Updating…" : "Verify & Accept ✓"}
+                            {updatingOrderId === order.id ? "Updating…" : "Verify & Accept"}
                           </button>
                         )}
                         {order.status === "pending" && (
