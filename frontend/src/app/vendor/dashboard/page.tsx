@@ -67,6 +67,7 @@ export default function MerchantDashboard() {
   const [orderFilter, setOrderFilter] = useState("active");
   const [notice, setNotice] = useState("");
   const [orderError, setOrderError] = useState("");
+  const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
   const seenOrders = useRef<Set<string> | null>(null);
 
   // Slot summary for tab label badge — loaded at startup AND updated live
@@ -260,6 +261,8 @@ export default function MerchantDashboard() {
   };
 
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
+    if (updatingOrderId) return;
+    setUpdatingOrderId(orderId);
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`${BACKEND_URL}/orders/${orderId}/status`, {
@@ -272,7 +275,14 @@ export default function MerchantDashboard() {
         throw new Error(errData.detail || "Failed to update order status.");
       }
       setOrders(current => current.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
-    } catch (err: any) { alert(err.message); }
+    } catch (err: unknown) {
+      const message = err instanceof TypeError && err.message === "Failed to fetch"
+        ? "The order server could not be reached. Your order was not changed; please wait a moment and try again."
+        : err instanceof Error ? err.message : "Failed to update order status.";
+      alert(message);
+    } finally {
+      setUpdatingOrderId(null);
+    }
   };
 
   const handleLogout = () => {
@@ -526,32 +536,37 @@ export default function MerchantDashboard() {
                       <div className="space-x-2">
                         {(order.status === "pending_verification" || order.status === "pending") && (
                           <button onClick={() => { if (confirm("Reject this order? Use this when the payment receipt is missing or not genuine. The pickup place is freed.")) handleUpdateOrderStatus(order.id, "rejected"); }}
-                            className="rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50">
-                            Reject
+                            disabled={updatingOrderId === order.id}
+                            className="rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60">
+                            {updatingOrderId === order.id ? "Updating…" : "Reject"}
                           </button>
                         )}
                         {order.status === "pending_verification" && (
                           <button onClick={() => handleUpdateOrderStatus(order.id, "preparing")}
-                            className="bg-green-600 hover:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all shadow-sm">
-                            Verify & Accept ✓
+                            disabled={updatingOrderId === order.id}
+                            className="bg-green-600 hover:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all shadow-sm disabled:cursor-wait disabled:opacity-60">
+                            {updatingOrderId === order.id ? "Updating…" : "Verify & Accept ✓"}
                           </button>
                         )}
                         {order.status === "pending" && (
                           <button onClick={() => handleUpdateOrderStatus(order.id, "preparing")}
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all">
-                            Start Preparing
+                            disabled={updatingOrderId === order.id}
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all disabled:cursor-wait disabled:opacity-60">
+                            {updatingOrderId === order.id ? "Updating…" : "Start Preparing"}
                           </button>
                         )}
                         {order.status === "ready" && (
                           <button onClick={() => handleUpdateOrderStatus(order.id, "completed")}
-                            className="rounded-lg bg-emerald-700 px-3.5 py-1.5 text-xs font-semibold text-white">
-                            Mark Collected
+                            disabled={updatingOrderId === order.id}
+                            className="rounded-lg bg-emerald-700 px-3.5 py-1.5 text-xs font-semibold text-white disabled:cursor-wait disabled:opacity-60">
+                            {updatingOrderId === order.id ? "Updating…" : "Mark Collected"}
                           </button>
                         )}
                         {order.status === "preparing" && (
                           <button onClick={() => handleUpdateOrderStatus(order.id, "ready")}
-                            className="bg-green-600 hover:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all">
-                            Mark Ready
+                            disabled={updatingOrderId === order.id}
+                            className="bg-green-600 hover:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all disabled:cursor-wait disabled:opacity-60">
+                            {updatingOrderId === order.id ? "Updating…" : "Mark Ready"}
                           </button>
                         )}
                       </div>
