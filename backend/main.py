@@ -2070,7 +2070,6 @@ async def update_order_status(
     if new_status not in ORDER_TRANSITIONS.get(order.status, set()):
         raise HTTPException(status_code=400, detail=f"An order that is '{order.status}' can't be changed to '{new_status}'.")
 
-    refund_case = None
     try:
         order.status = new_status
         if new_status == "rejected":
@@ -2081,26 +2080,6 @@ async def update_order_status(
             if status_update.rejection_reason == "other" and not order.rejection_note:
                 raise HTTPException(status_code=422, detail="Explain the other rejection reason to the customer.")
             await release_slot(order, db)
-            if status_update.rejection_reason in REFUND_ELIGIBLE_REJECTION_REASONS and order.transaction_ref:
-                refund_case = (await db.execute(
-                    select(RefundRequest).where(RefundRequest.order_id == order.id)
-                )).scalars().first()
-                if not refund_case:
-                    refund_case = RefundRequest(
-                        order_id=order.id,
-                        customer_id=order.customer_id,
-                        merchant_id=order.merchant_id,
-                        amount=order.total_price,
-                        status="awaiting_customer",
-                        reason=status_update.rejection_reason,
-                        rejection_note=order.rejection_note,
-                    )
-                    db.add(refund_case)
-                    await db.flush()
-                    record_refund_event(
-                        db, refund_case, current_user, "refund_case_opened", None,
-                        note=order.rejection_note or status_update.rejection_reason,
-                    )
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -2114,7 +2093,7 @@ async def update_order_status(
         )
         raise HTTPException(
             status_code=409,
-            detail=f"The rejection conflicted with an existing order or refund record. Nothing was changed. Support reference: {reference}.",
+            detail=f"The rejection conflicted with an existing order record. Nothing was changed. Support reference: {reference}.",
         ) from exc
     except DBAPIError as exc:
         await db.rollback()
@@ -2138,6 +2117,47 @@ async def update_order_status(
             status_code=500,
             detail=f"The order could not be updated. Nothing was changed. Send support reference {reference} to the admin.",
         ) from exc
+
+    # The rejection itself is now safely committed. Opening a refund case is a
+    # separate, best-effort step done afterwards: if it fails for any reason
+    # (a stray duplicate row, a lock conflict, anything), that must never roll
+    # back or block the rejection the merchant just made. Worst case, an
+    # admin opens the refund case by hand from the admin panel.
+    refund_case = None
+    if (
+        new_status == "rejected"
+        and status_update.rejection_reason in REFUND_ELIGIBLE_REJECTION_REASONS
+        and order.transaction_ref
+    ):
+        try:
+            refund_case = (await db.execute(
+                select(RefundRequest).where(RefundRequest.order_id == order.id)
+            )).scalars().first()
+            if not refund_case:
+                refund_case = RefundRequest(
+                    order_id=order.id,
+                    customer_id=order.customer_id,
+                    merchant_id=order.merchant_id,
+                    amount=order.total_price,
+                    status="awaiting_customer",
+                    reason=status_update.rejection_reason,
+                    rejection_note=order.rejection_note,
+                )
+                db.add(refund_case)
+                await db.flush()
+                record_refund_event(
+                    db, refund_case, current_user, "refund_case_opened", None,
+                    note=order.rejection_note or status_update.rejection_reason,
+                )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            reference = secrets.token_hex(4).upper()
+            logger.exception(
+                "Refund case could not be auto-opened after rejection reference=%s order_id=%s",
+                reference, order_id,
+            )
+            refund_case = None
 
     customer = order.customer
     if new_status == "ready" and customer and customer.email and not customer.email.endswith("@" + DELETED_EMAIL_DOMAIN):

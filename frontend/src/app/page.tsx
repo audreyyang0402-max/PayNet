@@ -816,7 +816,7 @@ export default function Home() {
                         >
                           {availableSlots.map((slot) => (
                             <option key={slot.id} value={slot.id}>
-                              {new Date(slot.time_slot).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              {new Date(slot.time_slot).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                               {" "}({slot.current_bookings}/{slot.max_capacity} booked)
                             </option>
                           ))}
