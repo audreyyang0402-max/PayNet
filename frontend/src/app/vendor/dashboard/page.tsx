@@ -299,7 +299,14 @@ export default function MerchantDashboard() {
       if (!res.ok) {
         const raw = await res.text();
         let detail = "";
-        try { detail = JSON.parse(raw)?.detail || ""; } catch { detail = raw; }
+        try {
+          const parsed = JSON.parse(raw);
+          detail = typeof parsed?.detail === "string"
+            ? parsed.detail
+            : Array.isArray(parsed?.detail)
+              ? parsed.detail.map((item: { msg?: string }) => item?.msg).filter(Boolean).join("; ")
+              : "";
+        } catch { detail = raw; }
         if (detail === "Load failed") {
           detail = "The deployed backend is older than this dashboard. Deploy the latest GitHub commit on Render, then try again.";
         }
@@ -312,9 +319,11 @@ export default function MerchantDashboard() {
         setNotice("Order rejected. If the customer requests a refund, Payvolution admin will review it before it appears in your Refunds tab.");
       }
     } catch (err: unknown) {
-      const message = err instanceof TypeError && err.message === "Failed to fetch"
+      const rawMessage = err instanceof Error ? err.message : "";
+      const isNetworkFailure = err instanceof TypeError || /failed to fetch|load failed|networkerror|network request failed/i.test(rawMessage);
+      const message = isNetworkFailure
         ? "The order server could not be reached. Your order was not changed; please wait a moment and try again."
-        : err instanceof Error ? err.message : "Failed to update order status.";
+        : rawMessage || "Failed to update order status.";
       setOrderError(message);
     } finally {
       setUpdatingOrderId(null);
@@ -632,6 +641,11 @@ export default function MerchantDashboard() {
                         </select>
                         <textarea value={rejectionNote} onChange={(e) => setRejectionNote(e.target.value)} maxLength={500}
                           placeholder="Give the customer a clear, short explanation…" className="w-full rounded-xl border border-red-200 bg-white p-3 text-sm text-slate-800" />
+                        {orderError && (
+                          <p role="alert" className="rounded-xl border border-red-300 bg-white p-3 text-sm font-semibold text-red-800">
+                            {orderError}
+                          </p>
+                        )}
                         <div className="flex gap-2">
                           <button type="button" disabled={updatingOrderId === order.id}
                             onClick={() => handleUpdateOrderStatus(order.id, "rejected", { reason: rejectionReason, note: rejectionNote })}

@@ -23,7 +23,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import case, func, or_, update, text
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload  # <--- Added import for eager loading relationships
 from pydantic import BaseModel, EmailStr, Field
@@ -496,9 +496,17 @@ def as_malaysia_time(when: datetime) -> datetime:
 
 async def release_slot(order, db: AsyncSession):
     if order.pickup_slot_id:
-        slot = (await db.execute(select(PickupSlot).where(PickupSlot.id == order.pickup_slot_id).with_for_update())).scalars().first()
-        if slot and slot.current_bookings > 0:
-            slot.current_bookings -= 1
+        # Use one atomic UPDATE instead of taking a second row lock after the
+        # order has already been locked. Opposite lock ordering during checkout
+        # can otherwise deadlock a merchant rejection.
+        await db.execute(
+            update(PickupSlot)
+            .where(
+                PickupSlot.id == order.pickup_slot_id,
+                PickupSlot.current_bookings > 0,
+            )
+            .values(current_bookings=PickupSlot.current_bookings - 1)
+        )
 
 
 async def expire_stale_drafts(db: AsyncSession):
@@ -2062,37 +2070,74 @@ async def update_order_status(
     if new_status not in ORDER_TRANSITIONS.get(order.status, set()):
         raise HTTPException(status_code=400, detail=f"An order that is '{order.status}' can't be changed to '{new_status}'.")
 
-    order.status = new_status
     refund_case = None
-    if new_status == "rejected":
-        if not status_update.rejection_reason:
-            raise HTTPException(status_code=422, detail="Select a rejection reason so the customer receives the correct next steps.")
-        order.rejection_reason = status_update.rejection_reason
-        order.rejection_note = (status_update.rejection_note or "").strip() or None
-        if status_update.rejection_reason == "other" and not order.rejection_note:
-            raise HTTPException(status_code=422, detail="Explain the other rejection reason to the customer.")
-        await release_slot(order, db)
-        if status_update.rejection_reason in REFUND_ELIGIBLE_REJECTION_REASONS and order.transaction_ref:
-            refund_case = (await db.execute(
-                select(RefundRequest).where(RefundRequest.order_id == order.id)
-            )).scalars().first()
-            if not refund_case:
-                refund_case = RefundRequest(
-                    order_id=order.id,
-                    customer_id=order.customer_id,
-                    merchant_id=order.merchant_id,
-                    amount=order.total_price,
-                    status="awaiting_customer",
-                    reason=status_update.rejection_reason,
-                    rejection_note=order.rejection_note,
-                )
-                db.add(refund_case)
-                await db.flush()
-                record_refund_event(
-                    db, refund_case, current_user, "refund_case_opened", None,
-                    note=order.rejection_note or status_update.rejection_reason,
-                )
-    await db.commit()
+    try:
+        order.status = new_status
+        if new_status == "rejected":
+            if not status_update.rejection_reason:
+                raise HTTPException(status_code=422, detail="Select a rejection reason so the customer receives the correct next steps.")
+            order.rejection_reason = status_update.rejection_reason
+            order.rejection_note = (status_update.rejection_note or "").strip() or None
+            if status_update.rejection_reason == "other" and not order.rejection_note:
+                raise HTTPException(status_code=422, detail="Explain the other rejection reason to the customer.")
+            await release_slot(order, db)
+            if status_update.rejection_reason in REFUND_ELIGIBLE_REJECTION_REASONS and order.transaction_ref:
+                refund_case = (await db.execute(
+                    select(RefundRequest).where(RefundRequest.order_id == order.id)
+                )).scalars().first()
+                if not refund_case:
+                    refund_case = RefundRequest(
+                        order_id=order.id,
+                        customer_id=order.customer_id,
+                        merchant_id=order.merchant_id,
+                        amount=order.total_price,
+                        status="awaiting_customer",
+                        reason=status_update.rejection_reason,
+                        rejection_note=order.rejection_note,
+                    )
+                    db.add(refund_case)
+                    await db.flush()
+                    record_refund_event(
+                        db, refund_case, current_user, "refund_case_opened", None,
+                        note=order.rejection_note or status_update.rejection_reason,
+                    )
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except IntegrityError as exc:
+        await db.rollback()
+        reference = secrets.token_hex(4).upper()
+        logger.exception(
+            "Order status integrity failure reference=%s order_id=%s requested_status=%s",
+            reference, order_id, new_status,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=f"The rejection conflicted with an existing order or refund record. Nothing was changed. Support reference: {reference}.",
+        ) from exc
+    except DBAPIError as exc:
+        await db.rollback()
+        reference = secrets.token_hex(4).upper()
+        logger.exception(
+            "Order status database failure reference=%s order_id=%s requested_status=%s",
+            reference, order_id, new_status,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=f"The database could not save this rejection. Nothing was changed. Retry once; if it repeats, send support reference {reference} to the admin.",
+        ) from exc
+    except Exception as exc:
+        await db.rollback()
+        reference = secrets.token_hex(4).upper()
+        logger.exception(
+            "Unexpected order status failure reference=%s order_id=%s requested_status=%s",
+            reference, order_id, new_status,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"The order could not be updated. Nothing was changed. Send support reference {reference} to the admin.",
+        ) from exc
 
     customer = order.customer
     if new_status == "ready" and customer and customer.email and not customer.email.endswith("@" + DELETED_EMAIL_DOMAIN):
