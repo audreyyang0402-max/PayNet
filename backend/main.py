@@ -1200,12 +1200,8 @@ async def delete_pickup_slot(
         return {"message": "Pickup slot deleted successfully"}
     except Exception as e:
         await db.rollback()
-<<<<<<< HEAD
-        raise HTTPException(status_code=400, detail=f"Failed to delete pickup slot: {str(e)}")
-=======
         logger.exception("Database error deleting pickup slot")
         raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
->>>>>>> 900cf7d4b4d22985dcc4783dbd05f65e69e7b825
 
 
 # --- PUBLIC: List Menu Items ---
