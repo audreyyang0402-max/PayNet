@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { BACKEND_URL } from "@/lib/backend-url";
+import { BACK_LINK_CLASS } from "@/lib/ui";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Merchant = {
@@ -227,8 +228,8 @@ export default function AdminMerchants() {
       <div className="space-y-4">
         {/* Back button — mobile only */}
         <button onClick={() => setMobileView("list")}
-          className="flex items-center gap-2 text-sm font-semibold text-orange-600 lg:hidden">
-          ← All Vendors
+          className={`${BACK_LINK_CLASS} lg:hidden`}>
+          All Vendors
         </button>
 
         {/* Profile card */}

@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import Link from "next/link";
+import BackLink from "@/components/BackLink";
 import PasswordInput from "@/components/PasswordInput";
 import { BACKEND_URL } from "@/lib/backend-url";
 
@@ -73,7 +73,7 @@ export default function ForgotPasswordPage() {
         </>}
         <button disabled={busy} className="w-full rounded-xl bg-orange-600 p-3 font-semibold text-white disabled:opacity-50">{busy ? "Please wait..." : sent ? "Verify code and change password" : "Send verification code"}</button>
       </form>}
-      <Link href="/login" className="block text-orange-700 underline">Back to login</Link>
+      <BackLink href="/login" className="mt-2">Back to login</BackLink>
     </section>
   </main>;
 }

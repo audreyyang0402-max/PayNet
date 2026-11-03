@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import SiteFooter from "@/components/SiteFooter";
+import BackLink from "@/components/BackLink";
 import { useRouter } from "next/navigation";
 import { BACKEND_URL } from "@/lib/backend-url";
 import CustomerSpendingDashboard from "@/components/CustomerSpendingDashboard";
@@ -87,7 +88,7 @@ export default function ProfilePage() {
   function logout() { ["token", "user_id", "userRole", "userName"].forEach(k => localStorage.removeItem(k)); router.replace("/login"); }
   return (<><main className="min-h-screen bg-[#faf8f3] px-4 py-6 text-stone-900 sm:py-10">
     <div className="mx-auto max-w-3xl space-y-5">
-      <Link href="/" className={`${button} bg-white`}>Back to marketplace</Link>
+      <BackLink href="/">Back to marketplace</BackLink>
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
       {loading && <p role="status">Loading your account…</p>}
       {user && <>

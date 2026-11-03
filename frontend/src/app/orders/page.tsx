@@ -4,6 +4,7 @@
 import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import BackLink from "@/components/BackLink";
 
 interface Order {
   id: string;
@@ -48,9 +49,7 @@ export default function OrdersPage() {
   return (
     <main className="min-h-screen bg-[#faf8f3] px-4 py-6 sm:p-8">
       <div className="max-w-2xl mx-auto">
-        <Link href="/profile" className="rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium mb-6 inline-block">
-          Back to my account
-        </Link>
+        <BackLink href="/profile" className="mb-6">Back to my account</BackLink>
 
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-3xl font-bold text-gray-900">My Order History</h1>

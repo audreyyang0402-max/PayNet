@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import BackLink from "@/components/BackLink";
 import { BACKEND_URL } from "@/lib/backend-url";
 
 type CampusEvent = {
@@ -65,10 +66,7 @@ export default function EventsPage() {
   return (
     <main className="min-h-screen bg-[#faf8f4] px-4 py-8 sm:px-8">
       <div className="mx-auto max-w-5xl space-y-6">
-        <Link href="/"
-          className="inline-flex rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-orange-300 hover:text-orange-700">
-          ← Back to marketplace
-        </Link>
+        <BackLink href="/">Back to marketplace</BackLink>
 
         {/* Dynamic event header */}
         {selectedEvent ? (

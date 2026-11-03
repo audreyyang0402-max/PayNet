@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import BackLink from "@/components/BackLink";
 
 export default function PrivacyPage() {
   return (
@@ -8,7 +9,7 @@ export default function PrivacyPage() {
       <div className="max-w-3xl mx-auto bg-white rounded-2xl shadow-sm border border-gray-200 p-10">
 
         <div className="mb-8">
-          <Link href="/vendor/register" className="text-sm text-orange-600 hover:underline">← Back to Register</Link>
+          <BackLink href="/vendor/register">Back to Register</BackLink>
           <h1 className="text-3xl font-bold text-gray-900 mt-4">Privacy Policy</h1>
           <p className="text-gray-500 text-sm mt-1">Last updated: November 2026 · Sunway Express Lane by PayVolution</p>
         </div>

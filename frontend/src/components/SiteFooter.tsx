@@ -4,6 +4,15 @@
 "use client";
 
 import { useState } from "react";
+import {
+  TERMS_TITLE,
+  TERMS_SUBTITLE,
+  TERMS_LAST_UPDATED,
+  TERMS_SECTIONS,
+  TERMS_CONTACT_HEADING,
+  TERMS_CONTACT_INTRO,
+  TERMS_CONTACT_EMAIL,
+} from "@/lib/terms-content";
 
 export default function SiteFooter() {
   const [tcOpen, setTcOpen] = useState(false);
@@ -90,7 +99,7 @@ export default function SiteFooter() {
         </div>
       </footer>
 
-      {/* Terms & Conditions modal */}
+      {/* Terms & Conditions modal — renders the same content as the standalone /terms page */}
       {tcOpen && (
         <div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-4"
@@ -108,57 +117,23 @@ export default function SiteFooter() {
               ✕
             </button>
 
-            <h2 className="text-xl font-black text-stone-900">Terms &amp; Conditions</h2>
-            <p className="mt-1 text-xs text-stone-400">Last updated: November 2026 · Payvolution, Sunway College SDS</p>
+            <h2 className="text-xl font-black text-stone-900">{TERMS_TITLE}</h2>
+            <p className="mt-1 text-xs text-stone-400">Last updated: {TERMS_LAST_UPDATED} · {TERMS_SUBTITLE}</p>
 
             <div className="mt-6 space-y-5 text-sm text-stone-700 leading-relaxed">
+              {TERMS_SECTIONS.map((section) => (
+                <section key={section.heading}>
+                  <h3 className="font-bold text-stone-900">{section.heading}</h3>
+                  <p className="mt-1">{section.body}</p>
+                </section>
+              ))}
 
               <section>
-                <h3 className="font-bold text-stone-900">1. Acceptance of Terms</h3>
-                <p className="mt-1">By creating an account or placing an order on Payvolution (Sunway Express Lane), you agree to be bound by these Terms &amp; Conditions. If you do not agree, please do not use this platform.</p>
-              </section>
-
-              <section>
-                <h3 className="font-bold text-stone-900">2. Platform Purpose</h3>
-                <p className="mt-1">Payvolution is a campus food ordering and click-and-collect platform for anyone in Sunway Campus who wishes to order food in advance. All orders are for food pickup only — we do not offer delivery services.</p>
-              </section>
-
-              <section>
-                <h3 className="font-bold text-stone-900">3. Account Responsibility</h3>
-                <p className="mt-1">You are responsible for maintaining the confidentiality of your account credentials. You agree to provide accurate, current, and complete information when registering. Payvolution reserves the right to suspend or terminate accounts that violate these terms.</p>
-              </section>
-
-              <section>
-                <h3 className="font-bold text-stone-900">4. Orders &amp; Payments</h3>
-                <p className="mt-1">Orders are confirmed only after successful payment via DuitNow QR. Once an order is placed and paid, cancellations are subject to the merchant's discretion. Payvolution is not liable for payment disputes between customers and merchants.</p>
-              </section>
-
-              <section>
-                <h3 className="font-bold text-stone-900">5. Merchant Content</h3>
-                <p className="mt-1">Merchants are responsible for the accuracy of their menu items, prices, and availability. Payvolution does not guarantee the nutritional content, allergen information, or preparation methods of any food item. Customers with food allergies are advised to contact the merchant directly before ordering.</p>
-              </section>
-
-              <section>
-                <h3 className="font-bold text-stone-900">6. Privacy &amp; Data</h3>
-                <p className="mt-1">We collect your name, email, and order data solely to operate this platform. We do not sell your personal information to third parties. Profile photos and dietary preferences are stored locally in your browser and are not uploaded to our servers.</p>
-              </section>
-
-              <section>
-                <h3 className="font-bold text-stone-900">7. Limitation of Liability</h3>
-                <p className="mt-1">Payvolution provides this platform on an "as-is" basis. We are not liable for any loss, damage, or dissatisfaction arising from the use of this platform, including but not limited to order errors, merchant delays, or technical outages.</p>
-              </section>
-
-              <section>
-                <h3 className="font-bold text-stone-900">8. Changes to Terms</h3>
-                <p className="mt-1">We may update these Terms &amp; Conditions from time to time. Continued use of the platform after changes constitutes acceptance of the updated terms.</p>
-              </section>
-
-              <section>
-                <h3 className="font-bold text-stone-900">9. Contact Us</h3>
+                <h3 className="font-bold text-stone-900">{TERMS_CONTACT_HEADING}</h3>
                 <p className="mt-1">
-                  For any questions, account issues, or support requests, please reach out to us at{" "}
-                  <a href="mailto:payvolutionwebsite@gmail.com" className="font-semibold text-orange-600 underline">
-                    payvolutionwebsite@gmail.com
+                  {TERMS_CONTACT_INTRO}{" "}
+                  <a href={`mailto:${TERMS_CONTACT_EMAIL}`} className="font-semibold text-orange-600 underline">
+                    {TERMS_CONTACT_EMAIL}
                   </a>
                   .
                 </p>

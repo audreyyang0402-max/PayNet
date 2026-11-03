@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
+import BackLink from "@/components/BackLink";
 import FoodDetailsDialog from "@/components/FoodDetailsDialog";
 import { BACKEND_URL } from "@/lib/backend-url";
 
@@ -99,9 +99,7 @@ export default function MerchantMenuPage() {
       {/* Header */}
       <header className="bg-white border-b border-orange-100 sticky top-0 z-30">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
-          <Link href="/" className="text-sm text-orange-700 font-semibold hover:underline">
-            ← Marketplace
-          </Link>
+          <BackLink href="/">Marketplace</BackLink>
           {totalItems > 0 && (
             <span className="bg-orange-600 text-white text-xs font-bold px-3 py-1 rounded-full">
               {totalItems} in cart

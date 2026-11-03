@@ -4,7 +4,7 @@
 import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import BackLink from "@/components/BackLink";
 import AnalyticsDashboard from "@/components/AnalyticsDashboard";
 import DeleteAccountButton from "@/components/DeleteAccountButton";
 import { MerchantMenuManager } from "@/components/MerchantMenuManager";
@@ -307,7 +307,7 @@ export default function MerchantDashboard() {
           </div>
         )}
 
-        <Link href="/" className="inline-block rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold">Back To Marketplace</Link>
+        <BackLink href="/">Back to marketplace</BackLink>
 
         {/* Header */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 space-y-4">

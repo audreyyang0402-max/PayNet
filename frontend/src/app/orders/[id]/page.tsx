@@ -5,6 +5,7 @@ import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import BackLink from "@/components/BackLink";
 
 interface OrderDetail {
   id: string;
@@ -87,9 +88,7 @@ export default function OrderReceiptPage() {
   return (
     <main className="min-h-screen bg-gray-50 px-4 py-6 sm:p-8">
       <div className="max-w-xl mx-auto">
-        <Link href="/orders" className="text-blue-600 hover:underline text-sm font-medium mb-6 inline-block">
-          ← Back to Order History
-        </Link>
+        <BackLink href="/orders" className="mb-6">Back to Order History</BackLink>
 
         {loading && <p className="text-gray-500">Loading order...</p>}
         {error && <div className="bg-red-50 text-red-600 p-4 rounded-xl mb-4 border border-red-100">{error}</div>}

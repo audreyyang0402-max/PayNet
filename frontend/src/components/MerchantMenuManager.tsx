@@ -17,7 +17,7 @@
 import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import BackLink from "@/components/BackLink";
 import {
   getMenuCustomizationPolicy,
   isHotMenuItemName,
@@ -505,12 +505,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
         ──────────────────────────────────────────────────────────────── */}
         {!embedded && <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-sm border border-orange-100 flex flex-wrap justify-between items-center gap-4">
           <div>
-            <Link
-              href="/vendor/dashboard"
-              className="inline-block rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-800 mb-3"
-            >
-              Back to merchant portal
-            </Link>
+            <BackLink href="/vendor/dashboard" className="mb-3">Back to merchant portal</BackLink>
             <h1 className="text-xl sm:text-2xl font-black text-slate-900">
               Stall Menu & Food Products
             </h1>
