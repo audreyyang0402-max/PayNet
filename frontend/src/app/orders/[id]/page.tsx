@@ -6,6 +6,7 @@ import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import BackLink from "@/components/BackLink";
+import CustomerRefundPanel, { RefundCase } from "@/components/CustomerRefundPanel";
 
 interface OrderDetail {
   id: string;
@@ -18,6 +19,9 @@ interface OrderDetail {
   order_number?: string | null;
   pickup_time?: string | null;
   transaction_ref?: string | null;
+  rejection_reason?: string | null;
+  rejection_note?: string | null;
+  refund?: RefundCase | null;
   items: Array<{
     id: string;
     name: string;
@@ -61,6 +65,8 @@ export default function OrderReceiptPage() {
   const [exportError, setExportError] = useState("");
 
   useEffect(() => {
+    let stopped = false;
+    let firstLoad = true;
     async function fetchOrderDetails() {
       if (!orderId) return;
       try {
@@ -74,15 +80,18 @@ export default function OrderReceiptPage() {
         if (!res.ok) throw new Error("Failed to load this order.");
 
         const result = await res.json();
-        setData(result);
+        if (!stopped) { setData(result); setError(null); }
       } catch (err: any) {
-        setError(err.message);
+        if (!stopped && firstLoad) setError(err.message);
       } finally {
-        setLoading(false);
+        if (!stopped) setLoading(false);
+        firstLoad = false;
       }
     }
 
     fetchOrderDetails();
+    const timer = setInterval(() => { if (!document.hidden) fetchOrderDetails(); }, 15_000);
+    return () => { stopped = true; clearInterval(timer); };
   }, [orderId]);
 
   // Export libraries (html2canvas + jsPDF) are loaded from CDN on demand, not
@@ -193,12 +202,16 @@ export default function OrderReceiptPage() {
             {data.status === "rejected" && (
               <div className="rounded-2xl bg-red-50 border border-red-200 px-5 py-4 text-center space-y-3">
                 <p className="text-sm font-semibold text-red-800">
-                  This order was rejected — the stall could not verify your payment receipt.
+                  {data.refund
+                    ? "The stall could not fulfil this paid order. Your refund case is ready below."
+                    : "This order was rejected because the payment could not be accepted."}
                 </p>
                 <p className="text-xs text-red-600">
-                  Your pickup slot has been released. Please place a new order and upload a clear, matching payment receipt.
+                  {data.rejection_note || (data.refund
+                    ? "Your pickup slot was released. Choose a refund method and track every step on this receipt."
+                    : "Your pickup slot was released. If you believe this is incorrect, please contact Payvolution support.")}
                 </p>
-                {data.merchant_id && (
+                {!data.refund && data.merchant_id && (
                   <Link
                     href={`/merchants/${data.merchant_id}`}
                     className="inline-block rounded-xl bg-red-700 px-4 py-2 text-xs font-bold text-white hover:bg-red-800 transition"
@@ -207,6 +220,14 @@ export default function OrderReceiptPage() {
                   </Link>
                 )}
               </div>
+            )}
+
+            {data.refund && (
+              <CustomerRefundPanel
+                orderId={data.id}
+                refund={data.refund}
+                onUpdated={(refund) => setData((current) => current ? { ...current, refund } : current)}
+              />
             )}
 
             {/* Receipt (captured together for export) */}

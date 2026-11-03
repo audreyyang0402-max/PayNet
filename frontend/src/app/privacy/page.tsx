@@ -18,22 +18,22 @@ export default function PrivacyPage() {
 
           <section>
             <h2 className="text-base font-bold text-gray-900 mb-2">1. Information We Collect</h2>
-            <p>When you register, we collect your full name, email address, phone number, and password. When you place orders, we collect order details, timestamps, and payment references. We may also collect basic usage data such as pages visited and actions taken on the Platform.</p>
+            <p>When you register, we collect your full name, email address, phone number, and password. When you place orders, we collect order details, timestamps, and payment references. If an eligible order needs a refund, we may collect your chosen refund method, legal account-holder name, bank name and account number, or a DuitNow QR image, together with refund receipts and dispute notes.</p>
           </section>
 
           <section>
             <h2 className="text-base font-bold text-gray-900 mb-2">2. How We Use Your Information</h2>
-            <p>We use your information to create and manage your account, process orders, send order notifications and verification codes, provide customer support, and improve the Platform.</p>
+            <p>We use your information to create and manage your account, process orders and refunds, maintain an audit trail of refund evidence, resolve disputes, send order notifications and verification codes, provide customer support, and improve the Platform.</p>
           </section>
 
           <section>
             <h2 className="text-base font-bold text-gray-900 mb-2">3. Sharing of Information</h2>
-            <p>We share your name and order details with the campus merchant fulfilling your order. We do not sell your personal data to third parties. We may share data with service providers (such as email and hosting providers) strictly to operate the Platform.</p>
+            <p>We share your name and order details with the campus merchant fulfilling your order. Refund payout details are visible only to the merchant responsible for that order and authorised Payvolution administrators. We do not sell your personal data. Our hosting, database, storage, and email providers process limited data only as needed to operate the Platform.</p>
           </section>
 
           <section>
             <h2 className="text-base font-bold text-gray-900 mb-2">4. Data Storage and Security</h2>
-            <p>Your data is stored securely using Supabase. We implement reasonable technical measures to protect your information from unauthorised access, alteration, or disclosure. However, no system is completely secure.</p>
+            <p>Your data is stored using Supabase. Refund bank details are encrypted before storage, and private QR images and refund evidence are accessed through short-lived signed links. Access is restricted by account role and order ownership. We implement reasonable technical and organisational measures, but no system is completely secure.</p>
           </section>
 
           <section>
@@ -48,7 +48,7 @@ export default function PrivacyPage() {
 
           <section>
             <h2 className="text-base font-bold text-gray-900 mb-2">7. Retention</h2>
-            <p>We retain your account data for as long as your account is active. Order history may be retained for up to 12 months for operational purposes.</p>
+            <p>We retain your account data while your account is active. Order and refund records, including evidence needed to resolve a dispute, may be retained for up to 12 months for operational and audit purposes, unless a longer period is required to resolve an active case or comply with law.</p>
           </section>
 
           <section>

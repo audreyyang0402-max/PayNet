@@ -103,6 +103,10 @@ CREATE TABLE orders (
 	total_price NUMERIC(10, 2) NOT NULL,
 	transaction_ref VARCHAR,
 	order_number VARCHAR,
+	checkout_key VARCHAR UNIQUE,
+	checkout_fingerprint VARCHAR,
+	rejection_reason VARCHAR,
+	rejection_note TEXT,
 	pickup_slot_id UUID,
 	created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
 	PRIMARY KEY (id),
@@ -110,6 +114,58 @@ CREATE TABLE orders (
 	FOREIGN KEY(merchant_id) REFERENCES merchants (id),
 	FOREIGN KEY(pickup_slot_id) REFERENCES pickup_slots (id)
 );
+
+CREATE TABLE refund_requests (
+	id UUID NOT NULL,
+	order_id UUID NOT NULL UNIQUE,
+	customer_id UUID NOT NULL,
+	merchant_id UUID NOT NULL,
+	amount NUMERIC(10, 2) NOT NULL,
+	status VARCHAR NOT NULL DEFAULT 'awaiting_customer',
+	method VARCHAR,
+	reason VARCHAR NOT NULL,
+	rejection_note TEXT,
+	legal_name_encrypted TEXT,
+	bank_name_encrypted TEXT,
+	account_number_encrypted TEXT,
+	account_last4 VARCHAR,
+	duitnow_qr_path TEXT,
+	proof_path TEXT,
+	merchant_note TEXT,
+	customer_dispute_note TEXT,
+	admin_note TEXT,
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+	requested_at TIMESTAMP WITH TIME ZONE,
+	proof_uploaded_at TIMESTAMP WITH TIME ZONE,
+	customer_responded_at TIMESTAMP WITH TIME ZONE,
+	verified_at TIMESTAMP WITH TIME ZONE,
+	PRIMARY KEY (id),
+	FOREIGN KEY(order_id) REFERENCES orders (id),
+	FOREIGN KEY(customer_id) REFERENCES users (id),
+	FOREIGN KEY(merchant_id) REFERENCES merchants (id)
+);
+
+CREATE INDEX refund_requests_merchant_status_idx ON refund_requests (merchant_id, status);
+CREATE INDEX refund_requests_customer_idx ON refund_requests (customer_id, created_at DESC);
+
+CREATE TABLE refund_audit_events (
+	id UUID NOT NULL,
+	refund_id UUID NOT NULL,
+	actor_user_id UUID,
+	actor_role VARCHAR NOT NULL,
+	action VARCHAR NOT NULL,
+	from_status VARCHAR,
+	to_status VARCHAR NOT NULL,
+	note TEXT,
+	evidence_path TEXT,
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+	PRIMARY KEY (id),
+	FOREIGN KEY(refund_id) REFERENCES refund_requests (id) ON DELETE CASCADE,
+	FOREIGN KEY(actor_user_id) REFERENCES users (id) ON DELETE SET NULL
+);
+
+CREATE INDEX refund_audit_events_refund_idx ON refund_audit_events (refund_id, created_at);
 
 CREATE TABLE order_items (
 	id UUID NOT NULL,

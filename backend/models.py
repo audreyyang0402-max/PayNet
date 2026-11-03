@@ -79,6 +79,8 @@ class Order(Base):
     order_number = Column(String, nullable=True)
     checkout_key = Column(String, nullable=True, unique=True)
     checkout_fingerprint = Column(String, nullable=True)
+    rejection_reason = Column(String, nullable=True)
+    rejection_note = Column(Text, nullable=True)
     
     pickup_slot_id = Column(UUID(as_uuid=True), ForeignKey("pickup_slots.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -86,6 +88,56 @@ class Order(Base):
     # --- RELATIONSHIPS ---
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
     customer = relationship("User", back_populates="orders")
+
+
+class RefundRequest(Base):
+    """Auditable manual refund case for a rejected, already-paid order."""
+    __tablename__ = "refund_requests"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False, unique=True)
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    amount = Column(Numeric(10, 2), nullable=False)
+    status = Column(String, nullable=False, default="awaiting_customer", server_default="awaiting_customer")
+    method = Column(String, nullable=True)  # online_bank / online_qr / walk_in
+    reason = Column(String, nullable=False)
+    rejection_note = Column(Text, nullable=True)
+
+    # Sensitive payout fields are AES-GCM encrypted by the application. Only
+    # the last four digits are kept separately for safe customer-facing display.
+    legal_name_encrypted = Column(Text, nullable=True)
+    bank_name_encrypted = Column(Text, nullable=True)
+    account_number_encrypted = Column(Text, nullable=True)
+    account_last4 = Column(String, nullable=True)
+    duitnow_qr_path = Column(Text, nullable=True)
+
+    proof_path = Column(Text, nullable=True)
+    merchant_note = Column(Text, nullable=True)
+    customer_dispute_note = Column(Text, nullable=True)
+    admin_note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    requested_at = Column(DateTime(timezone=True), nullable=True)
+    proof_uploaded_at = Column(DateTime(timezone=True), nullable=True)
+    customer_responded_at = Column(DateTime(timezone=True), nullable=True)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class RefundAuditEvent(Base):
+    """Append-only refund history. Sensitive payout values never belong here."""
+    __tablename__ = "refund_audit_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    refund_id = Column(UUID(as_uuid=True), ForeignKey("refund_requests.id", ondelete="CASCADE"), nullable=False)
+    actor_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_role = Column(String, nullable=False)
+    action = Column(String, nullable=False)
+    from_status = Column(String, nullable=True)
+    to_status = Column(String, nullable=False)
+    note = Column(Text, nullable=True)
+    evidence_path = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class OrderItem(Base):

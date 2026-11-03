@@ -38,6 +38,7 @@ Environment variables (see [`backend/.env.example`](backend/.env.example)):
 | `SUPABASE_URL` | `https://<project>.supabase.co`, with nothing after `.co` |
 | `SUPABASE_PUBLISHABLE_KEY` | Publishable key (sends and checks email codes) |
 | `SUPABASE_SERVICE_ROLE_KEY` | Secret key (uploads images). Backend only. |
+| `REFUND_DATA_ENCRYPTION_KEY` | Stable 32-byte base64 key used to encrypt refund payout details. Generate with `python -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"`. Store only in Render and keep a secure backup. |
 | `SMTP_USER`, `SMTP_PASSWORD` | Gmail address and app password for "your food is ready" emails |
 
 Check: `https://<service>.onrender.com/merchants` returns `[]`.
@@ -75,5 +76,6 @@ Log out and in again. Admins land on `/admin/users`, where they give other accou
 
 1. Vendor: upload a DuitNow QR, add a menu item, add a pickup slot for tomorrow.
 2. Customer: order, upload a receipt. The order shows *pending verification*.
-3. Vendor: Verify & Accept → Mark Ready → Mark Collected. Reject on another order frees its pickup place.
-4. Without logging in, `GET /orders/<id>` returns 401.
+3. Vendor: Verify & Accept → Mark Ready → Mark Collected. Reject a paid order as sold out to open a tracked refund case and free its pickup place.
+4. Customer: choose online or walk-in refund from the rejected order receipt. Vendor uploads refund proof; customer confirms or disputes; admin reviews it under **Refunds**.
+5. Without logging in, `GET /orders/<id>` returns 401.

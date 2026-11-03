@@ -10,6 +10,7 @@ import DeleteAccountButton from "@/components/DeleteAccountButton";
 import { MerchantMenuManager } from "@/components/MerchantMenuManager";
 import MerchantPickupSlots from "@/components/MerchantPickupSlots";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
+import RefundManagement from "@/components/RefundManagement";
 
 interface MerchantProfile {
   id: string;
@@ -50,12 +51,13 @@ interface PickupSlot {
   current_bookings: number;
 }
 
-type Tab = "analytics" | "profile" | "orders" | "menu" | "slots" | "payment";
+type Tab = "analytics" | "profile" | "orders" | "refunds" | "menu" | "slots" | "payment";
 
 const TAB_LABELS: Record<Tab, string> = {
   analytics: "Overview",
   profile: "Store Profile",
   orders: "Manage Orders",
+  refunds: "Refunds",
   menu: "Menu",
   slots: "Pickup Slots",
   payment: "Payment Setup",
@@ -86,6 +88,9 @@ export default function MerchantDashboard() {
   const [notice, setNotice] = useState("");
   const [orderError, setOrderError] = useState("");
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
+  const [rejectingOrderId, setRejectingOrderId] = useState<string | null>(null);
+  const [rejectionReason, setRejectionReason] = useState("item_sold_out");
+  const [rejectionNote, setRejectionNote] = useState("");
   const seenOrders = useRef<Set<string> | null>(null);
 
   // Slot summary for tab label badge — loaded at startup AND updated live
@@ -278,7 +283,7 @@ export default function MerchantDashboard() {
     }
   };
 
-  const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
+  const handleUpdateOrderStatus = async (orderId: string, newStatus: string, rejection?: { reason: string; note: string }) => {
     if (updatingOrderId) return;
     setUpdatingOrderId(orderId);
     try {
@@ -286,13 +291,14 @@ export default function MerchantDashboard() {
       const res = await fetch(`${BACKEND_URL}/orders/${orderId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ status: newStatus, rejection_reason: rejection?.reason, rejection_note: rejection?.note }),
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.detail || "Failed to update order status.");
       }
       setOrders(current => current.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
+      if (newStatus === "rejected") { setRejectingOrderId(null); setRejectionNote(""); setTab("refunds"); }
     } catch (err: unknown) {
       const message = err instanceof TypeError && err.message === "Failed to fetch"
         ? "The order server could not be reached. Your order was not changed; please wait a moment and try again."
@@ -352,7 +358,7 @@ export default function MerchantDashboard() {
 
           {/* Nav tabs */}
           <nav aria-label="Merchant portal" className="grid grid-cols-2 gap-2 border-t border-stone-100 pt-4 text-center sm:flex sm:flex-wrap sm:justify-center">
-            {(["analytics", "profile", "orders", "menu", "slots", "payment"] as Tab[]).map(t => (
+            {(["analytics", "profile", "orders", "refunds", "menu", "slots", "payment"] as Tab[]).map(t => (
               <button
                 key={t}
                 aria-pressed={tab === t}
@@ -440,6 +446,7 @@ export default function MerchantDashboard() {
         </div>
 
         {tab === "analytics" && <AnalyticsDashboard audience="merchant" embedded />}
+        {tab === "refunds" && <RefundManagement audience="merchant" embedded />}
         {tab === "menu" && <MerchantMenuManager embedded />}
         {tab === "slots" && merchant?.id && (
           <MerchantPickupSlots
@@ -561,7 +568,7 @@ export default function MerchantDashboard() {
                       </div>
                       <div className="flex gap-2">
                         {(order.status === "pending_verification" || order.status === "pending") && (
-                          <button onClick={() => { if (confirm("Reject this order? Use this when the payment receipt is missing or not genuine. The pickup place is freed.")) handleUpdateOrderStatus(order.id, "rejected"); }}
+                          <button onClick={() => { setRejectingOrderId(order.id); setRejectionReason("item_sold_out"); setRejectionNote(""); }}
                             disabled={updatingOrderId === order.id}
                             className="rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60">
                             {updatingOrderId === order.id ? "Updating…" : "Reject"}
@@ -597,6 +604,29 @@ export default function MerchantDashboard() {
                         )}
                       </div>
                     </div>
+                    {rejectingOrderId === order.id && (
+                      <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 space-y-3">
+                        <div>
+                          <p className="text-sm font-bold text-red-900">Why are you rejecting this paid order?</p>
+                          <p className="mt-1 text-xs text-red-700">Sold-out and unable-to-fulfil reasons automatically open a tracked refund case. Invalid payment does not.</p>
+                        </div>
+                        <select value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)}
+                          className="w-full rounded-xl border border-red-200 bg-white px-3 py-2 text-sm text-slate-800">
+                          <option value="item_sold_out">Item sold out</option>
+                          <option value="stall_unable">Stall unable to fulfil order</option>
+                          <option value="invalid_payment">Payment receipt invalid / unmatched</option>
+                          <option value="other">Other paid-order fulfilment problem</option>
+                        </select>
+                        <textarea value={rejectionNote} onChange={(e) => setRejectionNote(e.target.value)} maxLength={500}
+                          placeholder="Give the customer a clear, short explanation…" className="w-full rounded-xl border border-red-200 bg-white p-3 text-sm text-slate-800" />
+                        <div className="flex gap-2">
+                          <button type="button" disabled={updatingOrderId === order.id}
+                            onClick={() => handleUpdateOrderStatus(order.id, "rejected", { reason: rejectionReason, note: rejectionNote })}
+                            className="rounded-xl bg-red-700 px-4 py-2 text-xs font-black text-white disabled:opacity-50">Confirm rejection</button>
+                          <button type="button" onClick={() => setRejectingOrderId(null)} className="rounded-xl border border-stone-200 bg-white px-4 py-2 text-xs font-bold text-stone-700">Cancel</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

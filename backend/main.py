@@ -31,9 +31,10 @@ from uuid import UUID
 # --- NEW SUPABASE STORAGE IMPORTS ---
 from supabase import create_client, Client
 from PIL import Image, ImageOps
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from database import engine, get_db
-from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem, Event, EventMerchant
+from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent
 
 # --- NEW AUTH IMPORTS ---
 from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN, validate_password, password_stamp
@@ -66,6 +67,8 @@ async def lifespan(app: FastAPIOffline):
     async with engine.begin() as connection:
         await connection.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_key VARCHAR"))
         await connection.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_fingerprint VARCHAR"))
+        await connection.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR"))
+        await connection.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_note TEXT"))
         await connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS orders_checkout_key_unique ON orders (checkout_key)"))
         await connection.execute(text(
             "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS special_instructions TEXT"
@@ -83,6 +86,57 @@ async def lifespan(app: FastAPIOffline):
         ))
         await connection.execute(text(
             "ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS approval_status VARCHAR NOT NULL DEFAULT 'approved'"
+        ))
+        await connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS refund_requests (
+                id UUID PRIMARY KEY,
+                order_id UUID NOT NULL UNIQUE REFERENCES orders(id),
+                customer_id UUID NOT NULL REFERENCES users(id),
+                merchant_id UUID NOT NULL REFERENCES merchants(id),
+                amount NUMERIC(10, 2) NOT NULL,
+                status VARCHAR NOT NULL DEFAULT 'awaiting_customer',
+                method VARCHAR,
+                reason VARCHAR NOT NULL,
+                rejection_note TEXT,
+                legal_name_encrypted TEXT,
+                bank_name_encrypted TEXT,
+                account_number_encrypted TEXT,
+                account_last4 VARCHAR,
+                duitnow_qr_path TEXT,
+                proof_path TEXT,
+                merchant_note TEXT,
+                customer_dispute_note TEXT,
+                admin_note TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                requested_at TIMESTAMPTZ,
+                proof_uploaded_at TIMESTAMPTZ,
+                customer_responded_at TIMESTAMPTZ,
+                verified_at TIMESTAMPTZ
+            )
+        """))
+        await connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS refund_requests_merchant_status_idx ON refund_requests (merchant_id, status)"
+        ))
+        await connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS refund_requests_customer_idx ON refund_requests (customer_id, created_at DESC)"
+        ))
+        await connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS refund_audit_events (
+                id UUID PRIMARY KEY,
+                refund_id UUID NOT NULL REFERENCES refund_requests(id) ON DELETE CASCADE,
+                actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                actor_role VARCHAR NOT NULL,
+                action VARCHAR NOT NULL,
+                from_status VARCHAR,
+                to_status VARCHAR NOT NULL,
+                note TEXT,
+                evidence_path TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS refund_audit_events_refund_idx ON refund_audit_events (refund_id, created_at)"
         ))
     yield
 
@@ -199,7 +253,7 @@ def compress_display_image(file_bytes: bytes, ext: str, content_type: str):
         return file_bytes, ext, content_type
 
 
-async def upload_to_supabase(file: UploadFile, private: bool = False, optimize_for_display: bool = False) -> str:
+async def upload_to_supabase(file: UploadFile, private: bool = False, optimize_for_display: bool = False, folder: str = "images") -> str:
     """Validate an image and store it. Public uploads return a public URL; private ones return a storage path."""
     if not supabase:
         raise HTTPException(status_code=500, detail="Supabase Storage client is not configured on the backend.")
@@ -213,7 +267,8 @@ async def upload_to_supabase(file: UploadFile, private: bool = False, optimize_f
     if optimize_for_display and not private:
         file_bytes, ext, content_type = compress_display_image(file_bytes, ext, content_type)
     bucket = RECEIPT_BUCKET if private else PUBLIC_BUCKET
-    file_path = f"images/{secrets.token_hex(12)}.{ext}"
+    safe_folder = "/".join(part for part in folder.split("/") if part and part not in (".", "..")) or "images"
+    file_path = f"{safe_folder}/{secrets.token_hex(12)}.{ext}"
     try:
         supabase.storage.from_(bucket).upload(path=file_path, file=file_bytes, file_options={"content-type": content_type})
         if private:
@@ -247,6 +302,48 @@ def receipt_link(stored: Optional[str]) -> Optional[str]:
         return None
 
 
+REFUND_ENCRYPTION_AAD = b"payvolution-refund-v1"
+
+
+def _refund_encryption_key() -> bytes:
+    """Load the dedicated 256-bit key used only for refund payout details."""
+    encoded = os.getenv("REFUND_DATA_ENCRYPTION_KEY", "").strip()
+    if not encoded:
+        raise HTTPException(status_code=503, detail="Online refund details are temporarily unavailable. Please contact support.")
+    try:
+        padded = encoded + "=" * (-len(encoded) % 4)
+        key = base64.urlsafe_b64decode(padded.encode("ascii"))
+    except (ValueError, UnicodeError, binascii.Error):
+        key = b""
+    if len(key) != 32:
+        logger.error("REFUND_DATA_ENCRYPTION_KEY must decode to exactly 32 bytes")
+        raise HTTPException(status_code=503, detail="Online refund details are temporarily unavailable. Please contact support.")
+    return key
+
+
+def encrypt_refund_value(value: str) -> str:
+    value = value.strip()
+    nonce = os.urandom(12)
+    encrypted = AESGCM(_refund_encryption_key()).encrypt(nonce, value.encode("utf-8"), REFUND_ENCRYPTION_AAD)
+    return "v1." + base64.urlsafe_b64encode(nonce + encrypted).decode("ascii")
+
+
+def decrypt_refund_value(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        version, encoded = value.split(".", 1)
+        if version != "v1":
+            raise ValueError("unsupported encryption version")
+        packed = base64.urlsafe_b64decode(encoded.encode("ascii"))
+        return AESGCM(_refund_encryption_key()).decrypt(packed[:12], packed[12:], REFUND_ENCRYPTION_AAD).decode("utf-8")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Could not decrypt refund payout data")
+        raise HTTPException(status_code=500, detail="Refund payout details could not be read safely.") from exc
+
+
 # --- ORDER RULES ---
 
 MALAYSIA_TZ = timezone(timedelta(hours=8))   # Malaysia has no daylight saving
@@ -261,6 +358,99 @@ ORDER_TRANSITIONS = {
 }
 
 TERMINAL_ORDER_STATUSES = ("completed", "rejected", "cancelled", "cancelled_timeout")
+REFUND_ELIGIBLE_REJECTION_REASONS = {"item_sold_out", "stall_unable", "other"}
+
+REFUND_STATUS_LABELS = {
+    "awaiting_customer": "Choose refund method",
+    "awaiting_refund": "Waiting for merchant refund",
+    "proof_submitted": "Refund proof uploaded",
+    "customer_confirmed": "Customer confirmed refund",
+    "disputed": "Customer reported a problem",
+    "verified": "Refund verified and closed",
+}
+
+
+def serialize_refund(refund: RefundRequest, viewer_role: str) -> dict:
+    """Role-aware refund response. Payout secrets never appear in customer payloads."""
+    data = {
+        "id": str(refund.id),
+        "order_id": str(refund.order_id),
+        "customer_id": str(refund.customer_id),
+        "merchant_id": str(refund.merchant_id),
+        "amount": float(refund.amount),
+        "status": refund.status,
+        "status_label": REFUND_STATUS_LABELS.get(refund.status, refund.status),
+        "method": refund.method,
+        "reason": refund.reason,
+        "rejection_note": refund.rejection_note,
+        "account_last4": refund.account_last4,
+        "proof_url": receipt_link(refund.proof_path),
+        "merchant_note": refund.merchant_note,
+        "customer_dispute_note": refund.customer_dispute_note,
+        "admin_note": refund.admin_note if viewer_role in ("merchant", "admin") else None,
+        "created_at": refund.created_at.isoformat() if refund.created_at else None,
+        "requested_at": refund.requested_at.isoformat() if refund.requested_at else None,
+        "proof_uploaded_at": refund.proof_uploaded_at.isoformat() if refund.proof_uploaded_at else None,
+        "customer_responded_at": refund.customer_responded_at.isoformat() if refund.customer_responded_at else None,
+        "verified_at": refund.verified_at.isoformat() if refund.verified_at else None,
+    }
+    if viewer_role in ("merchant", "admin"):
+        data.update({
+            "legal_name": decrypt_refund_value(refund.legal_name_encrypted),
+            "bank_name": decrypt_refund_value(refund.bank_name_encrypted),
+            "account_number": decrypt_refund_value(refund.account_number_encrypted),
+            "duitnow_qr_url": receipt_link(refund.duitnow_qr_path),
+        })
+    return data
+
+
+async def require_refund_access(refund: RefundRequest, current_user: User, db: AsyncSession) -> str:
+    if current_user.role == "admin":
+        return "admin"
+    if refund.customer_id == current_user.id:
+        return "customer"
+    if current_user.role == "merchant":
+        merchant = (await db.execute(
+            select(Merchant).where(Merchant.id == refund.merchant_id, Merchant.user_id == current_user.id)
+        )).scalars().first()
+        if merchant:
+            return "merchant"
+    raise HTTPException(status_code=404, detail="Refund case not found.")
+
+
+def record_refund_event(
+    db: AsyncSession,
+    refund: RefundRequest,
+    actor: User,
+    action: str,
+    from_status: Optional[str],
+    note: Optional[str] = None,
+    evidence_path: Optional[str] = None,
+) -> None:
+    """Append a non-sensitive state transition to the refund audit trail."""
+    db.add(RefundAuditEvent(
+        refund_id=refund.id,
+        actor_user_id=actor.id,
+        actor_role=actor.role,
+        action=action,
+        from_status=from_status,
+        to_status=refund.status,
+        note=(note or "").strip()[:1000] or None,
+        evidence_path=evidence_path,
+    ))
+
+
+def serialize_refund_event(event: RefundAuditEvent, include_evidence: bool = False) -> dict:
+    return {
+        "id": str(event.id),
+        "action": event.action,
+        "actor_role": event.actor_role,
+        "from_status": event.from_status,
+        "to_status": event.to_status,
+        "note": event.note,
+        "evidence_url": receipt_link(event.evidence_path) if include_evidence else None,
+        "created_at": event.created_at.isoformat() if event.created_at else None,
+    }
 
 
 def new_order_number() -> str:
@@ -428,6 +618,18 @@ class SendCodeRequest(BaseModel):
 
 class OrderStatusUpdate(BaseModel):
     status: Literal["preparing", "ready", "completed", "rejected"]
+    rejection_reason: Optional[Literal["invalid_payment", "item_sold_out", "stall_unable", "other"]] = None
+    rejection_note: Optional[str] = Field(default=None, max_length=500)
+
+
+class RefundCustomerResponse(BaseModel):
+    action: Literal["confirm", "dispute"]
+    note: Optional[str] = Field(default=None, max_length=1000)
+
+
+class RefundAdminReview(BaseModel):
+    action: Literal["verify", "reopen"]
+    note: Optional[str] = Field(default=None, max_length=1000)
 
 
 # NEW: Schemas for Events
@@ -1427,6 +1629,8 @@ async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db), current_
 
     merchant = await db.get(Merchant, order.merchant_id)
     slot = await db.get(PickupSlot, order.pickup_slot_id) if order.pickup_slot_id else None
+    refund = (await db.execute(select(RefundRequest).where(RefundRequest.order_id == order.id))).scalars().first()
+    viewer_role = "admin" if current_user.role == "admin" else ("customer" if order.customer_id == current_user.id else "merchant")
 
     return {
         "id": str(order.id),
@@ -1439,6 +1643,9 @@ async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db), current_
         "order_number": order.order_number,
         "pickup_time": slot.time_slot.isoformat() if slot else None,
         "transaction_ref": receipt_link(order.transaction_ref),
+        "rejection_reason": order.rejection_reason,
+        "rejection_note": order.rejection_note,
+        "refund": serialize_refund(refund, viewer_role) if refund else None,
         "items": items_data
     }
 
@@ -1474,6 +1681,248 @@ async def list_customer_orders(db: AsyncSession = Depends(get_db), current_user:
             "items": items_data
         })
     return response
+
+
+@app.post("/orders/{order_id}/refund/request")
+async def request_refund(
+    order_id: UUID,
+    method: str = Form(...),
+    legal_name: Optional[str] = Form(default=None),
+    bank_name: Optional[str] = Form(default=None),
+    account_number: Optional[str] = Form(default=None),
+    duitnow_qr: Optional[UploadFile] = File(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Customer chooses a refund route. Bank/QR details are never returned to the customer API."""
+    if method not in {"online_bank", "online_qr", "walk_in"}:
+        raise HTTPException(status_code=422, detail="Choose bank transfer, DuitNow QR, or walk-in refund.")
+
+    order = (await db.execute(select(Order).where(Order.id == order_id).with_for_update())).scalars().first()
+    if not order or order.customer_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Order not found.")
+    refund = (await db.execute(
+        select(RefundRequest).where(RefundRequest.order_id == order.id).with_for_update()
+    )).scalars().first()
+    if not refund:
+        raise HTTPException(status_code=400, detail="This order is not eligible for a refund request.")
+    if refund.status != "awaiting_customer":
+        raise HTTPException(status_code=409, detail="A refund method has already been submitted for this order.")
+
+    clean_name = (legal_name or "").strip()
+    clean_bank = (bank_name or "").strip()
+    clean_account = "".join(ch for ch in (account_number or "") if ch.isalnum())
+    if method in {"online_bank", "online_qr"} and not (2 <= len(clean_name) <= 150):
+        raise HTTPException(status_code=422, detail="Enter the account holder's legal full name.")
+    if method == "online_bank":
+        if not (2 <= len(clean_bank) <= 100):
+            raise HTTPException(status_code=422, detail="Enter the bank name.")
+        if not (6 <= len(clean_account) <= 34):
+            raise HTTPException(status_code=422, detail="Enter a valid bank account number.")
+    if method == "online_qr" and not duitnow_qr:
+        raise HTTPException(status_code=422, detail="Upload the DuitNow QR image for this refund.")
+
+    previous_status = refund.status
+    refund.method = method
+    if method == "online_bank":
+        refund.legal_name_encrypted = encrypt_refund_value(clean_name)
+        refund.bank_name_encrypted = encrypt_refund_value(clean_bank)
+        refund.account_number_encrypted = encrypt_refund_value(clean_account)
+        refund.account_last4 = clean_account[-4:]
+    elif method == "online_qr":
+        refund.legal_name_encrypted = encrypt_refund_value(clean_name)
+        refund.duitnow_qr_path = await upload_to_supabase(
+            duitnow_qr, private=True, folder=f"refunds/{refund.id}/customer"
+        )
+    refund.status = "awaiting_refund"
+    refund.requested_at = datetime.now(timezone.utc)
+    refund.updated_at = datetime.now(timezone.utc)
+    record_refund_event(db, refund, current_user, "refund_method_submitted", previous_status, note=method)
+    await db.commit()
+    await db.refresh(refund)
+    return serialize_refund(refund, "customer")
+
+
+@app.get("/merchants/me/refunds")
+async def list_merchant_refunds(
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "merchant":
+        raise HTTPException(status_code=403, detail="Merchant access required.")
+    merchant = (await db.execute(select(Merchant).where(Merchant.user_id == current_user.id))).scalars().first()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant profile not found.")
+    rows = (await db.execute(
+        select(RefundRequest, Order, User)
+        .join(Order, Order.id == RefundRequest.order_id)
+        .join(User, User.id == RefundRequest.customer_id)
+        .where(RefundRequest.merchant_id == merchant.id)
+        .order_by(RefundRequest.created_at.desc())
+    )).all()
+    refund_ids = [refund.id for refund, _, _ in rows]
+    events_by_refund: dict[UUID, list[RefundAuditEvent]] = {refund_id: [] for refund_id in refund_ids}
+    if refund_ids:
+        events = (await db.execute(
+            select(RefundAuditEvent).where(RefundAuditEvent.refund_id.in_(refund_ids)).order_by(RefundAuditEvent.created_at)
+        )).scalars().all()
+        for event in events:
+            events_by_refund.setdefault(event.refund_id, []).append(event)
+    response = []
+    for refund, order, customer in rows:
+        item = serialize_refund(refund, "merchant")
+        item.update({
+            "order_number": order.order_number,
+            "customer_name": customer.name,
+            "history": [serialize_refund_event(event, include_evidence=True) for event in events_by_refund.get(refund.id, [])],
+        })
+        response.append(item)
+    return response
+
+
+@app.post("/refunds/{refund_id}/proof")
+async def upload_refund_proof(
+    refund_id: UUID,
+    proof_file: UploadFile = File(...),
+    note: Optional[str] = Form(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    refund = (await db.execute(
+        select(RefundRequest).where(RefundRequest.id == refund_id).with_for_update()
+    )).scalars().first()
+    if not refund:
+        raise HTTPException(status_code=404, detail="Refund case not found.")
+    role = await require_refund_access(refund, current_user, db)
+    if role != "merchant":
+        raise HTTPException(status_code=403, detail="Only the order's merchant can upload refund proof.")
+    if refund.status not in {"awaiting_refund", "disputed"}:
+        raise HTTPException(status_code=409, detail="This refund case is not waiting for merchant evidence.")
+    previous_status = refund.status
+    refund.proof_path = await upload_to_supabase(
+        proof_file, private=True, folder=f"refunds/{refund.id}/merchant"
+    )
+    refund.merchant_note = (note or "").strip()[:1000] or None
+    refund.customer_dispute_note = None
+    refund.status = "proof_submitted"
+    refund.proof_uploaded_at = datetime.now(timezone.utc)
+    refund.updated_at = datetime.now(timezone.utc)
+    record_refund_event(
+        db, refund, current_user, "refund_proof_uploaded", previous_status,
+        note=refund.merchant_note, evidence_path=refund.proof_path,
+    )
+    await db.commit()
+    await db.refresh(refund)
+    return serialize_refund(refund, "merchant")
+
+
+@app.patch("/refunds/{refund_id}/customer-response")
+async def customer_refund_response(
+    refund_id: UUID,
+    response: RefundCustomerResponse,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    refund = (await db.execute(
+        select(RefundRequest).where(RefundRequest.id == refund_id).with_for_update()
+    )).scalars().first()
+    if not refund or refund.customer_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Refund case not found.")
+    if refund.status != "proof_submitted":
+        raise HTTPException(status_code=409, detail="Wait for the merchant to upload refund proof first.")
+    note = (response.note or "").strip()
+    if response.action == "dispute" and len(note) < 5:
+        raise HTTPException(status_code=422, detail="Briefly explain what is wrong with the refund.")
+    previous_status = refund.status
+    refund.status = "customer_confirmed" if response.action == "confirm" else "disputed"
+    refund.customer_dispute_note = note if response.action == "dispute" else None
+    refund.customer_responded_at = datetime.now(timezone.utc)
+    refund.updated_at = datetime.now(timezone.utc)
+    record_refund_event(
+        db, refund, current_user,
+        "refund_confirmed" if response.action == "confirm" else "refund_disputed",
+        previous_status, note=note,
+    )
+    await db.commit()
+    await db.refresh(refund)
+    return serialize_refund(refund, "customer")
+
+
+@app.get("/admin/refunds")
+async def list_admin_refunds(
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    rows = (await db.execute(
+        select(RefundRequest, Order, User, Merchant)
+        .join(Order, Order.id == RefundRequest.order_id)
+        .join(User, User.id == RefundRequest.customer_id)
+        .join(Merchant, Merchant.id == RefundRequest.merchant_id)
+        .order_by(RefundRequest.created_at.desc())
+        .limit(500)
+    )).all()
+    refund_ids = [refund.id for refund, _, _, _ in rows]
+    events_by_refund: dict[UUID, list[RefundAuditEvent]] = {refund_id: [] for refund_id in refund_ids}
+    if refund_ids:
+        events = (await db.execute(
+            select(RefundAuditEvent).where(RefundAuditEvent.refund_id.in_(refund_ids)).order_by(RefundAuditEvent.created_at)
+        )).scalars().all()
+        for event in events:
+            events_by_refund.setdefault(event.refund_id, []).append(event)
+    response = []
+    for refund, order, customer, merchant in rows:
+        item = serialize_refund(refund, "admin")
+        item.update({
+            "order_number": order.order_number,
+            "customer_name": customer.name,
+            "customer_email": customer.email,
+            "merchant_name": merchant.name,
+            "history": [serialize_refund_event(event, include_evidence=True) for event in events_by_refund.get(refund.id, [])],
+        })
+        response.append(item)
+    return response
+
+
+@app.patch("/admin/refunds/{refund_id}/review")
+async def review_refund(
+    refund_id: UUID,
+    review: RefundAdminReview,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    refund = (await db.execute(
+        select(RefundRequest).where(RefundRequest.id == refund_id).with_for_update()
+    )).scalars().first()
+    if not refund:
+        raise HTTPException(status_code=404, detail="Refund case not found.")
+    note = (review.note or "").strip()
+    previous_status = refund.status
+    if review.action == "verify":
+        if refund.status not in {"customer_confirmed", "disputed"}:
+            raise HTTPException(status_code=409, detail="The customer must confirm the refund, or report a dispute, before the case can be closed.")
+        if refund.status == "disputed" and not note:
+            raise HTTPException(status_code=422, detail="Record the dispute resolution before closing this case.")
+        refund.status = "verified"
+        refund.verified_at = datetime.now(timezone.utc)
+    else:
+        if not note:
+            raise HTTPException(status_code=422, detail="Explain what the merchant needs to correct.")
+        refund.status = "awaiting_refund"
+        refund.verified_at = None
+        refund.proof_path = None
+        refund.proof_uploaded_at = None
+    refund.admin_note = note or None
+    refund.updated_at = datetime.now(timezone.utc)
+    record_refund_event(
+        db, refund, current_user,
+        "refund_verified" if review.action == "verify" else "refund_returned_to_merchant",
+        previous_status, note=note,
+    )
+    await db.commit()
+    await db.refresh(refund)
+    return serialize_refund(refund, "admin")
 
 
 @app.get("/merchants/{merchant_id}/orders")
@@ -1526,6 +1975,8 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
             "pickup_time": pickup_times.get(str(order.pickup_slot_id)) if order.pickup_slot_id else None,
             "transaction_ref": receipt_link(order.transaction_ref),
             "order_number": getattr(order, "order_number", None),
+            "rejection_reason": order.rejection_reason,
+            "rejection_note": order.rejection_note,
             "items": items_data
         })
     return response
@@ -1564,8 +2015,35 @@ async def update_order_status(
         raise HTTPException(status_code=400, detail=f"An order that is '{order.status}' can't be changed to '{new_status}'.")
 
     order.status = new_status
+    refund_case = None
     if new_status == "rejected":
+        if not status_update.rejection_reason:
+            raise HTTPException(status_code=422, detail="Select a rejection reason so the customer receives the correct next steps.")
+        order.rejection_reason = status_update.rejection_reason
+        order.rejection_note = (status_update.rejection_note or "").strip() or None
+        if status_update.rejection_reason == "other" and not order.rejection_note:
+            raise HTTPException(status_code=422, detail="Explain the other rejection reason to the customer.")
         await release_slot(order, db)
+        if status_update.rejection_reason in REFUND_ELIGIBLE_REJECTION_REASONS and order.transaction_ref:
+            refund_case = (await db.execute(
+                select(RefundRequest).where(RefundRequest.order_id == order.id)
+            )).scalars().first()
+            if not refund_case:
+                refund_case = RefundRequest(
+                    order_id=order.id,
+                    customer_id=order.customer_id,
+                    merchant_id=order.merchant_id,
+                    amount=order.total_price,
+                    status="awaiting_customer",
+                    reason=status_update.rejection_reason,
+                    rejection_note=order.rejection_note,
+                )
+                db.add(refund_case)
+                await db.flush()
+                record_refund_event(
+                    db, refund_case, current_user, "refund_case_opened", None,
+                    note=order.rejection_note or status_update.rejection_reason,
+                )
     await db.commit()
 
     customer = order.customer
@@ -1598,7 +2076,8 @@ async def update_order_status(
     return {
         "message": "Order status updated successfully",
         "order_id": str(order.id),
-        "new_status": order.status
+        "new_status": order.status,
+        "refund_eligible": refund_case is not None,
     }
 
 

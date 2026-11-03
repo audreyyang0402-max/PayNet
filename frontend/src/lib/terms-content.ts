@@ -33,7 +33,7 @@ export const TERMS_SECTIONS: TermsSection[] = [
   },
   {
     heading: "4. Orders & Payments",
-    body: "Orders are confirmed only after successful payment via DuitNow QR. Prices are set by individual merchants and may change without notice. Once an order is placed and paid, cancellations and refunds are subject to the merchant's own policy and discretion — Payvolution is not a party to, and is not liable for, payment disputes between customers and merchants.",
+    body: "Orders are confirmed only after the merchant verifies payment. Prices are set by individual merchants and may change without notice. If a merchant rejects an already-paid order because an item is sold out or the stall cannot fulfil it, the customer may request an online or walk-in refund through the Platform. The merchant must complete the refund and upload evidence; the customer may confirm receipt or raise a dispute, and Payvolution administrators may review the case. Payvolution records and facilitates this manual process but does not itself hold or automatically reverse the payment.",
   },
   {
     heading: "5. Pickup & Collection",
@@ -49,7 +49,7 @@ export const TERMS_SECTIONS: TermsSection[] = [
   },
   {
     heading: "8. Privacy & Data",
-    body: "We collect your name, email, and order data solely to operate this Platform, and do not sell your personal information to third parties. Profile photos and dietary preferences are stored locally in your browser and are not uploaded to our servers.",
+    body: "We collect account and order data to operate the Platform and do not sell personal information. For eligible refunds, we may also process encrypted bank details or a private DuitNow QR image and refund evidence, accessible only to the responsible merchant and authorised administrators. Profile photos and dietary preferences are stored locally in your browser and are not uploaded to our servers.",
   },
   {
     heading: "9. Intellectual Property",
