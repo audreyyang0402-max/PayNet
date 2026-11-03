@@ -84,7 +84,10 @@ export default function MerchantPickupSlots({
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error("Failed to delete pickup slot.");
+      if (!res.ok) {
+        const error = await res.json().catch(() => null);
+        throw new Error(error?.detail || "Failed to delete pickup slot.");
+      }
       const updated = slots.filter(s => s.id !== slotId);
       setSlots(updated);
       notifyParent(updated);

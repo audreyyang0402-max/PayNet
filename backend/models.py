@@ -80,7 +80,7 @@ class Order(Base):
     checkout_key = Column(String, nullable=True, unique=True)
     checkout_fingerprint = Column(String, nullable=True)
     
-    pickup_slot_id = Column(UUID(as_uuid=True), ForeignKey("pickup_slots.id"))
+    pickup_slot_id = Column(UUID(as_uuid=True), ForeignKey("pickup_slots.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # --- RELATIONSHIPS ---
