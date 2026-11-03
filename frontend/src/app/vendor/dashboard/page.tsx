@@ -155,7 +155,7 @@ export default function MerchantDashboard() {
         const [userRes, ordersRes, slotsRes] = await Promise.all([
           fetch(`${BACKEND_URL}/auth/me`, { headers: { Authorization: `Bearer ${token}` } }),
           fetch(`${BACKEND_URL}/merchants/${profileData.id}/orders`, { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(`${BACKEND_URL}/merchants/${profileData.id}/pickup-slots`),
+          fetch(`${BACKEND_URL}/merchants/${profileData.id}/pickup-slots`, { headers: { Authorization: `Bearer ${token}` } }),
         ]);
 
         setMerchant({ ...profileData, is_temporary: profileData.location?.toLowerCase().includes("boulevard") });

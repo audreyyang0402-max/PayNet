@@ -25,7 +25,7 @@ export default function MerchantPickupSlots({
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch(`${BACKEND_URL}/merchants/${merchantId}/pickup-slots`);
+        const res = await fetch(`${BACKEND_URL}/merchants/${merchantId}/pickup-slots`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } });
         if (res.ok) {
           const data = await res.json();
           setSlots(data);

@@ -31,7 +31,8 @@ def summarize(orders, days, now=None):
         if day not in daily:
             continue
         placed += 1
-        daily[day]["orders"] += 1
+        if order.status in PAID:
+            daily[day]["orders"] += 1
         if order.status in PAID:
             spent += amount
             daily[day]["spent"] += amount

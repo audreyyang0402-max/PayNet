@@ -19,7 +19,7 @@ export default function DailyStatistics({ stats, merchant = false }: { stats?: D
         [merchant ? "Confirmed sales per day" : "Spending per day", `RM ${stats.average_daily_amount.toFixed(2)}`],
       ].map(([label, value]) => <div key={label}><p className="text-xs text-slate-600">{label}</p><p className="mt-2 text-xl font-bold text-slate-900">{value}</p></div>)}
     </div>
-    <p className="text-xs leading-relaxed text-slate-600">Based on {stats.sample_days} full calendar days in Malaysia; {stats.days_with_orders} had orders. Includes zero-order days and excludes today because it is still in progress. Order counts include cancelled and pending orders; money includes vendor-confirmed orders only.</p>
+    <p className="text-xs leading-relaxed text-slate-600">Based on {stats.sample_days} full calendar days in Malaysia; {stats.days_with_orders} had confirmed orders. Includes zero-order days and excludes today because it is still in progress. Counts and money include vendor-confirmed orders only.</p>
     {merchant && <p className="text-sm text-indigo-900">Use these averages as a starting point for staffing. Larger daily variation means demand is less consistent. Check the top dishes below before preparing stock; these observations are not a guarantee of tomorrow’s sales.</p>}
   </section>;
 }

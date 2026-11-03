@@ -4,9 +4,12 @@ import binascii
 import io
 import logging
 import secrets
+import hashlib
+import json
+from decimal import Decimal
 from datetime import datetime, date, timedelta, timezone
 import httpx as httpx_client  # aliased since you might already have httpx elsewhere
-from fastapi import UploadFile, File, Form, HTTPException, Request
+from fastapi import UploadFile, File, Form, HTTPException, Request, Header
 import shutil
 
 from fastapi_offline import FastAPIOffline
@@ -61,6 +64,9 @@ async def lifespan(app: FastAPIOffline):
     # Idempotent lightweight migrations for fields introduced after the
     # original Supabase schema was created.
     async with engine.begin() as connection:
+        await connection.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_key VARCHAR"))
+        await connection.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_fingerprint VARCHAR"))
+        await connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS orders_checkout_key_unique ON orders (checkout_key)"))
         await connection.execute(text(
             "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS special_instructions TEXT"
         ))
@@ -267,7 +273,7 @@ def as_malaysia_time(when: datetime) -> datetime:
 
 async def release_slot(order, db: AsyncSession):
     if order.pickup_slot_id:
-        slot = await db.get(PickupSlot, order.pickup_slot_id)
+        slot = (await db.execute(select(PickupSlot).where(PickupSlot.id == order.pickup_slot_id).with_for_update())).scalars().first()
         if slot and slot.current_bookings > 0:
             slot.current_bookings -= 1
 
@@ -399,6 +405,7 @@ class OrderItemCreate(BaseModel):
     special_instructions: Optional[str] = Field(default=None, max_length=300)
 
 class OrderCreate(BaseModel):
+    checkout_key: UUID | None = None
     merchant_id: UUID
     pickup_slot_id: UUID
     items: List[OrderItemCreate] = Field(min_length=1, max_length=50)
@@ -893,7 +900,7 @@ async def build_order_analytics(db: AsyncSession, days: int, merchant_id: UUID |
     trend_result = await db.execute(
         select(
             day_expr.label("day"),
-            func.count(Order.id).label("orders"),
+            func.sum(case((Order.status.in_(PAID), 1), else_=0)).label("orders"),
             func.coalesce(func.sum(case((Order.status.in_(PAID), Order.total_price), else_=0)), 0).label("revenue"),
         ).where(*filters).group_by(day_expr).order_by(day_expr)
     )
@@ -995,6 +1002,21 @@ async def create_merchant(merchant_data: MerchantCreate, db: AsyncSession = Depe
 
 # Merchant IDs are safe public shop identifiers. The frontend needs them to
 # fetch that shop's menu and pickup slots; the internal `user_id` remains hidden.
+def shop_is_public(merchant):
+    return bool(merchant and merchant.is_active is not False and not merchant.is_preview and not merchant.is_deleted)
+
+
+async def require_shop_access(db, merchant_id, authorization=None):
+    merchant = await db.get(Merchant, merchant_id)
+    if shop_is_public(merchant):
+        return merchant
+    if merchant and authorization and authorization.startswith("Bearer "):
+        user = await get_current_user(authorization[7:], db)
+        if user.role == "admin" or (user.role == "merchant" and user.id == merchant.user_id):
+            return merchant
+    raise HTTPException(404, "Merchant not found.")
+
+
 @app.get("/merchants", response_model=List[MerchantPublic])
 async def list_merchants(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -1003,6 +1025,7 @@ async def list_merchants(db: AsyncSession = Depends(get_db)):
         .where(Merchant.name != "--")
         .where(Merchant.name != "")
         .where(Merchant.is_preview.is_not(True))
+        .where(Merchant.is_deleted.is_not(True))
     )
     merchants = result.scalars().all()
     return [MerchantPublic.model_validate(m) for m in merchants]
@@ -1018,6 +1041,7 @@ async def list_merchants_sorted(db: AsyncSession = Depends(get_db)):
         .where(Merchant.name != "--")
         .where(Merchant.name != "")
         .where(Merchant.is_preview.is_not(True))
+        .where(Merchant.is_deleted.is_not(True))
         .order_by(Merchant.display_order.asc().nulls_last(), Merchant.name)
     )
     merchants = result.scalars().all()
@@ -1026,10 +1050,8 @@ async def list_merchants_sorted(db: AsyncSession = Depends(get_db)):
 
 # Public detail likewise needs the shop ID while excluding the owner user ID.
 @app.get("/merchants/{merchant_id}", response_model=MerchantPublic)
-async def get_merchant_details(merchant_id: UUID, db: AsyncSession = Depends(get_db)):
-    merchant = await db.get(Merchant, merchant_id)
-    if not merchant or merchant.is_active is False:
-        raise HTTPException(status_code=404, detail="Merchant not found.")
+async def get_merchant_details(merchant_id: UUID, db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
+    merchant = await require_shop_access(db, merchant_id, authorization)
     return MerchantPublic.model_validate(merchant)
 
 
@@ -1166,7 +1188,8 @@ async def create_pickup_slot(
 
 # --- PUBLIC: List Pickup Slots ---
 @app.get("/merchants/{merchant_id}/pickup-slots")
-async def list_pickup_slots(merchant_id: UUID, db: AsyncSession = Depends(get_db)):
+async def list_pickup_slots(merchant_id: UUID, db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
+    await require_shop_access(db, merchant_id, authorization)
     await expire_stale_drafts(db)
     result = await db.execute(select(PickupSlot).where(PickupSlot.merchant_id == merchant_id).order_by(PickupSlot.time_slot))
     return result.scalars().all()
@@ -1201,7 +1224,8 @@ async def delete_pickup_slot(
 
 # --- PUBLIC: List Menu Items ---
 @app.get("/merchants/{merchant_id}/items")
-async def list_menu_items(merchant_id: UUID, db: AsyncSession = Depends(get_db)):
+async def list_menu_items(merchant_id: UUID, db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
+    await require_shop_access(db, merchant_id, authorization)
     result = await db.execute(select(MenuItem).where(MenuItem.merchant_id == merchant_id))
     return [public_menu_item(item) for item in result.scalars().all()]
 
@@ -1239,10 +1263,19 @@ async def create_order(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    merchant = await db.get(Merchant, order_data.merchant_id)
-    if not merchant or merchant.is_active is False:
-        raise HTTPException(status_code=400, detail="This stall is not taking orders right now.")
     await expire_stale_drafts(db)
+    checkout_key = f"{current_user.id}:{order_data.checkout_key}" if order_data.checkout_key else None
+    fingerprint = hashlib.sha256(json.dumps(order_data.model_dump(mode="json", exclude={"checkout_key"}), sort_keys=True).encode()).hexdigest()
+    if checkout_key:
+        await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": checkout_key})
+        previous = (await db.execute(select(Order).where(Order.checkout_key == checkout_key))).scalars().first()
+        if previous:
+            if previous.checkout_fingerprint != fingerprint:
+                raise HTTPException(409, "This checkout request was already used for another cart.")
+            return previous
+    merchant = await db.get(Merchant, order_data.merchant_id)
+    if not shop_is_public(merchant):
+        raise HTTPException(status_code=400, detail="This stall is not taking orders right now.")
     # Lock the slot row so two customers can't both take the last place.
     slot = (await db.execute(
         select(PickupSlot).where(PickupSlot.id == order_data.pickup_slot_id).with_for_update()
@@ -1256,7 +1289,7 @@ async def create_order(
     if slot.current_bookings >= slot.max_capacity:
         raise HTTPException(status_code=400, detail="This pickup slot is fully booked.")
 
-    total_price = 0
+    total_price = Decimal("0.00")
     line_items = []
     for line in order_data.items:
         item = await db.get(MenuItem, line.menu_item_id)
@@ -1266,7 +1299,7 @@ async def create_order(
             raise HTTPException(status_code=400, detail="Menu item does not belong to this merchant.")
         if not item.is_available or item.approval_status == "rejected" or float(item.price) <= 0:
             raise HTTPException(status_code=400, detail=f"'{item.name}' is currently unavailable.")
-        line_total = float(item.price) * line.quantity
+        line_total = item.price * line.quantity
         total_price += line_total
         instructions = line.special_instructions.strip() if line.special_instructions else None
         line_items.append((item, line.quantity, instructions or None))
@@ -1276,6 +1309,8 @@ async def create_order(
         order_number = new_order_number()
 
     new_order = Order(
+        checkout_key=checkout_key,
+        checkout_fingerprint=fingerprint,
         customer_id=current_user.id,
         merchant_id=order_data.merchant_id,
         pickup_slot_id=order_data.pickup_slot_id,
@@ -1313,7 +1348,7 @@ async def submit_order_receipt(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    order = await db.get(Order, order_id)
+    order = (await db.execute(select(Order).where(Order.id == order_id).with_for_update())).scalars().first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
     if order.customer_id != current_user.id:
@@ -1475,7 +1510,7 @@ async def update_order_status(
     current_user: User = Depends(get_current_user)
 ):
     result = await db.execute(
-        select(Order).where(Order.id == order_id).options(
+        select(Order).where(Order.id == order_id).with_for_update().options(
             selectinload(Order.customer),
             selectinload(Order.items).selectinload(OrderItem.menu_item),
         )
@@ -1708,7 +1743,7 @@ async def featured_event_merchants(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Merchant).join(EventMerchant, EventMerchant.merchant_id == Merchant.id)
         .where(EventMerchant.event_id == event.id, EventMerchant.is_active.is_(True),
-               Merchant.is_active.is_not(False)).distinct()
+               Merchant.is_active.is_not(False), Merchant.is_preview.is_not(True), Merchant.is_deleted.is_not(True)).distinct()
     )
     merchants = result.scalars().all()
     return [{"id": str(m.id), "name": m.name, "location": m.location, "description": m.description}
@@ -1741,7 +1776,7 @@ async def get_event(event_id: UUID, db: AsyncSession = Depends(get_db)):
     merchants = []
     for merchant_id in merchant_ids:
         merchant = await db.get(Merchant, merchant_id)
-        if merchant and merchant.is_active is not False:
+        if shop_is_public(merchant):
             merchants.append({
                 "id": str(merchant.id),
                 "name": merchant.name,
@@ -1781,7 +1816,7 @@ async def get_event_merchants(event_id: UUID, db: AsyncSession = Depends(get_db)
                      for membership in event_merchants]
 
     for merchant, stall_number in merchant_rows:
-        if not merchant or merchant.is_active is False:
+        if not shop_is_public(merchant):
             continue
             
         items_result = await db.execute(select(MenuItem).where(MenuItem.merchant_id == merchant.id))

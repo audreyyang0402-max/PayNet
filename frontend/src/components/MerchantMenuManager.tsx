@@ -164,8 +164,8 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
         // These independent requests run together after the merchant profile
         // is known, reducing the wait when vendors open menu management.
         const [menuRes, slotsRes] = await Promise.all([
-          fetch(`${BACKEND_URL}/merchants/${profileData.id}/items`),
-          fetch(`${BACKEND_URL}/merchants/${profileData.id}/pickup-slots`),
+          fetch(`${BACKEND_URL}/merchants/${profileData.id}/items`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${BACKEND_URL}/merchants/${profileData.id}/pickup-slots`, { headers: { Authorization: `Bearer ${token}` } }),
         ]);
         if (menuRes.ok) {
           const menuData = await menuRes.json();

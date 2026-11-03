@@ -16,7 +16,7 @@
 "use client";
 
 import { BACKEND_URL } from "@/lib/backend-url";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
 import ShopDetailsDialog from "@/components/ShopDetailsDialog";
 import RecommendationWidget from "@/components/RecommendationWidget";
@@ -69,6 +69,7 @@ interface CartLine {
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function Home() {
+  const checkoutInFlight = useRef(false);
   // ── State: Merchants & Menus ──
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [eventMerchantIds, setEventMerchantIds] = useState<string[]>([]);
@@ -299,6 +300,7 @@ export default function Home() {
 
   // ─── 7. Checkout Handler (FastAPI + DuitNow) ──────────────────────────────
   const handleCheckout = async () => {
+    if (checkoutInFlight.current) return;
     const token = localStorage.getItem("token");
     if (!token) {
       alert("Please log in first before checking out.");
@@ -316,6 +318,7 @@ export default function Home() {
       return;
     }
 
+    checkoutInFlight.current = true;
     setCheckingOut(true);
     try {
       const orderPayload = {
@@ -328,13 +331,19 @@ export default function Home() {
         })),
       };
 
+      const payloadFingerprint = JSON.stringify(orderPayload);
+      const storageKey = `checkout-attempt:${localStorage.getItem("user_id") || "current"}`;
+      const savedAttempt = sessionStorage.getItem(storageKey);
+      const attempt = savedAttempt ? JSON.parse(savedAttempt) : null;
+      const checkoutKey = attempt?.fingerprint === payloadFingerprint ? attempt.key : crypto.randomUUID();
+      sessionStorage.setItem(storageKey, JSON.stringify({ fingerprint: payloadFingerprint, key: checkoutKey }));
       const orderRes = await fetch(`${BACKEND_URL}/orders`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(orderPayload),
+        body: JSON.stringify({ ...orderPayload, checkout_key: checkoutKey }),
       });
 
       if (!orderRes.ok) {
@@ -344,11 +353,13 @@ export default function Home() {
 
       const orderData = await orderRes.json();
       const orderId = orderData.id;
+      sessionStorage.removeItem(storageKey);
 
       window.location.href = `/checkout/success/${orderId}`;
     } catch (err: any) {
       alert(err.message || "Checkout failed.");
     } finally {
+      checkoutInFlight.current = false;
       setCheckingOut(false);
     }
   };
