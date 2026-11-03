@@ -116,7 +116,10 @@ export default function OrderReceiptPage() {
 
   async function ensureExportLibs(): Promise<{ html2canvas: any; jsPDF: any }> {
     if (!(window as any).html2canvas) {
-      await loadScript("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js");
+      // html2canvas-pro, not the original html2canvas: this project's Tailwind v4
+      // colors are oklch()/lab(), and only the "pro" fork can parse those —
+      // same API and same window.html2canvas global, so nothing else changes.
+      await loadScript("https://cdn.jsdelivr.net/npm/html2canvas-pro@2.6.0/dist/html2canvas-pro.min.js");
     }
     if (!(window as any).jspdf) {
       await loadScript("https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js");
