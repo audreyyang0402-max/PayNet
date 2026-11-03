@@ -88,6 +88,7 @@ export default function MerchantDashboard() {
   const [notice, setNotice] = useState("");
   const [orderError, setOrderError] = useState("");
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
+  const [updatingOrderAction, setUpdatingOrderAction] = useState<string | null>(null);
   const [rejectingOrderId, setRejectingOrderId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState("item_sold_out");
   const [rejectionNote, setRejectionNote] = useState("");
@@ -286,6 +287,8 @@ export default function MerchantDashboard() {
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string, rejection?: { reason: string; note: string }) => {
     if (updatingOrderId) return;
     setUpdatingOrderId(orderId);
+    setUpdatingOrderAction(newStatus);
+    setOrderError("");
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`${BACKEND_URL}/orders/${orderId}/status`, {
@@ -294,8 +297,13 @@ export default function MerchantDashboard() {
         body: JSON.stringify({ status: newStatus, rejection_reason: rejection?.reason, rejection_note: rejection?.note }),
       });
       if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || "Failed to update order status.");
+        const raw = await res.text();
+        let detail = "";
+        try { detail = JSON.parse(raw)?.detail || ""; } catch { detail = raw; }
+        if (detail === "Load failed") {
+          detail = "The deployed backend is older than this dashboard. Deploy the latest GitHub commit on Render, then try again.";
+        }
+        throw new Error(detail || `Backend returned ${res.status}. The order was not changed.`);
       }
       setOrders(current => current.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
       if (newStatus === "rejected") { setRejectingOrderId(null); setRejectionNote(""); setTab("refunds"); }
@@ -303,9 +311,10 @@ export default function MerchantDashboard() {
       const message = err instanceof TypeError && err.message === "Failed to fetch"
         ? "The order server could not be reached. Your order was not changed; please wait a moment and try again."
         : err instanceof Error ? err.message : "Failed to update order status.";
-      alert(message);
+      setOrderError(message);
     } finally {
       setUpdatingOrderId(null);
+      setUpdatingOrderAction(null);
     }
   };
 
@@ -571,35 +580,35 @@ export default function MerchantDashboard() {
                           <button onClick={() => { setRejectingOrderId(order.id); setRejectionReason("item_sold_out"); setRejectionNote(""); }}
                             disabled={updatingOrderId === order.id}
                             className="rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60">
-                            {updatingOrderId === order.id ? "Updating…" : "Reject"}
+                            {updatingOrderId === order.id && updatingOrderAction === "rejected" ? "Updating…" : "Reject"}
                           </button>
                         )}
                         {order.status === "pending_verification" && (
                           <button onClick={() => handleUpdateOrderStatus(order.id, "preparing")}
                             disabled={updatingOrderId === order.id}
                             className="bg-green-600 hover:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all shadow-sm disabled:cursor-wait disabled:opacity-60">
-                            {updatingOrderId === order.id ? "Updating…" : "Verify & Accept"}
+                            {updatingOrderId === order.id && updatingOrderAction === "preparing" ? "Updating…" : "Verify & Accept"}
                           </button>
                         )}
                         {order.status === "pending" && (
                           <button onClick={() => handleUpdateOrderStatus(order.id, "preparing")}
                             disabled={updatingOrderId === order.id}
                             className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all disabled:cursor-wait disabled:opacity-60">
-                            {updatingOrderId === order.id ? "Updating…" : "Start Preparing"}
+                            {updatingOrderId === order.id && updatingOrderAction === "preparing" ? "Updating…" : "Start Preparing"}
                           </button>
                         )}
                         {order.status === "ready" && (
                           <button onClick={() => handleUpdateOrderStatus(order.id, "completed")}
                             disabled={updatingOrderId === order.id}
                             className="rounded-lg bg-emerald-700 px-3.5 py-1.5 text-xs font-semibold text-white disabled:cursor-wait disabled:opacity-60">
-                            {updatingOrderId === order.id ? "Updating…" : "Mark Collected"}
+                            {updatingOrderId === order.id && updatingOrderAction === "completed" ? "Updating…" : "Mark Collected"}
                           </button>
                         )}
                         {order.status === "preparing" && (
                           <button onClick={() => handleUpdateOrderStatus(order.id, "ready")}
                             disabled={updatingOrderId === order.id}
                             className="bg-green-600 hover:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all disabled:cursor-wait disabled:opacity-60">
-                            {updatingOrderId === order.id ? "Updating…" : "Mark Ready"}
+                            {updatingOrderId === order.id && updatingOrderAction === "ready" ? "Updating…" : "Mark Ready"}
                           </button>
                         )}
                       </div>
@@ -622,7 +631,9 @@ export default function MerchantDashboard() {
                         <div className="flex gap-2">
                           <button type="button" disabled={updatingOrderId === order.id}
                             onClick={() => handleUpdateOrderStatus(order.id, "rejected", { reason: rejectionReason, note: rejectionNote })}
-                            className="rounded-xl bg-red-700 px-4 py-2 text-xs font-black text-white disabled:opacity-50">Confirm rejection</button>
+                            className="rounded-xl bg-red-700 px-4 py-2 text-xs font-black text-white disabled:opacity-50">
+                            {updatingOrderId === order.id && updatingOrderAction === "rejected" ? "Rejecting…" : "Confirm rejection"}
+                          </button>
                           <button type="button" onClick={() => setRejectingOrderId(null)} className="rounded-xl border border-stone-200 bg-white px-4 py-2 text-xs font-bold text-stone-700">Cancel</button>
                         </div>
                       </div>
