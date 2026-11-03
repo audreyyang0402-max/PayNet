@@ -28,6 +28,7 @@ def refund_record():
         merchant_note=None, customer_dispute_note=None, admin_note=None,
         created_at=now, requested_at=now, proof_uploaded_at=None,
         customer_responded_at=None, verified_at=None,
+        admin_approved_at=now, admin_approved_by=uuid4(),
     )
 
 
@@ -50,6 +51,23 @@ class RefundPrivacyTests(unittest.TestCase):
         self.assertEqual(payload["legal_name"], "Ava Student")
         self.assertEqual(payload["bank_name"], "Example Bank")
         self.assertEqual(payload["account_number"], "1234567890")
+
+    def test_unapproved_merchant_payload_hides_payout_details(self):
+        refund = refund_record()
+        refund.admin_approved_at = None
+        payload = main.serialize_refund(refund, "merchant")
+        self.assertNotIn("legal_name", payload)
+        self.assertNotIn("bank_name", payload)
+        self.assertNotIn("account_number", payload)
+
+    def test_admin_payload_can_review_unapproved_payout_details(self):
+        refund = refund_record()
+        refund.admin_approved_at = None
+        payload = main.serialize_refund(refund, "admin")
+        self.assertEqual(payload["account_number"], "1234567890")
+
+    def test_pending_admin_approval_has_clear_label(self):
+        self.assertEqual(main.REFUND_STATUS_LABELS["pending_admin_approval"], "Waiting for admin approval")
 
     def test_only_fulfilment_failures_auto_open_refunds(self):
         self.assertEqual(main.REFUND_ELIGIBLE_REJECTION_REASONS, {"item_sold_out", "stall_unable", "other"})

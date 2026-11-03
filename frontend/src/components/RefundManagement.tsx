@@ -24,6 +24,7 @@ interface RefundRecord {
   merchant_note?: string | null;
   customer_dispute_note?: string | null;
   admin_note?: string | null;
+  admin_approved_at?: string | null;
   created_at?: string | null;
   history?: Array<{
     id: string; action: string; actor_role: string; from_status?: string | null;
@@ -33,6 +34,7 @@ interface RefundRecord {
 
 const STATUS_COLOURS: Record<string, string> = {
   awaiting_customer: "bg-amber-100 text-amber-800",
+  pending_admin_approval: "bg-cyan-100 text-cyan-800",
   awaiting_refund: "bg-blue-100 text-blue-800",
   proof_submitted: "bg-violet-100 text-violet-800",
   customer_confirmed: "bg-emerald-100 text-emerald-800",
@@ -86,9 +88,11 @@ export default function RefundManagement({ audience, embedded = false }: { audie
     finally { setBusyId(null); }
   }
 
-  async function adminReview(id: string, action: "verify" | "reopen") {
+  async function adminReview(id: string, action: "approve" | "verify" | "reopen") {
     const current = rows.find((row) => row.id === id);
-    const note = action === "reopen"
+    const note = action === "approve"
+      ? window.prompt("Optional approval note for the merchant:") || ""
+      : action === "reopen"
       ? window.prompt("What must the merchant correct?")
       : current?.status === "disputed"
         ? window.prompt("Record how this dispute was resolved before closing it:")
@@ -114,13 +118,19 @@ export default function RefundManagement({ audience, embedded = false }: { audie
         <div>
           <p className="text-xs font-black uppercase tracking-widest text-orange-600">Audited manual refunds</p>
           <h1 className="mt-1 text-2xl font-black text-slate-900">Refund cases</h1>
-          <p className="mt-1 text-sm text-stone-500">Payment details and evidence are private. Never copy them into chat or email.</p>
+          <p className="mt-1 text-sm text-stone-500">
+            {audience === "admin"
+              ? "Review customer refund details first. Only approved cases and payout instructions are released to the merchant."
+              : "Only admin-approved refund cases appear here. Complete the refund, then upload its receipt or transfer proof."}
+          </p>
         </div>
         <button onClick={() => load()} className="rounded-xl border border-stone-200 bg-white px-4 py-2 text-xs font-bold text-stone-700">Refresh</button>
       </div>
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {loading ? <p className="py-10 text-center text-sm text-stone-400">Loading refund cases…</p> : rows.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-10 text-center text-sm text-stone-500">No refund cases yet.</div>
+        <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-10 text-center text-sm text-stone-500">
+          {audience === "admin" ? "No refund requests are waiting for review." : "No admin-approved refund cases right now."}
+        </div>
       ) : <div className="space-y-4">{rows.map((refund) => (
         <article key={refund.id} className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-stone-100 pb-4">
@@ -179,7 +189,15 @@ export default function RefundManagement({ audience, embedded = false }: { audie
               </button>
             </form>
           )}
-          {audience === "admin" && ["proof_submitted", "customer_confirmed", "disputed"].includes(refund.status) && <div className="flex flex-wrap gap-2">
+          {audience === "admin" && !refund.admin_approved_at && ["pending_admin_approval", "awaiting_refund"].includes(refund.status) && (
+            <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-4">
+              <p className="mb-3 text-xs font-semibold text-cyan-900">Check the customer, order, amount, refund method and payout information before releasing this case to the merchant.</p>
+              <button disabled={busyId === refund.id} onClick={() => adminReview(refund.id, "approve")} className="rounded-xl bg-cyan-700 px-4 py-2 text-xs font-black text-white disabled:opacity-50">
+                {busyId === refund.id ? "Approving…" : "Approve & send to merchant"}
+              </button>
+            </div>
+          )}
+          {audience === "admin" && refund.admin_approved_at && ["proof_submitted", "customer_confirmed", "disputed"].includes(refund.status) && <div className="flex flex-wrap gap-2">
             {["customer_confirmed", "disputed"].includes(refund.status) && <button disabled={busyId === refund.id} onClick={() => adminReview(refund.id, "verify")} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white disabled:opacity-50">Verify & close</button>}
             <button disabled={busyId === refund.id} onClick={() => adminReview(refund.id, "reopen")} className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-800 disabled:opacity-50">Return to merchant</button>
           </div>}

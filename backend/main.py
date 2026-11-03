@@ -1,4 +1,5 @@
 import os
+import asyncio
 import base64
 import binascii
 import io
@@ -22,6 +23,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import case, func, or_, update, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload  # <--- Added import for eager loading relationships
 from pydantic import BaseModel, EmailStr, Field
@@ -60,84 +62,106 @@ from auth_endpoints import (
 
 from contextlib import asynccontextmanager
 
+
+STARTUP_MIGRATIONS = [
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_key VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_fingerprint VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_note TEXT",
+    "CREATE UNIQUE INDEX IF NOT EXISTS orders_checkout_key_unique ON orders (checkout_key)",
+    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS special_instructions TEXT",
+    "ALTER TABLE merchants ADD COLUMN IF NOT EXISTS is_preview BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE merchants ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE merchants ALTER COLUMN is_preview SET DEFAULT TRUE",
+    "ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS approval_status VARCHAR NOT NULL DEFAULT 'approved'",
+    """
+        CREATE TABLE IF NOT EXISTS refund_requests (
+            id UUID PRIMARY KEY,
+            order_id UUID NOT NULL UNIQUE REFERENCES orders(id),
+            customer_id UUID NOT NULL REFERENCES users(id),
+            merchant_id UUID NOT NULL REFERENCES merchants(id),
+            amount NUMERIC(10, 2) NOT NULL,
+            status VARCHAR NOT NULL DEFAULT 'awaiting_customer',
+            method VARCHAR,
+            reason VARCHAR NOT NULL,
+            rejection_note TEXT,
+            legal_name_encrypted TEXT,
+            bank_name_encrypted TEXT,
+            account_number_encrypted TEXT,
+            account_last4 VARCHAR,
+            duitnow_qr_path TEXT,
+            proof_path TEXT,
+            merchant_note TEXT,
+            customer_dispute_note TEXT,
+            admin_note TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            requested_at TIMESTAMPTZ,
+            proof_uploaded_at TIMESTAMPTZ,
+            customer_responded_at TIMESTAMPTZ,
+            admin_approved_at TIMESTAMPTZ,
+            admin_approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+            verified_at TIMESTAMPTZ
+        )
+    """,
+    "ALTER TABLE refund_requests ADD COLUMN IF NOT EXISTS admin_approved_at TIMESTAMPTZ",
+    "ALTER TABLE refund_requests ADD COLUMN IF NOT EXISTS admin_approved_by UUID REFERENCES users(id) ON DELETE SET NULL",
+    """
+        UPDATE refund_requests
+        SET admin_approved_at = COALESCE(admin_approved_at, requested_at, created_at)
+        WHERE admin_approved_at IS NULL
+          AND status IN ('proof_submitted', 'customer_confirmed', 'disputed', 'verified')
+    """,
+    "CREATE INDEX IF NOT EXISTS refund_requests_merchant_status_idx ON refund_requests (merchant_id, status)",
+    "CREATE INDEX IF NOT EXISTS refund_requests_customer_idx ON refund_requests (customer_id, created_at DESC)",
+    """
+        CREATE TABLE IF NOT EXISTS refund_audit_events (
+            id UUID PRIMARY KEY,
+            refund_id UUID NOT NULL REFERENCES refund_requests(id) ON DELETE CASCADE,
+            actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+            actor_role VARCHAR NOT NULL,
+            action VARCHAR NOT NULL,
+            from_status VARCHAR,
+            to_status VARCHAR NOT NULL,
+            note TEXT,
+            evidence_path TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """,
+    "CREATE INDEX IF NOT EXISTS refund_audit_events_refund_idx ON refund_audit_events (refund_id, created_at)",
+]
+
+
+async def run_startup_migration(statement: str, max_attempts: int = 5) -> None:
+    """Run one DDL statement per transaction, retrying deployment-time lock conflicts."""
+    for attempt in range(max_attempts):
+        try:
+            # One transaction per statement is deliberate: a blue/green deploy has
+            # an old instance serving queries while the new one starts. Holding an
+            # orders lock while later requesting a merchants lock can deadlock with
+            # those live queries. Committing each statement releases its table lock.
+            async with engine.begin() as connection:
+                await connection.execute(text("SET LOCAL lock_timeout = '8s'"))
+                await connection.execute(text(statement))
+            return
+        except DBAPIError as exc:
+            message = str(exc).lower()
+            retryable = any(marker in message for marker in (
+                "deadlock detected", "lock timeout", "could not obtain lock",
+            ))
+            if not retryable or attempt == max_attempts - 1:
+                raise
+            delay = 1.5 * (attempt + 1)
+            logger.warning("Startup migration lock conflict; retrying in %.1fs (%s/%s)", delay, attempt + 1, max_attempts)
+            await asyncio.sleep(delay)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPIOffline):
     # Idempotent lightweight migrations for fields introduced after the
     # original Supabase schema was created.
-    async with engine.begin() as connection:
-        await connection.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_key VARCHAR"))
-        await connection.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_fingerprint VARCHAR"))
-        await connection.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR"))
-        await connection.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_note TEXT"))
-        await connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS orders_checkout_key_unique ON orders (checkout_key)"))
-        await connection.execute(text(
-            "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS special_instructions TEXT"
-        ))
-        await connection.execute(text(
-            "ALTER TABLE merchants ADD COLUMN IF NOT EXISTS is_preview BOOLEAN NOT NULL DEFAULT TRUE"
-        ))
-        await connection.execute(text(
-            "ALTER TABLE merchants ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0"
-        ))
-        # ADD COLUMN IF NOT EXISTS never changes an existing column, so set the default separately.
-        # Existing stalls keep their current value; only stalls created from now on start hidden.
-        await connection.execute(text(
-            "ALTER TABLE merchants ALTER COLUMN is_preview SET DEFAULT TRUE"
-        ))
-        await connection.execute(text(
-            "ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS approval_status VARCHAR NOT NULL DEFAULT 'approved'"
-        ))
-        await connection.execute(text("""
-            CREATE TABLE IF NOT EXISTS refund_requests (
-                id UUID PRIMARY KEY,
-                order_id UUID NOT NULL UNIQUE REFERENCES orders(id),
-                customer_id UUID NOT NULL REFERENCES users(id),
-                merchant_id UUID NOT NULL REFERENCES merchants(id),
-                amount NUMERIC(10, 2) NOT NULL,
-                status VARCHAR NOT NULL DEFAULT 'awaiting_customer',
-                method VARCHAR,
-                reason VARCHAR NOT NULL,
-                rejection_note TEXT,
-                legal_name_encrypted TEXT,
-                bank_name_encrypted TEXT,
-                account_number_encrypted TEXT,
-                account_last4 VARCHAR,
-                duitnow_qr_path TEXT,
-                proof_path TEXT,
-                merchant_note TEXT,
-                customer_dispute_note TEXT,
-                admin_note TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                requested_at TIMESTAMPTZ,
-                proof_uploaded_at TIMESTAMPTZ,
-                customer_responded_at TIMESTAMPTZ,
-                verified_at TIMESTAMPTZ
-            )
-        """))
-        await connection.execute(text(
-            "CREATE INDEX IF NOT EXISTS refund_requests_merchant_status_idx ON refund_requests (merchant_id, status)"
-        ))
-        await connection.execute(text(
-            "CREATE INDEX IF NOT EXISTS refund_requests_customer_idx ON refund_requests (customer_id, created_at DESC)"
-        ))
-        await connection.execute(text("""
-            CREATE TABLE IF NOT EXISTS refund_audit_events (
-                id UUID PRIMARY KEY,
-                refund_id UUID NOT NULL REFERENCES refund_requests(id) ON DELETE CASCADE,
-                actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-                actor_role VARCHAR NOT NULL,
-                action VARCHAR NOT NULL,
-                from_status VARCHAR,
-                to_status VARCHAR NOT NULL,
-                note TEXT,
-                evidence_path TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-        """))
-        await connection.execute(text(
-            "CREATE INDEX IF NOT EXISTS refund_audit_events_refund_idx ON refund_audit_events (refund_id, created_at)"
-        ))
+    for statement in STARTUP_MIGRATIONS:
+        await run_startup_migration(statement)
     yield
 
 app = FastAPIOffline(lifespan=lifespan)
@@ -362,7 +386,8 @@ REFUND_ELIGIBLE_REJECTION_REASONS = {"item_sold_out", "stall_unable", "other"}
 
 REFUND_STATUS_LABELS = {
     "awaiting_customer": "Choose refund method",
-    "awaiting_refund": "Waiting for merchant refund",
+    "pending_admin_approval": "Waiting for admin approval",
+    "awaiting_refund": "Approved — waiting for merchant refund",
     "proof_submitted": "Refund proof uploaded",
     "customer_confirmed": "Customer confirmed refund",
     "disputed": "Customer reported a problem",
@@ -392,9 +417,15 @@ def serialize_refund(refund: RefundRequest, viewer_role: str) -> dict:
         "requested_at": refund.requested_at.isoformat() if refund.requested_at else None,
         "proof_uploaded_at": refund.proof_uploaded_at.isoformat() if refund.proof_uploaded_at else None,
         "customer_responded_at": refund.customer_responded_at.isoformat() if refund.customer_responded_at else None,
+        "admin_approved_at": refund.admin_approved_at.isoformat() if refund.admin_approved_at else None,
         "verified_at": refund.verified_at.isoformat() if refund.verified_at else None,
     }
-    if viewer_role in ("merchant", "admin"):
+    # A merchant must never receive payout details until an admin has approved
+    # this specific refund request. Admins can inspect them during review.
+    can_view_payout = viewer_role == "admin" or (
+        viewer_role == "merchant" and refund.admin_approved_at is not None
+    )
+    if can_view_payout:
         data.update({
             "legal_name": decrypt_refund_value(refund.legal_name_encrypted),
             "bank_name": decrypt_refund_value(refund.bank_name_encrypted),
@@ -413,7 +444,7 @@ async def require_refund_access(refund: RefundRequest, current_user: User, db: A
         merchant = (await db.execute(
             select(Merchant).where(Merchant.id == refund.merchant_id, Merchant.user_id == current_user.id)
         )).scalars().first()
-        if merchant:
+        if merchant and refund.admin_approved_at is not None:
             return "merchant"
     raise HTTPException(status_code=404, detail="Refund case not found.")
 
@@ -628,7 +659,7 @@ class RefundCustomerResponse(BaseModel):
 
 
 class RefundAdminReview(BaseModel):
-    action: Literal["verify", "reopen"]
+    action: Literal["approve", "verify", "reopen"]
     note: Optional[str] = Field(default=None, max_length=1000)
 
 
@@ -1631,6 +1662,8 @@ async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db), current_
     slot = await db.get(PickupSlot, order.pickup_slot_id) if order.pickup_slot_id else None
     refund = (await db.execute(select(RefundRequest).where(RefundRequest.order_id == order.id))).scalars().first()
     viewer_role = "admin" if current_user.role == "admin" else ("customer" if order.customer_id == current_user.id else "merchant")
+    if viewer_role == "merchant" and refund and refund.admin_approved_at is None:
+        refund = None
 
     return {
         "id": str(order.id),
@@ -1734,10 +1767,10 @@ async def request_refund(
         refund.duitnow_qr_path = await upload_to_supabase(
             duitnow_qr, private=True, folder=f"refunds/{refund.id}/customer"
         )
-    refund.status = "awaiting_refund"
+    refund.status = "pending_admin_approval"
     refund.requested_at = datetime.now(timezone.utc)
     refund.updated_at = datetime.now(timezone.utc)
-    record_refund_event(db, refund, current_user, "refund_method_submitted", previous_status, note=method)
+    record_refund_event(db, refund, current_user, "refund_request_submitted_for_admin_review", previous_status, note=method)
     await db.commit()
     await db.refresh(refund)
     return serialize_refund(refund, "customer")
@@ -1756,7 +1789,10 @@ async def list_merchant_refunds(
         select(RefundRequest, Order, User)
         .join(Order, Order.id == RefundRequest.order_id)
         .join(User, User.id == RefundRequest.customer_id)
-        .where(RefundRequest.merchant_id == merchant.id)
+        .where(
+            RefundRequest.merchant_id == merchant.id,
+            RefundRequest.admin_approved_at.is_not(None),
+        )
         .order_by(RefundRequest.created_at.desc())
     )).all()
     refund_ids = [refund.id for refund, _, _ in rows]
@@ -1899,7 +1935,15 @@ async def review_refund(
         raise HTTPException(status_code=404, detail="Refund case not found.")
     note = (review.note or "").strip()
     previous_status = refund.status
-    if review.action == "verify":
+    if review.action == "approve":
+        if refund.admin_approved_at is not None:
+            raise HTTPException(status_code=409, detail="This refund request has already been approved for the merchant.")
+        if refund.status not in {"pending_admin_approval", "awaiting_refund"}:
+            raise HTTPException(status_code=409, detail="The customer must submit a refund method before admin approval.")
+        refund.status = "awaiting_refund"
+        refund.admin_approved_at = datetime.now(timezone.utc)
+        refund.admin_approved_by = current_user.id
+    elif review.action == "verify":
         if refund.status not in {"customer_confirmed", "disputed"}:
             raise HTTPException(status_code=409, detail="The customer must confirm the refund, or report a dispute, before the case can be closed.")
         if refund.status == "disputed" and not note:
@@ -1917,7 +1961,11 @@ async def review_refund(
     refund.updated_at = datetime.now(timezone.utc)
     record_refund_event(
         db, refund, current_user,
-        "refund_verified" if review.action == "verify" else "refund_returned_to_merchant",
+        (
+            "refund_approved_for_merchant" if review.action == "approve"
+            else "refund_verified" if review.action == "verify"
+            else "refund_returned_to_merchant"
+        ),
         previous_status, note=note,
     )
     await db.commit()

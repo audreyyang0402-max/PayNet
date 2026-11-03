@@ -306,7 +306,11 @@ export default function MerchantDashboard() {
         throw new Error(detail || `Backend returned ${res.status}. The order was not changed.`);
       }
       setOrders(current => current.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
-      if (newStatus === "rejected") { setRejectingOrderId(null); setRejectionNote(""); setTab("refunds"); }
+      if (newStatus === "rejected") {
+        setRejectingOrderId(null);
+        setRejectionNote("");
+        setNotice("Order rejected. If the customer requests a refund, Payvolution admin will review it before it appears in your Refunds tab.");
+      }
     } catch (err: unknown) {
       const message = err instanceof TypeError && err.message === "Failed to fetch"
         ? "The order server could not be reached. Your order was not changed; please wait a moment and try again."

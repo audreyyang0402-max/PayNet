@@ -121,6 +121,8 @@ class RefundRequest(Base):
     requested_at = Column(DateTime(timezone=True), nullable=True)
     proof_uploaded_at = Column(DateTime(timezone=True), nullable=True)
     customer_responded_at = Column(DateTime(timezone=True), nullable=True)
+    admin_approved_at = Column(DateTime(timezone=True), nullable=True)
+    admin_approved_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     verified_at = Column(DateTime(timezone=True), nullable=True)
 
 

@@ -139,11 +139,14 @@ CREATE TABLE refund_requests (
 	requested_at TIMESTAMP WITH TIME ZONE,
 	proof_uploaded_at TIMESTAMP WITH TIME ZONE,
 	customer_responded_at TIMESTAMP WITH TIME ZONE,
+	admin_approved_at TIMESTAMP WITH TIME ZONE,
+	admin_approved_by UUID,
 	verified_at TIMESTAMP WITH TIME ZONE,
 	PRIMARY KEY (id),
 	FOREIGN KEY(order_id) REFERENCES orders (id),
 	FOREIGN KEY(customer_id) REFERENCES users (id),
-	FOREIGN KEY(merchant_id) REFERENCES merchants (id)
+	FOREIGN KEY(merchant_id) REFERENCES merchants (id),
+	FOREIGN KEY(admin_approved_by) REFERENCES users (id) ON DELETE SET NULL
 );
 
 CREATE INDEX refund_requests_merchant_status_idx ON refund_requests (merchant_id, status);
