@@ -178,8 +178,10 @@ export default function RefundManagement({ audience, embedded = false }: { audie
 
           {audience === "merchant" && ["awaiting_refund", "disputed"].includes(refund.status) && (
             <form onSubmit={(event) => uploadProof(event, refund.id)} className="grid gap-3 rounded-xl border border-stone-200 p-4 sm:grid-cols-[1fr,1fr,auto] sm:items-end">
-              <label className="text-xs font-bold text-stone-600">Refund receipt / transfer proof
-                <input name="proof_file" required type="file" accept="image/jpeg,image/png,image/webp" className="mt-1 block w-full text-xs" />
+              <label className="block min-w-0 rounded-xl border border-stone-300 bg-stone-50 p-3 text-sm font-bold text-stone-900">
+                Refund receipt / transfer proof
+                <input name="proof_file" required type="file" accept="image/jpeg,image/png,image/webp" className="mt-2 block w-full min-w-0 rounded-lg text-sm font-normal text-stone-700 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-stone-800 file:px-4 file:py-2.5 file:font-bold file:text-white hover:file:bg-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-600" />
+                <span className="mt-2 block text-xs font-normal text-stone-600">JPG, PNG, or WebP</span>
               </label>
               <label className="text-xs font-bold text-stone-600">Note (optional)
                 <input name="note" maxLength={1000} placeholder="Transfer reference or cash receipt note" className="mt-1 w-full rounded-lg border border-stone-200 px-3 py-2 text-sm font-normal" />
