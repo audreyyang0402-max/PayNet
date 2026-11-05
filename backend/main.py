@@ -63,11 +63,49 @@ from auth_endpoints import (
 from contextlib import asynccontextmanager
 
 
+ORDER_STATUS_VALUES = (
+    "draft",
+    "pending_verification",
+    "pending",
+    "preparing",
+    "ready",
+    "completed",
+    "rejected",
+    "cancelled",
+    "cancelled_timeout",
+)
+_ORDER_STATUS_SQL = ", ".join(f"'{value}'" for value in ORDER_STATUS_VALUES)
+_ORDER_STATUS_MISSING_CHECKS = " OR ".join(
+    f"current_definition NOT LIKE '%''{value}''%'" for value in ORDER_STATUS_VALUES
+)
+ORDER_STATUS_CONSTRAINT_MIGRATION = f"""
+    DO $$
+    DECLARE
+        current_definition TEXT;
+    BEGIN
+        SELECT pg_get_constraintdef(oid)
+        INTO current_definition
+        FROM pg_constraint
+        WHERE conrelid = 'orders'::regclass
+          AND conname = 'orders_status_check';
+
+        IF current_definition IS NULL OR {_ORDER_STATUS_MISSING_CHECKS} THEN
+            ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;
+            ALTER TABLE orders
+                ADD CONSTRAINT orders_status_check
+                CHECK (status IN ({_ORDER_STATUS_SQL}));
+        END IF;
+    END;
+    $$
+"""
+
+
 STARTUP_MIGRATIONS = [
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_key VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_fingerprint VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_note TEXT",
+    ORDER_STATUS_CONSTRAINT_MIGRATION,
     "CREATE UNIQUE INDEX IF NOT EXISTS orders_checkout_key_unique ON orders (checkout_key)",
     "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS special_instructions TEXT",
     "ALTER TABLE merchants ADD COLUMN IF NOT EXISTS is_preview BOOLEAN NOT NULL DEFAULT TRUE",
