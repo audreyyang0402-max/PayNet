@@ -21,6 +21,7 @@ import Link from "next/link";
 import ShopDetailsDialog from "@/components/ShopDetailsDialog";
 import RecommendationWidget from "@/components/RecommendationWidget";
 import FoodDetailsDialog from "@/components/FoodDetailsDialog";
+import MenuScrollRow from "@/components/MenuScrollRow";
 
 // ─── Type Definitions ────────────────────────────────────────────────────────
 
@@ -618,7 +619,7 @@ export default function Home() {
                 </p>
                 <h2 className="mt-0.5 text-xl sm:text-2xl font-black text-slate-900">Browse Campus Stalls</h2>
               </div>
-              <p className="text-xs text-slate-500">Scroll each row to see items</p>
+              <p className="text-xs text-slate-500">Swipe or use the arrows to browse the menu</p>
             </div>
 
             {merchants.filter(m => !eventMerchantIds.includes(m.id)).length === 0 ? (
@@ -663,11 +664,11 @@ export default function Home() {
                         ) : items.length === 0 ? (
                           <p className="py-6 text-center text-xs text-slate-400">No menu items available yet.</p>
                         ) : (
-                          <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2 hide-scrollbar">
+                          <MenuScrollRow merchantName={merchant.name}>
                             {items.map((item) => (
                               <ItemCard key={item.id} item={item} />
                             ))}
-                          </div>
+                          </MenuScrollRow>
                         )}
                       </div>
                     </section>
