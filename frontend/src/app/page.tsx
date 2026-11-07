@@ -199,6 +199,8 @@ export default function Home() {
         });
         if (!response.ok) throw new Error(`Menu request failed with ${response.status}`);
         const items: MenuItem[] = await response.json();
+        // Keep the existing order within each availability group.
+        items.sort((a, b) => Number(b.is_available) - Number(a.is_available));
         if (!cancelled) {
           setMenuItemsByMerchant((current) => ({ ...current, [merchant.id]: items }));
           setMenuStatusByMerchant((current) => ({ ...current, [merchant.id]: "loaded" }));
