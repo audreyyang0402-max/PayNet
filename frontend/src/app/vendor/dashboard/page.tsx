@@ -93,6 +93,40 @@ export default function MerchantDashboard() {
   const [rejectionReason, setRejectionReason] = useState("item_sold_out");
   const [rejectionNote, setRejectionNote] = useState("");
   const seenOrders = useRef<Set<string> | null>(null);
+  const notificationAudio = useRef<AudioContext | null>(null);
+  const [soundReady, setSoundReady] = useState(false);
+  const [soundError, setSoundError] = useState("");
+
+  useEffect(() => () => {
+    const ctx = notificationAudio.current;
+    notificationAudio.current = null;
+    if (ctx) {
+      ctx.onstatechange = null;
+      void ctx.close().catch(() => {});
+    }
+  }, []);
+
+  const enableOrderSounds = async () => {
+    setSoundError("");
+    try {
+      let ctx = notificationAudio.current;
+      if (!ctx || ctx.state === "closed") {
+        const AudioConstructor = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioConstructor) throw new Error("Audio is unavailable in this browser.");
+        ctx = new AudioConstructor();
+        notificationAudio.current = ctx;
+        ctx.onstatechange = () => setSoundReady(notificationAudio.current?.state === "running");
+      }
+      // Resume directly from the merchant's tap to satisfy mobile autoplay rules.
+      await ctx.resume();
+      if (notificationAudio.current !== ctx) return;
+      setSoundReady(ctx.state === "running");
+      playNotificationSound();
+    } catch {
+      setSoundReady(false);
+      setSoundError("Could not enable sound. Tap again and check your device volume.");
+    }
+  };
 
   // Slot summary for tab label badge — loaded at startup AND updated live
   const [slotBookings, setSlotBookings] = useState(0);
@@ -100,9 +134,8 @@ export default function MerchantDashboard() {
 
   const playNotificationSound = () => {
     try {
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContext) return;
-      const ctx = new AudioContext();
+      const ctx = notificationAudio.current;
+      if (!ctx || ctx.state !== "running") return;
       const playTone = (freq: number, start: number, duration: number) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
@@ -112,6 +145,7 @@ export default function MerchantDashboard() {
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + duration);
         osc.connect(gain);
         gain.connect(ctx.destination);
+        osc.onended = () => { osc.disconnect(); gain.disconnect(); };
         osc.start(ctx.currentTime + start);
         osc.stop(ctx.currentTime + start + duration);
       };
@@ -378,6 +412,14 @@ export default function MerchantDashboard() {
             <button onClick={handleLogout} className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700">Log Out</button>
           </div>
 
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 p-3">
+            <button type="button" onClick={enableOrderSounds} className="rounded-lg bg-orange-700 px-4 py-2 text-sm font-bold text-white hover:bg-orange-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-700">
+              {soundReady ? "Test order sound" : "Enable order sounds"}
+            </button>
+            <p role="status" className="text-sm text-stone-700">
+              {soundError || (soundReady ? "Order sounds enabled. Keep this dashboard open and visible." : "Tap to enable sounds on this device. You should hear a test chime.")}
+            </p>
+          </div>
           {/* Nav tabs */}
           <nav aria-label="Merchant portal" className="grid grid-cols-2 gap-2 border-t border-stone-100 pt-4 text-center sm:flex sm:flex-wrap sm:justify-center">
             {(["analytics", "profile", "orders", "refunds", "menu", "slots", "payment"] as Tab[]).map(t => (
