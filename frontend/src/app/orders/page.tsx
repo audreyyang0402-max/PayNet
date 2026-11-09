@@ -19,6 +19,9 @@ export default function OrdersPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let stopped = false;
+    let firstLoad = true;
+
     async function fetchOrders() {
       try {
         const token = localStorage.getItem("token");
@@ -35,15 +38,23 @@ export default function OrdersPage() {
         if (!res.ok) throw new Error("Failed to fetch order history.");
 
         const data = await res.json();
-        setOrders(data);
+        if (!stopped) { setOrders(data); setError(null); }
       } catch (err: any) {
-        setError(err.message);
+        // Only surface an error on the first load — a background refresh
+        // hiccup shouldn't blank out a list the customer can already see.
+        if (!stopped && firstLoad) setError(err.message);
       } finally {
-        setLoading(false);
+        if (!stopped) setLoading(false);
+        firstLoad = false;
       }
     }
 
     fetchOrders();
+    // Same live-refresh pattern as the single-order page: poll while the tab
+    // is actually visible, so a status change (preparing/ready/rejected) shows
+    // up here without the customer needing to manually reload.
+    const timer = setInterval(() => { if (!document.hidden) fetchOrders(); }, 15_000);
+    return () => { stopped = true; clearInterval(timer); };
   }, []);
 
   return (
