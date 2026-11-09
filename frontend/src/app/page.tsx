@@ -59,6 +59,10 @@ interface PickupSlot {
   max_capacity: number;
 }
 
+function isPickupSlotAvailable(slot: PickupSlot) {
+  return slot.current_bookings < slot.max_capacity && new Date(slot.time_slot).getTime() > Date.now();
+}
+
 type MenuLoadStatus = "loading" | "loaded" | "error";
 
 interface CartLine {
@@ -172,7 +176,7 @@ export default function Home() {
           const slots: PickupSlot[] = await response.json();
           if (!cancelled) {
             setPickupSlots(slots);
-            setSelectedSlotId(slots[0]?.id ?? "");
+            setSelectedSlotId(slots.find(isPickupSlotAvailable)?.id ?? "");
           }
         }
       } catch (error) {
@@ -311,7 +315,9 @@ export default function Home() {
       return;
     }
 
-    if (!selectedSlotId) {
+    const selectedSlot = pickupSlots.find(slot => slot.id === selectedSlotId);
+    if (!selectedSlot || !isPickupSlotAvailable(selectedSlot)) {
+      setSelectedSlotId("");
       alert("Please select an available pickup slot.");
       return;
     }
@@ -809,14 +815,15 @@ export default function Home() {
                     </label>
                     {(() => {
                       // Customers only see slots that aren't full yet
-                      const availableSlots = pickupSlots.filter(s => s.current_bookings < s.max_capacity && new Date(s.time_slot).getTime() > Date.now());
+                      const availableSlots = pickupSlots.filter(isPickupSlotAvailable);
                       if (availableSlots.length === 0) return <p className="text-xs text-red-600">No pickup slots available right now.</p>;
                       return (
                         <select
-                          value={selectedSlotId}
+                          value={availableSlots.some(slot => slot.id === selectedSlotId) ? selectedSlotId : ""}
                           onChange={(e) => setSelectedSlotId(e.target.value)}
                           className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-800"
                         >
+                          <option value="" disabled>Select a pickup slot</option>
                           {availableSlots.map((slot) => (
                             <option key={slot.id} value={slot.id}>
                               {new Date(slot.time_slot).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
