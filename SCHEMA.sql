@@ -100,6 +100,7 @@ CREATE TABLE orders (
 	customer_id UUID NOT NULL,
 	merchant_id UUID NOT NULL,
 	status VARCHAR NOT NULL,
+	CONSTRAINT orders_status_check CHECK (status IN ('draft', 'pending_verification', 'pending', 'preparing', 'ready', 'completed', 'rejected', 'cancelled', 'cancelled_timeout')),
 	total_price NUMERIC(10, 2) NOT NULL,
 	transaction_ref VARCHAR,
 	order_number VARCHAR,

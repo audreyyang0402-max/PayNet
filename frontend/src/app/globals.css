@@ -55,6 +55,26 @@ body::before {
   display: none;              /* Chrome, Safari, Opera */
 }
 
+.menu-scrollbar {
+  scrollbar-width: auto;
+  scrollbar-color: #f04b14 #f1f5f9;
+}
+
+.menu-scrollbar::-webkit-scrollbar {
+  height: 12px;
+}
+
+.menu-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 999px;
+}
+
+.menu-scrollbar::-webkit-scrollbar-thumb {
+  background: #f04b14;
+  border: 2px solid #f1f5f9;
+  border-radius: 999px;
+}
+
 /* ── Keyframes ─────────────────────────────────────────────── */
 
 /* Cart icon bounce — plays when an item is added */
