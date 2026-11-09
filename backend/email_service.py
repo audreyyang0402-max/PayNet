@@ -32,9 +32,20 @@ def _item_description(item: dict) -> str:
 
 
 def _send_via_gmail(to_email: str, subject: str, html: str) -> bool:
-    """Low-level helper — sends one HTML email through Gmail SMTP."""
+    """Low-level helper — sends one HTML email through Gmail SMTP.
+
+    Logs through both `logging` and a direct `print(..., flush=True)`. The
+    print is deliberate, not redundant: this module's logger is created at
+    import time with `logging.getLogger(__name__)`, and uvicorn reconfigures
+    logging at process startup (it can disable loggers created before it
+    runs). That silently swallowed every line here before — the send could
+    fail outright with nothing in Render's logs to show for it. print() to
+    stdout is untouched by any of that, so Render always captures it.
+    """
     if not SMTP_USER or not SMTP_PASSWORD:
-        logger.error("SMTP_USER or SMTP_PASSWORD not set — email skipped.")
+        msg_text = "SMTP_USER or SMTP_PASSWORD not set — email skipped."
+        logger.error(msg_text)
+        print(f"[email_service] {msg_text}", flush=True)
         return False
     try:
         msg = MIMEMultipart("alternative")
@@ -50,9 +61,11 @@ def _send_via_gmail(to_email: str, subject: str, html: str) -> bool:
             server.sendmail(SMTP_USER, to_email, msg.as_string())
 
         logger.info("Email sent to %s — subject: %s", to_email, subject)
+        print(f"[email_service] Email sent to {to_email} — subject: {subject}", flush=True)
         return True
     except Exception as exc:
         logger.error("Gmail SMTP error sending to %s: %s", to_email, exc)
+        print(f"[email_service] Gmail SMTP error sending to {to_email}: {exc!r}", flush=True)
         return False
 
 
