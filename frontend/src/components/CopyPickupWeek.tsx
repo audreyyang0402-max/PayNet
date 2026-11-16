@@ -12,15 +12,10 @@ function malaysiaDate(value: string | number) {
 function addDays(day: string, count: number) {
   return new Date(Date.parse(`${day}T00:00:00Z`) + count * 86400000).toISOString().slice(0, 10);
 }
-function monday() {
-  const today = malaysiaDate(Date.now()).slice(0, 10);
-  const weekday = new Date(`${today}T00:00:00Z`).getUTCDay();
-  return addDays(today, -((weekday + 6) % 7));
-}
 
 export default function CopyPickupWeek({ merchantId, onUpdated }: { merchantId: string; onUpdated: (slots: Slot[]) => void }) {
-  const [source, setSource] = useState(() => addDays(monday(), -7));
-  const [target, setTarget] = useState(() => addDays(monday(), 7));
+  const [source, setSource] = useState(() => addDays(malaysiaDate(Date.now()).slice(0, 10), -7));
+  const [target, setTarget] = useState(() => malaysiaDate(Date.now()).slice(0, 10));
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [existing, setExisting] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
@@ -79,11 +74,11 @@ export default function CopyPickupWeek({ merchantId, onUpdated }: { merchantId: 
   const inputClass = "mt-1 block w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900";
   return <section className="rounded-2xl border border-orange-200 bg-orange-50 p-5 md:col-span-2 space-y-3">
     <h2 className="font-bold text-slate-900">Copy weekly pickup slots</h2>
-    <p className="text-sm text-slate-600">Copy a saved week, adjust your schedule, then create the new slots. All times are Malaysia time (UTC+8).</p>
+    <p className="text-sm text-slate-600">Start on any day. Copy seven consecutive days of saved slots to a new start date, then adjust your schedule. All times are Malaysia time (UTC+8).</p>
     <form onSubmit={event => { event.preventDefault(); void preview(); }}>
       <fieldset disabled={busy} className="grid gap-3 sm:grid-cols-2">
-        <label className="text-sm font-semibold">Source week starting Monday<input type="date" required className={inputClass} value={source} onChange={event => { setSource(event.target.value); setDrafts([]); }} step={7} min="1970-01-05" /></label>
-        <label className="text-sm font-semibold">Target week starting Monday<input type="date" required className={inputClass} value={target} onChange={event => { setTarget(event.target.value); setDrafts([]); }} step={7} min="1970-01-05" /></label>
+        <label className="text-sm font-semibold">Copy from — start date<input type="date" required className={inputClass} value={source} onChange={event => { setSource(event.target.value); setDrafts([]); setMessage(""); }} />{source && <span className="mt-1 block text-xs font-normal">Source range: {source} to {addDays(source, 6)}</span>}</label>
+        <label className="text-sm font-semibold">Copy to — start date<input type="date" required className={inputClass} value={target} onChange={event => { setTarget(event.target.value); setDrafts([]); setMessage(""); }} />{target && <span className="mt-1 block text-xs font-normal">Target range: {target} to {addDays(target, 6)}</span>}</label>
         <button className="rounded-xl bg-orange-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50" type="submit">{busy ? "Working…" : "Preview copied slots"}</button>
       </fieldset>
     </form>
