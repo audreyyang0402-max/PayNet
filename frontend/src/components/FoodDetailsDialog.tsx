@@ -28,6 +28,7 @@ export default function FoodDetailsDialog({ item, merchant, onClose, onAdd }: Fo
   const [sugar, setSugar] = useState("Normal sugar");
   const [ice, setIce] = useState("Normal ice");
   const [note, setNote] = useState("");
+  const [spice, setSpice] = useState(() => getMenuCustomizationPolicy(item.name, item.description).defaultSpice);
 
   useEffect(() => {
     const node = dialog.current;
@@ -43,14 +44,16 @@ export default function FoodDetailsDialog({ item, merchant, onClose, onAdd }: Fo
   const image = item.image_url?.startsWith("/") ? BACKEND_URL + item.image_url : item.image_url;
   const parsedDescription = parseMenuDescription(item.description);
   const policy = getMenuCustomizationPolicy(item.name, item.description);
-  const metadataChips = parsedDescription.tags.filter((tag) => !/^customizations\s*:/i.test(tag));
-  const hasChoiceControls = policy.allowsSugar || policy.allowsIce;
+  const metadataChips = parsedDescription.tags.filter((tag) => !/^(customizations|spice choices|default spice)\s*:/i.test(tag));
+  const selectedSpice = policy.spiceLevels.includes(spice) ? spice : policy.defaultSpice;
+  const hasChoiceControls = policy.allowsSugar || policy.allowsIce || policy.allowsSpice;
   const hasCustomizations = hasChoiceControls || policy.allowsSpecialRequests;
 
   const handleAdd = () => {
     const choices: string[] = [];
     if (policy.allowsSugar) choices.push(`Sugar: ${sugar}`);
     if (policy.allowsIce) choices.push(`Ice: ${ice}`);
+    if (policy.allowsSpice) choices.push(`Spice: ${selectedSpice}`);
     if (policy.allowsSpecialRequests && note.trim()) choices.push(`Note: ${note.trim()}`);
     onAdd(choices.join(" | "));
   };
@@ -96,6 +99,7 @@ export default function FoodDetailsDialog({ item, merchant, onClose, onAdd }: Fo
           <div className="mt-5 space-y-4 border-t border-slate-100 pt-5">
             {policy.allowsSugar && <ChoiceGroup label="Sugar level" options={SUGAR_LEVELS} value={sugar} onChange={setSugar} />}
             {policy.allowsIce && <ChoiceGroup label="Ice level" options={ICE_LEVELS} value={ice} onChange={setIce} />}
+            {policy.allowsSpice && <ChoiceGroup label="Spice level" options={policy.spiceLevels} value={selectedSpice} onChange={setSpice} />}
           </div>
         )}
 
