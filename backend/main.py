@@ -202,7 +202,9 @@ async def lifespan(app: FastAPIOffline):
         await run_startup_migration(statement)
     yield
 
-app = FastAPIOffline(lifespan=lifespan)
+# docs_url/redoc_url/openapi_url disabled: this is a backend-only API with no
+# need to publish a public map of every route and parameter to anyone who asks.
+app = FastAPIOffline(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 # --- RATE LIMITING (in-memory; fine for Render's single-instance free tier) ---
 limiter = Limiter(key_func=get_remote_address)
@@ -1047,12 +1049,14 @@ async def upload_menu_image(
 
 
 @app.post("/auth/send-code")
-async def send_verification_code(payload: SendCodeRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def send_verification_code(request: Request, payload: SendCodeRequest, db: AsyncSession = Depends(get_db)):
     return await send_verification(SendVerificationRequest(email=payload.email, purpose=payload.purpose), db)
 
 
 @app.post("/auth/forgot-password")
-async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def forgot_password(request: Request, payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
     return await verify_code(VerifyCodeRequest(email=payload.email, purpose="reset", code=payload.verification_code, password=payload.new_password), db)
 
 
@@ -1133,12 +1137,14 @@ async def get_me(current_user: User = Depends(get_current_user)):
 
 
 @app.post("/auth/send-verification")
-async def send_verification_endpoint(req: SendVerificationRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def send_verification_endpoint(request: Request, req: SendVerificationRequest, db: AsyncSession = Depends(get_db)):
     return await send_verification(req, db)
 
 
 @app.post("/auth/verify-code")
-async def verify_code_endpoint(req: VerifyCodeRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def verify_code_endpoint(request: Request, req: VerifyCodeRequest, db: AsyncSession = Depends(get_db)):
     return await verify_code(req, db)
 
 
