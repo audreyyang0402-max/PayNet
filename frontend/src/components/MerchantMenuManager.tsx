@@ -18,8 +18,11 @@ import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import BackLink from "@/components/BackLink";
+import SpiceSettings from "@/components/SpiceSettings";
 import {
   getMenuCustomizationPolicy,
+  CUSTOMER_SPICE_LEVELS,
+  SpiceOptions,
   isHotMenuItemName,
   MenuCustomization,
   parseMenuDescription,
@@ -52,6 +55,8 @@ interface PickupSlotProfile {
 }
 
 interface CustomizationDraft {
+  spice: boolean;
+  spiceOptions: SpiceOptions;
   sugar: boolean;
   ice: boolean;
   specialRequests: boolean;
@@ -121,8 +126,12 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
   const [allowSugarCustomization, setAllowSugarCustomization] = useState(false);
   const [allowIceCustomization, setAllowIceCustomization] = useState(false);
   const [allowSpecialRequests, setAllowSpecialRequests] = useState(true);
+  const [allowSpice, setAllowSpice] = useState(false);
+  const [spiceOptions, setSpiceOptions] = useState<SpiceOptions>({ levels: [...CUSTOMER_SPICE_LEVELS], defaultLevel: "Normal spicy" });
   const [editingCustomizationItemId, setEditingCustomizationItemId] = useState<string | null>(null);
   const [customizationDraft, setCustomizationDraft] = useState<CustomizationDraft>({
+    spice: false,
+    spiceOptions: { levels: [...CUSTOMER_SPICE_LEVELS], defaultLevel: "Normal spicy" },
     sugar: false,
     ice: false,
     specialRequests: true,
@@ -260,6 +269,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
       if (category === "Beverages" && allowSugarCustomization) customizationOptions.push("Sugar");
       if (category === "Beverages" && allowIceCustomization && !isHotMenuItemName(name)) customizationOptions.push("Ice");
       if (allowSpecialRequests) customizationOptions.push("Special requests");
+      if (allowSpice) customizationOptions.push("Spice");
       tags.push(`Customizations: ${customizationOptions.length > 0 ? customizationOptions.join(", ") : "None"}`);
 
       const compiledDescription = tags.length > 0
@@ -274,7 +284,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
         },
         body: JSON.stringify({
           name: name.trim(),
-          description: compiledDescription,
+          description: withMenuCustomizationPolicy(compiledDescription, customizationOptions, spiceOptions),
           price: parseFloat(price),
           is_available: true,
           image_url: finalImageUrl || null,
@@ -297,6 +307,8 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
       setAllowSugarCustomization(false);
       setAllowIceCustomization(false);
       setAllowSpecialRequests(true);
+      setAllowSpice(false);
+      setSpiceOptions({ levels: [...CUSTOMER_SPICE_LEVELS], defaultLevel: "Normal spicy" });
       handleClearPhoto();
       alert("Food product added to your stall menu successfully!");
     } catch (err: any) {
@@ -368,6 +380,8 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
   const beginEditingCustomerOptions = (item: MenuItem) => {
     const policy = getMenuCustomizationPolicy(item.name, item.description);
     setCustomizationDraft({
+      spice: policy.allowsSpice,
+      spiceOptions: { levels: policy.spiceLevels.length ? policy.spiceLevels : [...CUSTOMER_SPICE_LEVELS], defaultLevel: policy.defaultSpice },
       sugar: policy.allowsSugar,
       ice: policy.allowsIce,
       specialRequests: policy.allowsSpecialRequests,
@@ -387,6 +401,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
     if (policy.isBeverage && customizationDraft.sugar) options.push("Sugar");
     if (policy.isBeverage && !policy.isHot && customizationDraft.ice) options.push("Ice");
     if (customizationDraft.specialRequests) options.push("Special requests");
+    if (customizationDraft.spice) options.push("Spice");
 
     setSavingCustomizationItemId(item.id);
     try {
@@ -398,7 +413,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
         },
         body: JSON.stringify({
           name: item.name,
-          description: withMenuCustomizationPolicy(item.description, options),
+          description: withMenuCustomizationPolicy(item.description, options, customizationDraft.spiceOptions),
           price: item.price,
           image_url: item.image_url,
           is_available: item.is_available,
@@ -667,6 +682,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
                     onChange={setAllowSpecialRequests}
                   />
                 </div>
+                <SpiceSettings enabled={allowSpice} onEnable={setAllowSpice} options={spiceOptions} onChange={setSpiceOptions} />
                 <p className="mt-3 text-[11px] leading-relaxed text-amber-800">
                   Create hot and cold drinks as separate menu items with their own prices. Customers cannot use these options to change temperature, size, or priced add-ons.
                 </p>
@@ -963,6 +979,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
                 const enabledOptions = [
                   policy.allowsSugar ? "Sugar" : null,
                   policy.allowsIce ? "Ice" : null,
+                  policy.allowsSpice ? `Spice (${policy.spiceLevels.join(", ")}; default: ${policy.defaultSpice})` : null,
                   policy.allowsSpecialRequests ? "Notes" : null,
                 ].filter((option): option is string => Boolean(option));
                 const isEditingOptions = editingCustomizationItemId === item.id;
@@ -1036,6 +1053,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
 
                       {isEditingOptions && (
                         <div className="mt-3 space-y-2 border-t border-orange-100 pt-3">
+                          <SpiceSettings enabled={customizationDraft.spice} onEnable={(spice) => setCustomizationDraft((current) => ({ ...current, spice }))} options={customizationDraft.spiceOptions} onChange={(spiceOptions) => setCustomizationDraft((current) => ({ ...current, spiceOptions }))} />
                           <CustomizationCheckbox
                             label="Sugar level"
                             description="Normal, less or no sugar"

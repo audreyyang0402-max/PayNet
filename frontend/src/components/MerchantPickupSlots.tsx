@@ -3,6 +3,7 @@
 
 import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
+import CopyPickupWeek from "./CopyPickupWeek";
 
 interface PickupSlot {
   id: string;
@@ -103,6 +104,7 @@ export default function MerchantPickupSlots({
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <CopyPickupWeek key={merchantId} merchantId={merchantId} onUpdated={updated => { setSlots(updated); notifyParent(updated); }} />
 
       {/* LEFT — Create new slot */}
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-orange-100 space-y-4">

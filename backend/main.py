@@ -688,6 +688,9 @@ class PickupSlotCreate(BaseModel):
     time_slot: datetime
     max_capacity: int = Field(default=10, ge=1, le=500)
 
+class PickupSlotBatchCreate(BaseModel):
+    slots: List[PickupSlotCreate] = Field(min_length=1, max_length=500)
+
 class ForgotPasswordRequest(BaseModel):
     email: str
     new_password: str
@@ -1446,16 +1449,21 @@ async def create_pickup_slot(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    merchant = await db.get(Merchant, merchant_id)
+    merchant = (await db.execute(select(Merchant).where(Merchant.id == merchant_id).with_for_update())).scalars().first()
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found.")
-        
+
     if current_user.role != "admin" and (current_user.role != "merchant" or merchant.user_id != current_user.id):
         raise HTTPException(status_code=403, detail="Access denied.")
 
     when = as_malaysia_time(slot_data.time_slot)
     if when < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Pickup time must be in the future.")
+    existing = (await db.execute(select(PickupSlot).where(
+        PickupSlot.merchant_id == merchant_id, PickupSlot.time_slot == when
+    ))).scalars().first()
+    if existing:
+        return existing
     new_slot = PickupSlot(
         merchant_id=merchant_id,
         time_slot=when,
@@ -1470,6 +1478,42 @@ async def create_pickup_slot(
         await db.rollback()
         logger.exception("Database error creating pickup slot")
         raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
+
+
+@app.post("/merchants/{merchant_id}/pickup-slots/batch")
+async def create_pickup_slots_batch(
+    merchant_id: UUID,
+    payload: PickupSlotBatchCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Serialize slot creation per merchant, including retries and single-slot creation.
+    merchant = (await db.execute(select(Merchant).where(Merchant.id == merchant_id).with_for_update())).scalars().first()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant not found.")
+    if current_user.role != "admin" and (current_user.role != "merchant" or merchant.user_id != current_user.id):
+        raise HTTPException(status_code=403, detail="Access denied.")
+    times = [as_malaysia_time(slot.time_slot) for slot in payload.slots]
+    if any(when <= datetime.now(timezone.utc) for when in times):
+        raise HTTPException(status_code=400, detail="All pickup times must be in the future. Refresh your preview.")
+    existing = set((await db.execute(select(PickupSlot.time_slot).where(
+        PickupSlot.merchant_id == merchant_id, PickupSlot.time_slot.in_(times)
+    ))).scalars().all())
+    created = 0
+    for slot, when in zip(payload.slots, times):
+        if when in existing:
+            continue
+        db.add(PickupSlot(merchant_id=merchant_id, time_slot=when,
+                          max_capacity=slot.max_capacity, current_bookings=0))
+        existing.add(when)
+        created += 1
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("Could not create pickup slot batch")
+        raise HTTPException(status_code=500, detail="Could not create the slots. Please retry.")
+    return {"created": created, "skipped": len(payload.slots) - created}
 
 
 # --- PUBLIC: List Pickup Slots ---
