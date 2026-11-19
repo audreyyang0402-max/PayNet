@@ -243,7 +243,13 @@ def validate_menu_image_url(image_url: Optional[str]) -> Optional[str]:
 
 
 def public_menu_item(item: MenuItem) -> dict:
-    """Serialize a menu item without leaking legacy multi-megabyte data URLs."""
+    """Serialize a menu item without leaking legacy multi-megabyte data URLs.
+
+    Deliberately omits `created_at`: when a menu item was added is admin-only
+    information (see /admin/merchants/{merchant_id}/items), and this
+    serializer is shared by both the merchant's own dashboard and the public
+    customer marketplace, so it must never appear here even in the raw JSON.
+    """
     image_url = item.image_url
     if image_url and image_url.lstrip().lower().startswith("data:"):
         image_url = f"/menu-items/{item.id}/image"
@@ -255,7 +261,6 @@ def public_menu_item(item: MenuItem) -> dict:
         "price": float(item.price),
         "image_url": image_url,
         "is_available": item.is_available,
-        "created_at": item.created_at,
     }
 
 PUBLIC_BUCKET = os.getenv("SUPABASE_PUBLIC_BUCKET", "uploads")      # QR codes, menu photos, banners: meant to be public

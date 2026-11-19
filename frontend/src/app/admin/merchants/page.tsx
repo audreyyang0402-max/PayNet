@@ -11,7 +11,7 @@ type Merchant = {
   is_active: boolean; is_preview?: boolean; is_deleted?: boolean; duitnow_qr_url?: string; display_order?: number;
 };
 type Slot = { id: string; time_slot: string; current_bookings: number; max_capacity: number; is_full?: boolean };
-type Item = { id: string; name: string; price: number; is_available: boolean; image_url?: string | null; approval_status?: string };
+type Item = { id: string; name: string; price: number; is_available: boolean; image_url?: string | null; approval_status?: string; created_at?: string };
 type Order = { id: string; order_number?: string; customer_name: string; status: string; total_price: number; transaction_ref?: string; items: { name: string; quantity: number }[] };
 
 const money = (n: number) => `RM ${Number(n).toFixed(2)}`;
@@ -336,7 +336,14 @@ export default function AdminMerchants() {
                         <p className="font-bold text-sm leading-tight">{item.name}</p>
                         <p className="shrink-0 font-extrabold text-orange-600 text-sm">{money(item.price)}</p>
                       </div>
-                      <div className="mt-1.5"><StatusBadge status={status} /></div>
+                      <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                        <StatusBadge status={status} />
+                        {item.created_at && (
+                          <span title="Visible to admins only — merchants and customers never see this" className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold text-slate-500">
+                            🔒 Added {fmt(item.created_at)}
+                          </span>
+                        )}
+                      </div>
                       <div className="mt-2.5 flex gap-1.5 flex-wrap">
                         {status !== "approved" && (
                           <button onClick={() => approveItem(item.id, "approved")} disabled={busy}
