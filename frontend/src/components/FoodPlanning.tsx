@@ -7,6 +7,8 @@ type Forecast = {
   date: string; menu_item_id: string; menu_item_name: string;
   sample_days: number; expected: number | null; low: number | null; high: number | null;
   already_booked: number; confidence: "insufficient_data" | "limited" | "baseline";
+  availability_verified: boolean;
+  validation: { evaluated_days: number; mae: number | null; last_day_mae: number | null };
 };
 type FoodLog = {
   menu_item_id: string; menu_item_name: string; service_date: string;
@@ -123,10 +125,11 @@ export default function FoodPlanning() {
       </form>
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="font-bold text-slate-900">Upcoming pickup day estimates</h3>
-        <p className="mt-1 text-xs text-slate-500">{data.method} Based on {data.history_offered_days} past offered days. Already booked portions form the minimum.</p>
+        <p className="mt-1 text-xs text-slate-500">{data.method} Based on {data.history_offered_days} past offered days. Confirmed portions form the minimum.</p>
         {data.upcoming_slot_days.length === 0 ? <p className="mt-4 text-sm text-slate-500">Create future pickup slots to see planning estimates.</p> :
           <div className="mt-4 max-h-96 space-y-2 overflow-auto">{data.forecasts.map(row => <div key={`${row.date}-${row.menu_item_id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 p-3 text-sm">
-            <div><strong className="text-slate-900">{row.menu_item_name}</strong><span className="ml-2 text-slate-500">{row.date}</span><p className="text-xs text-slate-500">{row.already_booked} already booked · {row.sample_days} comparable days</p></div>
+            <div><strong className="text-slate-900">{row.menu_item_name}</strong><span className="ml-2 text-slate-500">{row.date}</span><p className="text-xs text-slate-500">{row.already_booked} confirmed · {row.sample_days} comparable days{!row.availability_verified ? " · past dish availability unverified" : ""}</p>
+              {row.validation.evaluated_days > 0 && <p className="text-xs text-slate-500">Past forecast error: {row.validation.mae} portions (last comparable day: {row.validation.last_day_mae}; {row.validation.evaluated_days} test days)</p>}</div>
             <span className="font-semibold text-orange-800">{row.expected === null ? "Not enough history" : `${row.low}–${row.high} portions${row.confidence === "limited" ? " · limited data" : ""}`}</span>
           </div>)}</div>}
         <p className="mt-3 text-xs text-slate-500">These are decision aids, not automatic stock limits. A limited or missing history needs merchant judgment.</p>

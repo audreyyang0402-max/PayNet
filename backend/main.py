@@ -7,6 +7,8 @@ import logging
 import secrets
 import hashlib
 import json
+import csv
+import hmac
 from decimal import Decimal
 from datetime import datetime, date, timedelta, timezone
 import httpx as httpx_client  # aliased since you might already have httpx elsewhere
@@ -1282,6 +1284,77 @@ async def get_admin_analytics(days: int = Query(default=30, ge=7, le=90), db: As
     return await build_order_analytics(db, days)
 
 
+@app.get("/admin/food-planning/dataset.csv")
+async def export_food_planning_dataset(days: int = Query(default=90, ge=7, le=180),
+                                       db: AsyncSession = Depends(get_db),
+                                       current_user: User = Depends(get_current_user)):
+    """Admin-only, pseudonymous dish/day dataset; unknown availability is not a zero."""
+    from customer_analytics import MYT, PAID
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin privileges required.")
+    today = datetime.now(MYT).date()
+    first = today - timedelta(days=days - 1)
+    first_utc = datetime.combine(first, datetime.min.time(), MYT).astimezone(timezone.utc)
+    end_utc = datetime.combine(today + timedelta(days=1), datetime.min.time(), MYT).astimezone(timezone.utc)
+    slot_day = func.date(func.timezone("Asia/Kuala_Lumpur", PickupSlot.time_slot))
+    offered_result = await db.execute(
+        select(PickupSlot.merchant_id, slot_day, func.count(PickupSlot.id), func.sum(PickupSlot.max_capacity))
+        .where(PickupSlot.time_slot >= first_utc, PickupSlot.time_slot < end_utc)
+        .group_by(PickupSlot.merchant_id, slot_day)
+    )
+    offered = [(row[0], row[1], int(row[2]), int(row[3])) for row in offered_result]
+    merchant_ids = {row[0] for row in offered}
+    item_result = await db.execute(select(MenuItem.id, MenuItem.merchant_id, MenuItem.created_at)
+                                   .where(MenuItem.merchant_id.in_(merchant_ids)))
+    items_by_merchant = {}
+    for item_id, merchant_id, created_at in item_result:
+        items_by_merchant.setdefault(merchant_id, []).append(
+            (item_id, created_at.astimezone(MYT).date() if created_at else first))
+    sold_result = await db.execute(
+        select(Order.merchant_id, slot_day, OrderItem.menu_item_id,
+               func.sum(OrderItem.quantity), func.count(func.distinct(Order.id)))
+        .select_from(PickupSlot).join(Order, Order.pickup_slot_id == PickupSlot.id)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .where(PickupSlot.time_slot >= first_utc, PickupSlot.time_slot < end_utc,
+               Order.status.in_(PAID))
+        .group_by(Order.merchant_id, slot_day, OrderItem.menu_item_id)
+    )
+    sold = {(row[0], row[1], row[2]): (int(row[3]), int(row[4])) for row in sold_result}
+    log_result = await db.execute(select(DailyFoodLog).where(DailyFoodLog.service_date >= first,
+                                                                DailyFoodLog.service_date <= today))
+    logs = {(row.merchant_id, row.service_date, row.menu_item_id): row
+            for row in log_result.scalars().all()}
+
+    def code(identifier: UUID) -> str:
+        return hmac.new(os.environ["SECRET_KEY"].encode(), identifier.bytes,
+                        hashlib.sha256).hexdigest()[:16]
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["merchant_code", "dish_code", "service_date_myt", "weekday",
+                     "pickup_slot_count", "pickup_slot_capacity", "availability_evidence",
+                     "confirmed_portions", "confirmed_order_count", "prepared_portions",
+                     "unsold_portions", "discarded_portions", "sold_out_reported"])
+    for merchant_id, day, slot_count, capacity in sorted(offered, key=lambda row: (str(row[0]), row[1])):
+        for item_id, created_day in items_by_merchant.get(merchant_id, []):
+            if created_day > day:
+                continue
+            key = (merchant_id, day, item_id)
+            log = logs.get(key)
+            quantities = sold.get(key)
+            evidence = "prepared_log" if log and log.prepared_portions > 0 else (
+                "confirmed_sale" if quantities else "unknown")
+            writer.writerow([code(merchant_id), code(item_id), day.isoformat(), day.weekday(),
+                             slot_count, capacity, evidence,
+                             quantities[0] if evidence != "unknown" and quantities else (0 if evidence != "unknown" else ""),
+                             quantities[1] if evidence != "unknown" and quantities else (0 if evidence != "unknown" else ""),
+                             log.prepared_portions if log else "", log.unsold_portions if log else "",
+                             log.discarded_portions if log else "", log.sold_out if log else ""])
+    return Response(content=output.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="sunway-food-planning-{today}.csv"',
+                             "Cache-Control": "no-store"})
+
+
 async def require_own_merchant(db: AsyncSession, current_user: User) -> Merchant:
     if current_user.role != "merchant":
         raise HTTPException(status_code=403, detail="Merchant privileges required.")
@@ -1296,7 +1369,7 @@ async def require_own_merchant(db: AsyncSession, current_user: User) -> Merchant
 async def get_food_planning(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Return a measured waste summary and a weekday demand baseline, not ML claims."""
     from customer_analytics import MYT, PAID
-    from demand_planning import forecast_portions
+    from demand_planning import forecast_portions, walk_forward_validation
 
     merchant = await require_own_merchant(db, current_user)
     now_utc = datetime.now(timezone.utc)
@@ -1330,17 +1403,31 @@ async def get_food_planning(db: AsyncSession = Depends(get_db), current_user: Us
     items = (await db.execute(select(MenuItem).where(MenuItem.merchant_id == merchant.id,
                                                      MenuItem.approval_status == "approved")
                               .order_by(MenuItem.name))).scalars().all()
+    availability_result = await db.execute(
+        select(DailyFoodLog.menu_item_id, DailyFoodLog.service_date)
+        .where(DailyFoodLog.merchant_id == merchant.id,
+               DailyFoodLog.service_date >= first, DailyFoodLog.service_date < today,
+               DailyFoodLog.prepared_portions > 0)
+    )
+    prepared_days = {(row[0], row[1]) for row in availability_result}
     history_days = [day for day in offered_days if day < today]
     forecasts = []
     for service_date in future_days:
-        matching_days = [day for day in history_days if day.weekday() == service_date.weekday()]
         for item in items:
             if not item.is_available:
                 continue
-            estimate = forecast_portions([sold.get((day, item.id), 0) for day in matching_days],
+            created_date = item.created_at.astimezone(MYT).date() if item.created_at else first
+            matching_days = [day for day in history_days if day.weekday() == service_date.weekday()
+                             and day >= created_date]
+            verified_days = [day for day in matching_days if (item.id, day) in prepared_days]
+            availability_verified = len(verified_days) >= 3
+            training_days = verified_days if availability_verified else matching_days
+            observed = [sold.get((day, item.id), 0) for day in training_days]
+            estimate = forecast_portions(observed,
                                          sold.get((service_date, item.id), 0))
             forecasts.append({"date": service_date.isoformat(), "menu_item_id": str(item.id),
-                              "menu_item_name": item.name, **estimate})
+                              "menu_item_name": item.name, "availability_verified": availability_verified,
+                              "validation": walk_forward_validation(observed), **estimate})
 
     log_start = today - timedelta(days=30)
     log_rows = (await db.execute(select(DailyFoodLog, MenuItem.name)
@@ -1355,7 +1442,7 @@ async def get_food_planning(db: AsyncSession = Depends(get_db), current_user: Us
              "sold_out": log.sold_out, "updated_at": log.updated_at.isoformat() if log.updated_at else None}
             for log, name in log_rows]
     return {"updated_at": now_utc.isoformat(), "timezone": "Asia/Kuala_Lumpur",
-            "method": "Same-weekday average across offered pickup days in the last 8 weeks; range is descriptive, not a probability interval.",
+            "method": "Same-weekday average across up to 8 past weeks. When preparation records are sparse, open-stall days are assumed to be dish-available. Range is descriptive, not a probability interval.",
             "history_offered_days": len(history_days), "upcoming_slot_days": [day.isoformat() for day in future_days],
             "menu_items": [{"id": str(item.id), "name": item.name} for item in items],
             "forecasts": forecasts, "logs": logs,

@@ -1,6 +1,6 @@
 import unittest
 
-from demand_planning import forecast_portions
+from demand_planning import forecast_portions, walk_forward_validation
 
 
 class ForecastPortionsTests(unittest.TestCase):
@@ -18,6 +18,15 @@ class ForecastPortionsTests(unittest.TestCase):
 
     def test_short_history_is_labelled_limited(self):
         self.assertEqual(forecast_portions([5, 6])["confidence"], "limited")
+
+    def test_walk_forward_uses_only_earlier_days(self):
+        result = walk_forward_validation([2, 2, 2, 8, 8])
+        self.assertEqual(result["evaluated_days"], 2)
+        self.assertEqual(result["mae"], 5.25)
+        self.assertEqual(result["last_day_mae"], 3)
+
+    def test_walk_forward_waits_for_enough_history(self):
+        self.assertIsNone(walk_forward_validation([2, 3, 4, 5])["mae"])
 
 
 if __name__ == "__main__":

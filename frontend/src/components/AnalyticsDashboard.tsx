@@ -42,6 +42,26 @@ function SalesDashboard({ audience, embedded = false }: { audience: string; embe
   const isCustomer = audience === "customer";
   const loginPath = isAdmin ? "/admin/login" : isCustomer ? "/login" : "/vendor/login";
 
+  async function downloadFoodDataset() {
+    setError(null);
+    try {
+      const response = await fetch(`${API_URL}/admin/food-planning/dataset.csv?days=90`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }, cache: "no-store",
+      });
+      if (!response.ok) throw new Error("Could not download the food planning dataset.");
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `sunway-food-planning-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not download the dataset.");
+    }
+  }
+
   useEffect(() => {
     let cancelled = false, inFlight = false;
     async function load() {
@@ -123,6 +143,11 @@ function SalesDashboard({ audience, embedded = false }: { audience: string; embe
             </label>
           </div>
         </header>
+
+        {isAdmin && <div className="rounded-2xl border border-teal-200 bg-teal-50 p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
+          <div><p className="font-semibold text-slate-900">Food planning research dataset</p><p className="mt-1 text-xs text-slate-600">Last 90 days · pseudonymous dish and merchant codes · blank demand means availability is unknown.</p></div>
+          <button type="button" onClick={downloadFoodDataset} className="mt-3 rounded-xl bg-teal-800 px-4 py-2 text-sm font-semibold text-white sm:mt-0">Download CSV</button>
+        </div>}
 
         {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-stone-500"><p>{updatedAt ? `Updated ${updatedAt} MYT · refreshes every 15 seconds` : "Loading latest totals"}</p><button onClick={() => setRefreshKey(k => k + 1)} className="rounded-xl border bg-white px-4 py-2 font-semibold text-orange-700">Refresh</button></div>
