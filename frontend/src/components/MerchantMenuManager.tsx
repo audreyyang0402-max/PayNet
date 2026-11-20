@@ -19,6 +19,7 @@ import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import BackLink from "@/components/BackLink";
 import SpiceSettings from "@/components/SpiceSettings";
+import DailyStockManager from "@/components/DailyStockManager";
 import {
   getMenuCustomizationPolicy,
   CUSTOMER_SPICE_LEVELS,
@@ -965,6 +966,8 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
               </p>
             </div>
           </div>
+
+          {merchant && menuItems.length > 0 && <DailyStockManager merchantId={merchant.id} items={menuItems} />}
 
           {menuItems.length === 0 ? (
             <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs sm:text-sm">

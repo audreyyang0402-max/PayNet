@@ -28,7 +28,7 @@ class FoodPlanningAccessTests(unittest.IsolatedAsyncioTestCase):
         db.execute = AsyncMock(side_effect=[
             [(merchant_id, today, 1, 10)],
             [(item_id, merchant_id, datetime.now(MYT))],
-            [], no_logs,
+            [], no_logs, no_logs,
         ])
         response = await export_food_planning_dataset(90, db, SimpleNamespace(role="admin"))
         rows = list(csv.DictReader(io.StringIO(response.body.decode())))

@@ -10,6 +10,10 @@ The merchant display also reports walk-forward mean absolute error when at least
 
 Admin analytics now has a **Download CSV** action for a pseudonymous dish/day dataset. It includes pickup-slot count and capacity, confirmed portions and order count, and merchant-entered preparation outcomes. `merchant_code` and `dish_code` are stable keyed hashes; no names, contact details, receipts or bank details are exported. If there is no evidence that a dish was available on a day, `availability_evidence` is `unknown` and demand is blank rather than zero. Only admins can call this export endpoint. A CSV download still needs restricted storage and handling by the research team.
 
+Merchants can now set an optional **daily bookable portion limit** per dish and pickup date. Checkout reserves portions in a draft order, counts them through completion, and excludes cancelled or rejected orders. A stale unpaid draft releases its reservation after expiry. A database lock serializes checkout and cap changes, and checkout rejects a cart that exceeds the remaining amount before payment. The pickup date is saved on each new order so a completed order still counts if its old slot is removed. A blank limit means no cap; zero prevents new orders for that dish/date. These caps represent bookable portions, not a measured kitchen inventory balance.
+
+The CSV includes the cap and a `demand_censored` flag. Hitting a cap or reporting a sellout means observed sales might be lower than real demand. The current baseline excludes those days where known. Historical availability and sellout records are still incomplete, so forecasts remain provisional.
+
 ## Data definitions
 
 - **Confirmed demand:** quantities in `preparing`, `ready` or `completed` orders attached to pickup slots. Pending payments are excluded. A deleted historical pickup slot cannot contribute to this baseline.

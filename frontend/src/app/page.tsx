@@ -101,6 +101,9 @@ export default function Home() {
   // ── State: Pickup Slots ──
   const [pickupSlots, setPickupSlots] = useState<PickupSlot[]>([]);
   const [selectedSlotId, setSelectedSlotId] = useState<string>("");
+  const [stockByItem, setStockByItem] = useState<Record<string, number> | null>(null);
+  const [stockError, setStockError] = useState(false);
+  const [stockRefreshKey, setStockRefreshKey] = useState(0);
 
   // ── State: Cart (single stall at a time) ──
   const [cart, setCart] = useState<Record<string, CartLine>>({});
@@ -186,6 +189,34 @@ export default function Home() {
     loadPickupSlots();
     return () => { cancelled = true; };
   }, [selectedMerchantId]);
+
+  // A daily cap is optional. Checkout remains the final source of truth if
+  // these display counts become stale while another customer is ordering.
+  useEffect(() => {
+    const slot = pickupSlots.find(candidate => candidate.id === selectedSlotId);
+    if (!selectedMerchantId || !slot) { setStockByItem(null); return; }
+    const serviceDate = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Asia/Kuala_Lumpur", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date(slot.time_slot));
+    let cancelled = false;
+    async function loadStock() {
+      try {
+        const response = await fetch(`${BACKEND_URL}/merchants/${selectedMerchantId}/stock?service_date=${serviceDate}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Stock unavailable");
+        const rows: { menu_item_id: string; remaining_portions: number }[] = await response.json();
+        if (!cancelled) {
+          setStockByItem(Object.fromEntries(rows.map(row => [row.menu_item_id, row.remaining_portions])));
+          setStockError(false);
+        }
+      } catch {
+        if (!cancelled) { setStockByItem(null); setStockError(true); }
+      }
+    }
+    setStockByItem(null);
+    void loadStock();
+    const timer = window.setInterval(() => { if (!document.hidden) void loadStock(); }, 20000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [selectedMerchantId, selectedSlotId, pickupSlots, stockRefreshKey]);
 
   // ─── 4. Load Stall Menus for All Backend Merchants ────────────────────────
   useEffect(() => {
@@ -288,6 +319,16 @@ export default function Home() {
     () => Object.values(cart).reduce((sum, { item, quantity }) => sum + Number(item.price) * quantity, 0),
     [cart]
   );
+  const stockShortages = useMemo(() => {
+    if (!stockByItem) return [];
+    const totals = new Map<string, { name: string; requested: number }>();
+    for (const { item, quantity } of Object.values(cart)) {
+      const previous = totals.get(item.id);
+      totals.set(item.id, { name: item.name, requested: (previous?.requested || 0) + quantity });
+    }
+    return [...totals].filter(([id, value]) => stockByItem[id] !== undefined && value.requested > stockByItem[id])
+      .map(([id, value]) => ({ ...value, remaining: stockByItem[id] }));
+  }, [cart, stockByItem]);
   const totalItemCount = useMemo(
     () => Object.values(cart).reduce((sum, { quantity }) => sum + quantity, 0),
     [cart]
@@ -324,6 +365,10 @@ export default function Home() {
 
     if (Object.keys(cart).length === 0 || !selectedMerchantId) {
       alert("Your cart is empty.");
+      return;
+    }
+    if (stockShortages.length > 0) {
+      alert(stockShortages.map(row => `Only ${row.remaining} portions of ${row.name} remain for this pickup day.`).join("\n"));
       return;
     }
 
@@ -366,6 +411,7 @@ export default function Home() {
 
       window.location.href = `/checkout/success/${orderId}`;
     } catch (err: any) {
+      setStockRefreshKey(current => current + 1);
       alert(err.message || "Checkout failed.");
     } finally {
       checkoutInFlight.current = false;
@@ -835,6 +881,13 @@ export default function Home() {
                     })()}
                   </div>
 
+                  {stockShortages.length > 0 && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                    {stockShortages.map(row => <p key={row.name}>Only {row.remaining} portions of {row.name} remain for this pickup day. Reduce the quantity or choose another day.</p>)}
+                  </div>}
+                  {stockByItem && Object.keys(stockByItem).length > 0 && stockShortages.length === 0 &&
+                    <p className="text-xs text-teal-800">Daily portion limits checked for this pickup day. Availability is confirmed at checkout.</p>}
+                  {stockError && <p className="text-xs text-slate-500">Live portion counts are unavailable; checkout will confirm stock before payment.</p>}
+
                   <div className="flex justify-between items-center font-bold text-slate-900 pt-1">
                     <span className="text-sm">Total Amount</span>
                     <span className="text-lg text-[#F04B14]">RM {cartTotal.toFixed(2)}</span>
@@ -843,7 +896,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={handleCheckout}
-                    disabled={checkingOut || pickupSlots.length === 0}
+                    disabled={checkingOut || pickupSlots.length === 0 || stockShortages.length > 0}
                     className="w-full rounded-xl bg-[#F04B14] py-3.5 text-sm font-bold text-white shadow-lg transition hover:bg-orange-700 disabled:opacity-50"
                   >
                     {checkingOut ? "Redirecting to DuitNow..." : "Proceed to DuitNow Payment"}

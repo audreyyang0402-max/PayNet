@@ -89,6 +89,18 @@ CREATE TABLE daily_food_logs (
 ALTER TABLE daily_food_logs ENABLE ROW LEVEL SECURITY;
 CREATE INDEX daily_food_logs_merchant_date_idx ON daily_food_logs (merchant_id, service_date DESC);
 
+CREATE TABLE daily_item_stock (
+	id UUID PRIMARY KEY,
+	merchant_id UUID NOT NULL REFERENCES merchants(id),
+	menu_item_id UUID NOT NULL REFERENCES menu_items(id),
+	service_date DATE NOT NULL,
+	total_portions INTEGER NOT NULL CHECK (total_portions >= 0),
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	CONSTRAINT daily_item_stock_merchant_item_date_unique UNIQUE (merchant_id, menu_item_id, service_date)
+);
+ALTER TABLE daily_item_stock ENABLE ROW LEVEL SECURITY;
+CREATE INDEX daily_item_stock_merchant_date_idx ON daily_item_stock (merchant_id, service_date);
+
 CREATE TABLE pickup_slots (
 	id UUID NOT NULL,
 	merchant_id UUID NOT NULL,
@@ -125,6 +137,7 @@ CREATE TABLE orders (
 	rejection_reason VARCHAR,
 	rejection_note TEXT,
 	pickup_slot_id UUID,
+	pickup_service_date DATE,
 	created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
 	PRIMARY KEY (id),
 	FOREIGN KEY(customer_id) REFERENCES users (id),

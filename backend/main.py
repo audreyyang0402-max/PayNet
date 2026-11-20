@@ -23,7 +23,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import case, func, or_, update, text
+from sqlalchemy import and_, case, func, or_, update, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload  # <--- Added import for eager loading relationships
@@ -37,7 +37,7 @@ from PIL import Image, ImageOps
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from database import engine, get_db
-from models import Base, User, Merchant, MenuItem, DailyFoodLog, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent
+from models import Base, User, Merchant, MenuItem, DailyFoodLog, DailyItemStock, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent
 
 # --- NEW AUTH IMPORTS ---
 from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN, validate_password, password_stamp
@@ -102,6 +102,28 @@ ORDER_STATUS_CONSTRAINT_MIGRATION = f"""
 
 
 STARTUP_MIGRATIONS = [
+    """
+        CREATE TABLE IF NOT EXISTS daily_item_stock (
+            id UUID PRIMARY KEY,
+            merchant_id UUID NOT NULL REFERENCES merchants(id),
+            menu_item_id UUID NOT NULL REFERENCES menu_items(id),
+            service_date DATE NOT NULL,
+            total_portions INTEGER NOT NULL CHECK (total_portions >= 0),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT daily_item_stock_merchant_item_date_unique
+                UNIQUE (merchant_id, menu_item_id, service_date)
+        )
+    """,
+    "ALTER TABLE daily_item_stock ENABLE ROW LEVEL SECURITY",
+    "CREATE INDEX IF NOT EXISTS daily_item_stock_merchant_date_idx ON daily_item_stock (merchant_id, service_date)",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS pickup_service_date DATE",
+    """
+        UPDATE orders AS o SET pickup_service_date =
+            (timezone('Asia/Kuala_Lumpur', p.time_slot))::date
+        FROM pickup_slots AS p
+        WHERE o.pickup_slot_id = p.id AND o.pickup_service_date IS NULL
+    """,
+    "CREATE INDEX IF NOT EXISTS orders_merchant_service_date_idx ON orders (merchant_id, pickup_service_date, status)",
     """
         CREATE TABLE IF NOT EXISTS daily_food_logs (
             id UUID PRIMARY KEY,
@@ -702,6 +724,11 @@ class DailyFoodLogInput(BaseModel):
     unsold_portions: int = Field(ge=0, le=10000)
     discarded_portions: int = Field(ge=0, le=10000)
     sold_out: bool = False
+
+
+class DailyStockInput(BaseModel):
+    service_date: date
+    total_portions: Optional[int] = Field(default=None, ge=0, le=10000)
 
 class OrderItemCreate(BaseModel):
     menu_item_id: UUID
@@ -1324,6 +1351,10 @@ async def export_food_planning_dataset(days: int = Query(default=90, ge=7, le=18
                                                                 DailyFoodLog.service_date <= today))
     logs = {(row.merchant_id, row.service_date, row.menu_item_id): row
             for row in log_result.scalars().all()}
+    stock_result = await db.execute(select(DailyItemStock).where(DailyItemStock.service_date >= first,
+                                                                  DailyItemStock.service_date <= today))
+    stock_limits = {(row.merchant_id, row.service_date, row.menu_item_id): row.total_portions
+                    for row in stock_result.scalars().all()}
 
     def code(identifier: UUID) -> str:
         return hmac.new(os.environ["SECRET_KEY"].encode(), identifier.bytes,
@@ -1334,7 +1365,8 @@ async def export_food_planning_dataset(days: int = Query(default=90, ge=7, le=18
     writer.writerow(["merchant_code", "dish_code", "service_date_myt", "weekday",
                      "pickup_slot_count", "pickup_slot_capacity", "availability_evidence",
                      "confirmed_portions", "confirmed_order_count", "prepared_portions",
-                     "unsold_portions", "discarded_portions", "sold_out_reported"])
+                     "unsold_portions", "discarded_portions", "sold_out_reported",
+                     "daily_portion_limit", "demand_censored"])
     for merchant_id, day, slot_count, capacity in sorted(offered, key=lambda row: (str(row[0]), row[1])):
         for item_id, created_day in items_by_merchant.get(merchant_id, []):
             if created_day > day:
@@ -1342,6 +1374,9 @@ async def export_food_planning_dataset(days: int = Query(default=90, ge=7, le=18
             key = (merchant_id, day, item_id)
             log = logs.get(key)
             quantities = sold.get(key)
+            cap = stock_limits.get(key)
+            censored = bool((log and log.sold_out) or
+                            (cap is not None and (quantities[0] if quantities else 0) >= cap))
             evidence = "prepared_log" if log and log.prepared_portions > 0 else (
                 "confirmed_sale" if quantities else "unknown")
             writer.writerow([code(merchant_id), code(item_id), day.isoformat(), day.weekday(),
@@ -1349,7 +1384,8 @@ async def export_food_planning_dataset(days: int = Query(default=90, ge=7, le=18
                              quantities[0] if evidence != "unknown" and quantities else (0 if evidence != "unknown" else ""),
                              quantities[1] if evidence != "unknown" and quantities else (0 if evidence != "unknown" else ""),
                              log.prepared_portions if log else "", log.unsold_portions if log else "",
-                             log.discarded_portions if log else "", log.sold_out if log else ""])
+                             log.discarded_portions if log else "", log.sold_out if log else "",
+                             cap if cap is not None else "", censored])
     return Response(content=output.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="sunway-food-planning-{today}.csv"',
                              "Cache-Control": "no-store"})
@@ -1404,12 +1440,17 @@ async def get_food_planning(db: AsyncSession = Depends(get_db), current_user: Us
                                                      MenuItem.approval_status == "approved")
                               .order_by(MenuItem.name))).scalars().all()
     availability_result = await db.execute(
-        select(DailyFoodLog.menu_item_id, DailyFoodLog.service_date)
+        select(DailyFoodLog.menu_item_id, DailyFoodLog.service_date,
+               DailyFoodLog.prepared_portions, DailyFoodLog.sold_out)
         .where(DailyFoodLog.merchant_id == merchant.id,
-               DailyFoodLog.service_date >= first, DailyFoodLog.service_date < today,
-               DailyFoodLog.prepared_portions > 0)
+               DailyFoodLog.service_date >= first, DailyFoodLog.service_date < today)
     )
-    prepared_days = {(row[0], row[1]) for row in availability_result}
+    historical_logs = {(row[0], row[1]): (row[2], row[3]) for row in availability_result}
+    historical_stock_result = await db.execute(select(DailyItemStock).where(
+        DailyItemStock.merchant_id == merchant.id,
+        DailyItemStock.service_date >= first, DailyItemStock.service_date < today))
+    historical_limits = {(row.menu_item_id, row.service_date): row.total_portions
+                         for row in historical_stock_result.scalars().all()}
     history_days = [day for day in offered_days if day < today]
     forecasts = []
     for service_date in future_days:
@@ -1419,14 +1460,18 @@ async def get_food_planning(db: AsyncSession = Depends(get_db), current_user: Us
             created_date = item.created_at.astimezone(MYT).date() if item.created_at else first
             matching_days = [day for day in history_days if day.weekday() == service_date.weekday()
                              and day >= created_date]
-            verified_days = [day for day in matching_days if (item.id, day) in prepared_days]
+            verified_days = [day for day in matching_days if historical_logs.get((item.id, day), (0, False))[0] > 0]
             availability_verified = len(verified_days) >= 3
-            training_days = verified_days if availability_verified else matching_days
+            candidate_days = verified_days if availability_verified else matching_days
+            training_days = [day for day in candidate_days if not historical_logs.get((item.id, day), (0, False))[1]
+                             and (historical_limits.get((item.id, day)) is None
+                                  or sold.get((day, item.id), 0) < historical_limits[(item.id, day)])]
             observed = [sold.get((day, item.id), 0) for day in training_days]
             estimate = forecast_portions(observed,
                                          sold.get((service_date, item.id), 0))
             forecasts.append({"date": service_date.isoformat(), "menu_item_id": str(item.id),
                               "menu_item_name": item.name, "availability_verified": availability_verified,
+                              "excluded_censored_days": len(candidate_days) - len(training_days),
                               "validation": walk_forward_validation(observed), **estimate})
 
     log_start = today - timedelta(days=30)
@@ -1442,7 +1487,7 @@ async def get_food_planning(db: AsyncSession = Depends(get_db), current_user: Us
              "sold_out": log.sold_out, "updated_at": log.updated_at.isoformat() if log.updated_at else None}
             for log, name in log_rows]
     return {"updated_at": now_utc.isoformat(), "timezone": "Asia/Kuala_Lumpur",
-            "method": "Same-weekday average across up to 8 past weeks. When preparation records are sparse, open-stall days are assumed to be dish-available. Range is descriptive, not a probability interval.",
+            "method": "Same-weekday average across up to 8 past weeks. Reported sellouts and days hitting a portion cap are excluded. When preparation records are sparse, open-stall days are assumed dish-available. Range is descriptive, not a probability interval.",
             "history_offered_days": len(history_days), "upcoming_slot_days": [day.isoformat() for day in future_days],
             "menu_items": [{"id": str(item.id), "name": item.name} for item in items],
             "forecasts": forecasts, "logs": logs,
@@ -1660,11 +1705,13 @@ async def delete_menu_item(
         raise HTTPException(status_code=403, detail="Access denied.")
 
     used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
-    if used:
-        # Past orders point at this item; deleting it would break receipts and sales history.
+    has_planning_history = (await db.execute(select(func.count(DailyFoodLog.id)).where(DailyFoodLog.menu_item_id == item.id))).scalar_one()
+    has_stock_limit = (await db.execute(select(func.count(DailyItemStock.id)).where(DailyItemStock.menu_item_id == item.id))).scalar_one()
+    if used or has_planning_history or has_stock_limit:
+        # Preserve order receipts, planning observations and daily caps.
         item.is_available = False
         await db.commit()
-        return {"message": "This item has past orders, so it was hidden instead of deleted.", "hidden": True}
+        return {"message": "This item has order or planning records, so it was hidden instead of deleted.", "hidden": True}
     try:
         await db.delete(item)
         await db.commit()
@@ -1813,6 +1860,85 @@ async def list_menu_items(merchant_id: UUID, db: AsyncSession = Depends(get_db),
     return [public_menu_item(item) for item in result.scalars().all()]
 
 
+STOCK_RESERVATION_STATUSES = ("draft", "pending_verification", "pending", "preparing", "ready", "completed")
+
+
+def stock_day_bounds(service_date: date) -> tuple[datetime, datetime]:
+    start = datetime.combine(service_date, datetime.min.time(), MALAYSIA_TZ).astimezone(timezone.utc)
+    return start, start + timedelta(days=1)
+
+
+async def reserved_item_quantities(db: AsyncSession, merchant_id: UUID, service_date: date,
+                                   item_ids: list[UUID]) -> dict[UUID, int]:
+    if not item_ids:
+        return {}
+    start, end = stock_day_bounds(service_date)
+    result = await db.execute(
+        select(OrderItem.menu_item_id, func.sum(OrderItem.quantity))
+        .join(Order, Order.id == OrderItem.order_id)
+        .outerjoin(PickupSlot, PickupSlot.id == Order.pickup_slot_id)
+        .where(Order.merchant_id == merchant_id, Order.status.in_(STOCK_RESERVATION_STATUSES),
+               or_(Order.pickup_service_date == service_date,
+                   and_(Order.pickup_service_date.is_(None),
+                        PickupSlot.time_slot >= start, PickupSlot.time_slot < end)),
+               OrderItem.menu_item_id.in_(item_ids))
+        .group_by(OrderItem.menu_item_id)
+    )
+    return {row[0]: int(row[1]) for row in result}
+
+
+@app.get("/merchants/{merchant_id}/stock")
+async def get_daily_stock(merchant_id: UUID, service_date: date = Query(...),
+                          db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
+    await require_shop_access(db, merchant_id, authorization)
+    await expire_stale_drafts(db)
+    rows = (await db.execute(select(DailyItemStock).where(
+        DailyItemStock.merchant_id == merchant_id,
+        DailyItemStock.service_date == service_date))).scalars().all()
+    reserved = await reserved_item_quantities(db, merchant_id, service_date,
+                                               [row.menu_item_id for row in rows])
+    return [{"menu_item_id": str(row.menu_item_id), "service_date": service_date.isoformat(),
+             "total_portions": row.total_portions, "reserved_portions": reserved.get(row.menu_item_id, 0),
+             "remaining_portions": max(0, row.total_portions - reserved.get(row.menu_item_id, 0))}
+            for row in rows]
+
+
+@app.put("/merchants/me/stock/{item_id}")
+async def set_daily_stock(item_id: UUID, payload: DailyStockInput,
+                          db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    from customer_analytics import MYT
+    await expire_stale_drafts(db)
+    today = datetime.now(MYT).date()
+    if not today <= payload.service_date <= today + timedelta(days=30):
+        raise HTTPException(422, "Choose today or a date within the next 30 days.")
+    merchant = await require_own_merchant(db, current_user)
+    # Checkout takes the same merchant lock before reading stock. This also
+    # serializes first-time cap creation with a concurrent checkout.
+    await db.execute(select(Merchant.id).where(Merchant.id == merchant.id).with_for_update())
+    item = await db.get(MenuItem, item_id)
+    if not item or item.merchant_id != merchant.id:
+        raise HTTPException(404, "Menu item not found for your stall.")
+    existing = (await db.execute(select(DailyItemStock).where(
+        DailyItemStock.merchant_id == merchant.id, DailyItemStock.menu_item_id == item_id,
+        DailyItemStock.service_date == payload.service_date).with_for_update())).scalars().first()
+    reserved = (await reserved_item_quantities(db, merchant.id, payload.service_date, [item_id])).get(item_id, 0)
+    if payload.total_portions is not None and payload.total_portions < reserved:
+        raise HTTPException(409, f"{reserved} portions are already reserved or sold for this date. The limit cannot be lower.")
+    if payload.total_portions is None:
+        if existing:
+            await db.delete(existing)
+    elif existing:
+        existing.total_portions = payload.total_portions
+        existing.updated_at = datetime.now(timezone.utc)
+    else:
+        db.add(DailyItemStock(merchant_id=merchant.id, menu_item_id=item_id,
+                              service_date=payload.service_date, total_portions=payload.total_portions))
+    await db.commit()
+    return {"menu_item_id": str(item_id), "service_date": payload.service_date.isoformat(),
+            "total_portions": payload.total_portions, "reserved_portions": reserved,
+            "remaining_portions": None if payload.total_portions is None else payload.total_portions - reserved}
+
+
 @app.get("/menu-items/{item_id}/image")
 async def get_legacy_menu_image(item_id: UUID, db: AsyncSession = Depends(get_db)):
     """Serve old data-URL photos separately so menu JSON remains small and fast."""
@@ -1856,7 +1982,10 @@ async def create_order(
             if previous.checkout_fingerprint != fingerprint:
                 raise HTTPException(409, "This checkout request was already used for another cart.")
             return previous
-    merchant = await db.get(Merchant, order_data.merchant_id)
+    # Serialize checkout with changes to daily stock, including the creation
+    # of a first cap when there is no stock row to lock yet.
+    merchant = (await db.execute(select(Merchant).where(
+        Merchant.id == order_data.merchant_id).with_for_update())).scalars().first()
     if not shop_is_public(merchant):
         raise HTTPException(status_code=400, detail="This stall is not taking orders right now.")
     # Lock the slot row so two customers can't both take the last place.
@@ -1874,6 +2003,7 @@ async def create_order(
 
     total_price = Decimal("0.00")
     line_items = []
+    requested_by_item: dict[UUID, int] = {}
     for line in order_data.items:
         item = await db.get(MenuItem, line.menu_item_id)
         if not item:
@@ -1884,8 +2014,26 @@ async def create_order(
             raise HTTPException(status_code=400, detail=f"'{item.name}' is currently unavailable.")
         line_total = item.price * line.quantity
         total_price += line_total
+        requested_by_item[item.id] = requested_by_item.get(item.id, 0) + line.quantity
         instructions = line.special_instructions.strip() if line.special_instructions else None
         line_items.append((item, line.quantity, instructions or None))
+
+    stock_rows = (await db.execute(select(DailyItemStock).where(
+        DailyItemStock.merchant_id == order_data.merchant_id,
+        DailyItemStock.service_date == slot.time_slot.astimezone(MALAYSIA_TZ).date(),
+        DailyItemStock.menu_item_id.in_(list(requested_by_item)))
+        .order_by(DailyItemStock.menu_item_id).with_for_update())).scalars().all()
+    if stock_rows:
+        service_date = slot.time_slot.astimezone(MALAYSIA_TZ).date()
+        reserved = await reserved_item_quantities(db, order_data.merchant_id, service_date,
+                                                   [row.menu_item_id for row in stock_rows])
+        item_names = {item.id: item.name for item, _, _ in line_items}
+        for row in stock_rows:
+            remaining = row.total_portions - reserved.get(row.menu_item_id, 0)
+            if requested_by_item[row.menu_item_id] > remaining:
+                remaining = max(0, remaining)
+                noun = "portion" if remaining == 1 else "portions"
+                raise HTTPException(409, f"Only {remaining} {noun} of '{item_names[row.menu_item_id]}' remain for {service_date}. Reduce the quantity or choose another pickup day.")
 
     order_number = new_order_number()
     while (await db.execute(select(Order.id).where(Order.order_number == order_number))).first():
@@ -1897,6 +2045,7 @@ async def create_order(
         customer_id=current_user.id,
         merchant_id=order_data.merchant_id,
         pickup_slot_id=order_data.pickup_slot_id,
+        pickup_service_date=slot.time_slot.astimezone(MALAYSIA_TZ).date(),
         order_number=order_number,
         status="draft", # <--- UPDATED: Initial state is draft so merchant is not notified yet
         total_price=round(total_price, 2),
@@ -3039,10 +3188,12 @@ async def admin_delete_menu_item(
     if not item:
         raise HTTPException(status_code=404, detail="Menu item not found.")
     used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
-    if used:
+    has_planning_history = (await db.execute(select(func.count(DailyFoodLog.id)).where(DailyFoodLog.menu_item_id == item.id))).scalar_one()
+    has_stock_limit = (await db.execute(select(func.count(DailyItemStock.id)).where(DailyItemStock.menu_item_id == item.id))).scalar_one()
+    if used or has_planning_history or has_stock_limit:
         item.is_available = False
         await db.commit()
-        return {"message": "This item has past orders, so it was hidden instead of deleted.", "hidden": True}
+        return {"message": "This item has order or planning records, so it was hidden instead of deleted.", "hidden": True}
     try:
         await db.delete(item)
         await db.commit()

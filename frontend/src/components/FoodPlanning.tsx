@@ -8,6 +8,7 @@ type Forecast = {
   sample_days: number; expected: number | null; low: number | null; high: number | null;
   already_booked: number; confidence: "insufficient_data" | "limited" | "baseline";
   availability_verified: boolean;
+  excluded_censored_days: number;
   validation: { evaluated_days: number; mae: number | null; last_day_mae: number | null };
 };
 type FoodLog = {
@@ -128,7 +129,7 @@ export default function FoodPlanning() {
         <p className="mt-1 text-xs text-slate-500">{data.method} Based on {data.history_offered_days} past offered days. Confirmed portions form the minimum.</p>
         {data.upcoming_slot_days.length === 0 ? <p className="mt-4 text-sm text-slate-500">Create future pickup slots to see planning estimates.</p> :
           <div className="mt-4 max-h-96 space-y-2 overflow-auto">{data.forecasts.map(row => <div key={`${row.date}-${row.menu_item_id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 p-3 text-sm">
-            <div><strong className="text-slate-900">{row.menu_item_name}</strong><span className="ml-2 text-slate-500">{row.date}</span><p className="text-xs text-slate-500">{row.already_booked} confirmed · {row.sample_days} comparable days{!row.availability_verified ? " · past dish availability unverified" : ""}</p>
+            <div><strong className="text-slate-900">{row.menu_item_name}</strong><span className="ml-2 text-slate-500">{row.date}</span><p className="text-xs text-slate-500">{row.already_booked} confirmed · {row.sample_days} comparable days{row.excluded_censored_days > 0 ? ` · ${row.excluded_censored_days} sold-out days excluded` : ""}{!row.availability_verified ? " · past dish availability unverified" : ""}</p>
               {row.validation.evaluated_days > 0 && <p className="text-xs text-slate-500">Past forecast error: {row.validation.mae} portions (last comparable day: {row.validation.last_day_mae}; {row.validation.evaluated_days} test days)</p>}</div>
             <span className="font-semibold text-orange-800">{row.expected === null ? "Not enough history" : `${row.low}–${row.high} portions${row.confidence === "limited" ? " · limited data" : ""}`}</span>
           </div>)}</div>}

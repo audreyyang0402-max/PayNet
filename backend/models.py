@@ -69,6 +69,18 @@ class DailyFoodLog(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class DailyItemStock(Base):
+    """Optional daily cap for bookable portions; orders remain the source of reservations."""
+    __tablename__ = "daily_item_stock"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    menu_item_id = Column(UUID(as_uuid=True), ForeignKey("menu_items.id"), nullable=False)
+    service_date = Column(Date, nullable=False)
+    total_portions = Column(Integer, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class PickupSlot(Base):
     __tablename__ = "pickup_slots"
 
@@ -98,6 +110,7 @@ class Order(Base):
     rejection_note = Column(Text, nullable=True)
     
     pickup_slot_id = Column(UUID(as_uuid=True), ForeignKey("pickup_slots.id", ondelete="SET NULL"), nullable=True)
+    pickup_service_date = Column(Date, nullable=True)  # retained if a completed slot is later removed
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # --- RELATIONSHIPS ---
