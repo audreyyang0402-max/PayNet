@@ -54,6 +54,21 @@ class MenuItem(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class DailyFoodLog(Base):
+    """Merchant-entered preparation and end-of-day outcome for one dish."""
+    __tablename__ = "daily_food_logs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    menu_item_id = Column(UUID(as_uuid=True), ForeignKey("menu_items.id"), nullable=False)
+    service_date = Column(Date, nullable=False)
+    prepared_portions = Column(Integer, nullable=False, default=0)
+    unsold_portions = Column(Integer, nullable=False, default=0)
+    discarded_portions = Column(Integer, nullable=False, default=0)
+    sold_out = Column(Boolean, nullable=False, default=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class PickupSlot(Base):
     __tablename__ = "pickup_slots"
 

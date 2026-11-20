@@ -13,7 +13,6 @@ import httpx as httpx_client  # aliased since you might already have httpx elsew
 from fastapi import UploadFile, File, Form, HTTPException, Request, Header
 import shutil
 
-from fastapi_offline import FastAPIOffline
 from fastapi import FastAPI, Depends, Query, status, BackgroundTasks
 from fastapi.staticfiles import StaticFiles  # <--- Added import for serving static upload files
 from fastapi.responses import Response
@@ -36,7 +35,7 @@ from PIL import Image, ImageOps
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from database import engine, get_db
-from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent
+from models import Base, User, Merchant, MenuItem, DailyFoodLog, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent
 
 # --- NEW AUTH IMPORTS ---
 from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN, validate_password, password_stamp
@@ -101,6 +100,25 @@ ORDER_STATUS_CONSTRAINT_MIGRATION = f"""
 
 
 STARTUP_MIGRATIONS = [
+    """
+        CREATE TABLE IF NOT EXISTS daily_food_logs (
+            id UUID PRIMARY KEY,
+            merchant_id UUID NOT NULL REFERENCES merchants(id),
+            menu_item_id UUID NOT NULL REFERENCES menu_items(id),
+            service_date DATE NOT NULL,
+            prepared_portions INTEGER NOT NULL DEFAULT 0 CHECK (prepared_portions >= 0),
+            unsold_portions INTEGER NOT NULL DEFAULT 0 CHECK (unsold_portions >= 0),
+            discarded_portions INTEGER NOT NULL DEFAULT 0 CHECK (discarded_portions >= 0),
+            sold_out BOOLEAN NOT NULL DEFAULT FALSE,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT daily_food_logs_portions_check
+                CHECK (unsold_portions + discarded_portions <= prepared_portions),
+            CONSTRAINT daily_food_logs_merchant_item_date_unique
+                UNIQUE (merchant_id, menu_item_id, service_date)
+        )
+    """,
+    "ALTER TABLE daily_food_logs ENABLE ROW LEVEL SECURITY",
+    "CREATE INDEX IF NOT EXISTS daily_food_logs_merchant_date_idx ON daily_food_logs (merchant_id, service_date DESC)",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_key VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_fingerprint VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR",
@@ -195,7 +213,7 @@ async def run_startup_migration(statement: str, max_attempts: int = 5) -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPIOffline):
+async def lifespan(app: FastAPI):
     # Idempotent lightweight migrations for fields introduced after the
     # original Supabase schema was created.
     for statement in STARTUP_MIGRATIONS:
@@ -204,7 +222,7 @@ async def lifespan(app: FastAPIOffline):
 
 # docs_url/redoc_url/openapi_url disabled: this is a backend-only API with no
 # need to publish a public map of every route and parameter to anyone who asks.
-app = FastAPIOffline(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 # --- RATE LIMITING (in-memory; fine for Render's single-instance free tier) ---
 limiter = Limiter(key_func=get_remote_address)
@@ -674,6 +692,14 @@ class MenuItemCreate(BaseModel):
     price: float = Field(gt=0, le=10000)
     image_url: Optional[str] = None
     is_available: bool = True
+
+
+class DailyFoodLogInput(BaseModel):
+    service_date: date
+    prepared_portions: int = Field(ge=0, le=10000)
+    unsold_portions: int = Field(ge=0, le=10000)
+    discarded_portions: int = Field(ge=0, le=10000)
+    sold_out: bool = False
 
 class OrderItemCreate(BaseModel):
     menu_item_id: UUID
@@ -1254,6 +1280,121 @@ async def get_admin_analytics(days: int = Query(default=30, ge=7, le=90), db: As
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin privileges required.")
     return await build_order_analytics(db, days)
+
+
+async def require_own_merchant(db: AsyncSession, current_user: User) -> Merchant:
+    if current_user.role != "merchant":
+        raise HTTPException(status_code=403, detail="Merchant privileges required.")
+    result = await db.execute(select(Merchant).where(Merchant.user_id == current_user.id, Merchant.is_deleted.is_(False)))
+    merchant = result.scalars().first()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="No merchant profile found for this user.")
+    return merchant
+
+
+@app.get("/merchants/me/food-planning")
+async def get_food_planning(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Return a measured waste summary and a weekday demand baseline, not ML claims."""
+    from customer_analytics import MYT, PAID
+    from demand_planning import forecast_portions
+
+    merchant = await require_own_merchant(db, current_user)
+    now_utc = datetime.now(timezone.utc)
+    today = now_utc.astimezone(MYT).date()
+    first = today - timedelta(days=56)
+    last = today + timedelta(days=7)
+    first_utc = datetime.combine(first, datetime.min.time(), MYT).astimezone(timezone.utc)
+    end_utc = datetime.combine(last + timedelta(days=1), datetime.min.time(), MYT).astimezone(timezone.utc)
+    slot_day = func.date(func.timezone("Asia/Kuala_Lumpur", PickupSlot.time_slot))
+    offered_result = await db.execute(
+        select(slot_day).where(PickupSlot.merchant_id == merchant.id,
+                               PickupSlot.time_slot >= first_utc, PickupSlot.time_slot < end_utc)
+        .distinct().order_by(slot_day)
+    )
+    offered_days = [row[0] for row in offered_result]
+    upcoming_result = await db.execute(
+        select(slot_day).where(PickupSlot.merchant_id == merchant.id,
+                               PickupSlot.time_slot >= now_utc, PickupSlot.time_slot < end_utc)
+        .distinct().order_by(slot_day)
+    )
+    future_days = [row[0] for row in upcoming_result]
+    sales_result = await db.execute(
+        select(slot_day, OrderItem.menu_item_id, func.sum(OrderItem.quantity))
+        .select_from(PickupSlot).join(Order, Order.pickup_slot_id == PickupSlot.id)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .where(PickupSlot.merchant_id == merchant.id, PickupSlot.time_slot >= first_utc,
+               PickupSlot.time_slot < end_utc, Order.status.in_(PAID))
+        .group_by(slot_day, OrderItem.menu_item_id)
+    )
+    sold = {(row[0], row[1]): int(row[2]) for row in sales_result}
+    items = (await db.execute(select(MenuItem).where(MenuItem.merchant_id == merchant.id,
+                                                     MenuItem.approval_status == "approved")
+                              .order_by(MenuItem.name))).scalars().all()
+    history_days = [day for day in offered_days if day < today]
+    forecasts = []
+    for service_date in future_days:
+        matching_days = [day for day in history_days if day.weekday() == service_date.weekday()]
+        for item in items:
+            if not item.is_available:
+                continue
+            estimate = forecast_portions([sold.get((day, item.id), 0) for day in matching_days],
+                                         sold.get((service_date, item.id), 0))
+            forecasts.append({"date": service_date.isoformat(), "menu_item_id": str(item.id),
+                              "menu_item_name": item.name, **estimate})
+
+    log_start = today - timedelta(days=30)
+    log_rows = (await db.execute(select(DailyFoodLog, MenuItem.name)
+                                 .join(MenuItem, MenuItem.id == DailyFoodLog.menu_item_id)
+                                 .where(DailyFoodLog.merchant_id == merchant.id,
+                                        DailyFoodLog.service_date >= log_start,
+                                        DailyFoodLog.service_date <= today)
+                                 .order_by(DailyFoodLog.service_date.desc(), MenuItem.name))).all()
+    logs = [{"menu_item_id": str(log.menu_item_id), "menu_item_name": name,
+             "service_date": log.service_date.isoformat(), "prepared_portions": log.prepared_portions,
+             "unsold_portions": log.unsold_portions, "discarded_portions": log.discarded_portions,
+             "sold_out": log.sold_out, "updated_at": log.updated_at.isoformat() if log.updated_at else None}
+            for log, name in log_rows]
+    return {"updated_at": now_utc.isoformat(), "timezone": "Asia/Kuala_Lumpur",
+            "method": "Same-weekday average across offered pickup days in the last 8 weeks; range is descriptive, not a probability interval.",
+            "history_offered_days": len(history_days), "upcoming_slot_days": [day.isoformat() for day in future_days],
+            "menu_items": [{"id": str(item.id), "name": item.name} for item in items],
+            "forecasts": forecasts, "logs": logs,
+            "measured": {"logged_days": len({log.service_date for log, _ in log_rows}),
+                         "prepared_portions": sum(log.prepared_portions for log, _ in log_rows),
+                         "unsold_portions": sum(log.unsold_portions for log, _ in log_rows),
+                         "discarded_portions": sum(log.discarded_portions for log, _ in log_rows),
+                         "sold_out_dish_days": sum(bool(log.sold_out) for log, _ in log_rows)}}
+
+
+@app.put("/merchants/me/food-planning/{menu_item_id}")
+async def save_daily_food_log(menu_item_id: UUID, payload: DailyFoodLogInput,
+                              db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    from customer_analytics import MYT
+    merchant = await require_own_merchant(db, current_user)
+    today = datetime.now(MYT).date()
+    if not today - timedelta(days=90) <= payload.service_date <= today:
+        raise HTTPException(422, "Choose today or a day within the last 90 days.")
+    if payload.unsold_portions + payload.discarded_portions > payload.prepared_portions:
+        raise HTTPException(422, "Unsold and discarded portions cannot exceed prepared portions.")
+    item = await db.get(MenuItem, menu_item_id)
+    if not item or item.merchant_id != merchant.id:
+        raise HTTPException(404, "Menu item not found for your stall.")
+    # Lock the unique key's merchant row so simultaneous submissions cannot create duplicates.
+    await db.execute(select(Merchant.id).where(Merchant.id == merchant.id).with_for_update())
+    row = (await db.execute(select(DailyFoodLog).where(
+        DailyFoodLog.merchant_id == merchant.id, DailyFoodLog.menu_item_id == menu_item_id,
+        DailyFoodLog.service_date == payload.service_date))).scalars().first()
+    if row is None:
+        row = DailyFoodLog(merchant_id=merchant.id, menu_item_id=menu_item_id,
+                           service_date=payload.service_date)
+        db.add(row)
+    row.prepared_portions = payload.prepared_portions
+    row.unsold_portions = payload.unsold_portions
+    row.discarded_portions = payload.discarded_portions
+    row.sold_out = payload.sold_out
+    row.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"message": "Daily food record saved.", "service_date": payload.service_date.isoformat()}
 
 
 @app.get("/merchants/me/analytics")

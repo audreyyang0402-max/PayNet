@@ -73,6 +73,22 @@ CREATE TABLE menu_items (
 	FOREIGN KEY(merchant_id) REFERENCES merchants (id)
 );
 
+CREATE TABLE daily_food_logs (
+	id UUID PRIMARY KEY,
+	merchant_id UUID NOT NULL REFERENCES merchants(id),
+	menu_item_id UUID NOT NULL REFERENCES menu_items(id),
+	service_date DATE NOT NULL,
+	prepared_portions INTEGER NOT NULL DEFAULT 0 CHECK (prepared_portions >= 0),
+	unsold_portions INTEGER NOT NULL DEFAULT 0 CHECK (unsold_portions >= 0),
+	discarded_portions INTEGER NOT NULL DEFAULT 0 CHECK (discarded_portions >= 0),
+	sold_out BOOLEAN NOT NULL DEFAULT FALSE,
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	CONSTRAINT daily_food_logs_portions_check CHECK (unsold_portions + discarded_portions <= prepared_portions),
+	CONSTRAINT daily_food_logs_merchant_item_date_unique UNIQUE (merchant_id, menu_item_id, service_date)
+);
+ALTER TABLE daily_food_logs ENABLE ROW LEVEL SECURITY;
+CREATE INDEX daily_food_logs_merchant_date_idx ON daily_food_logs (merchant_id, service_date DESC);
+
 CREATE TABLE pickup_slots (
 	id UUID NOT NULL,
 	merchant_id UUID NOT NULL,

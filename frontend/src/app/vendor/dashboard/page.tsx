@@ -11,6 +11,7 @@ import { MerchantMenuManager } from "@/components/MerchantMenuManager";
 import MerchantPickupSlots from "@/components/MerchantPickupSlots";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 import RefundManagement from "@/components/RefundManagement";
+import FoodPlanning from "@/components/FoodPlanning";
 
 interface MerchantProfile {
   id: string;
@@ -51,10 +52,11 @@ interface PickupSlot {
   current_bookings: number;
 }
 
-type Tab = "analytics" | "profile" | "orders" | "refunds" | "menu" | "slots" | "payment";
+type Tab = "analytics" | "planning" | "profile" | "orders" | "refunds" | "menu" | "slots" | "payment";
 
 const TAB_LABELS: Record<Tab, string> = {
   analytics: "Overview",
+  planning: "Food Planning",
   profile: "Store Profile",
   orders: "Manage Orders",
   refunds: "Refunds",
@@ -422,7 +424,7 @@ export default function MerchantDashboard() {
           </div>
           {/* Nav tabs */}
           <nav aria-label="Merchant portal" className="grid grid-cols-2 gap-2 border-t border-stone-100 pt-4 text-center sm:flex sm:flex-wrap sm:justify-center">
-            {(["analytics", "profile", "orders", "refunds", "menu", "slots", "payment"] as Tab[]).map(t => (
+            {(["analytics", "planning", "profile", "orders", "refunds", "menu", "slots", "payment"] as Tab[]).map(t => (
               <button
                 key={t}
                 aria-pressed={tab === t}
@@ -510,6 +512,7 @@ export default function MerchantDashboard() {
         </div>
 
         {tab === "analytics" && <AnalyticsDashboard audience="merchant" embedded />}
+        {tab === "planning" && <FoodPlanning />}
         {tab === "refunds" && <RefundManagement audience="merchant" embedded />}
         {tab === "menu" && <MerchantMenuManager embedded />}
         {tab === "slots" && merchant?.id && (
