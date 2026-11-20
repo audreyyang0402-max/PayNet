@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { BACKEND_URL } from "@/lib/backend-url";
 
 type MenuItem = { id: string; name: string; price: number; is_available: boolean };
@@ -8,17 +8,23 @@ type PickupSlot = { id: string; time_slot: string; current_bookings: number; max
 type Offer = { id: string; menu_item_name: string; regular_price: number; sale_price: number;
   remaining_portions: number; pickup_time: string | null; expires_at: string;
   is_active: boolean; available: boolean };
+type Impact = { offers_created: number; listed_portions: number; confirmed_portions: number;
+  completed_portions: number; pending_portions: number; rejected_portions: number;
+  confirmed_order_value: number; past_offer_dish_days: number; logged_offer_dish_days: number;
+  discarded_portions_on_logged_offer_days: number };
 const mytDate = (date: Date) => new Intl.DateTimeFormat("sv-SE", {
   timeZone: "Asia/Kuala_Lumpur", year: "numeric", month: "2-digit", day: "2-digit",
 }).format(date);
 const mytTime = (value: string) => new Date(value).toLocaleString("en-MY", {
   timeZone: "Asia/Kuala_Lumpur", dateStyle: "medium", timeStyle: "short",
 });
+const deadlineHasPassed = (deadline: Date) => deadline.getTime() <= Date.now();
 
 export default function SurplusOfferManager({ merchantId }: { merchantId: string }) {
   const [items, setItems] = useState<MenuItem[]>([]);
   const [slots, setSlots] = useState<PickupSlot[]>([]);
   const [offers, setOffers] = useState<Offer[]>([]);
+  const [impact, setImpact] = useState<Impact | null>(null);
   const [itemId, setItemId] = useState("");
   const [slotId, setSlotId] = useState("");
   const [price, setPrice] = useState("");
@@ -28,36 +34,43 @@ export default function SurplusOfferManager({ merchantId }: { merchantId: string
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [now, setNow] = useState(() => Date.now());
 
-  async function load() {
+  const load = useCallback(async () => {
     const headers = { Authorization: `Bearer ${localStorage.getItem("token")}` };
     try {
-      const [itemsResponse, slotsResponse, offersResponse] = await Promise.all([
+      const [itemsResponse, slotsResponse, offersResponse, impactResponse] = await Promise.all([
         fetch(`${BACKEND_URL}/merchants/${merchantId}/items`, { headers, cache: "no-store" }),
         fetch(`${BACKEND_URL}/merchants/${merchantId}/pickup-slots`, { headers, cache: "no-store" }),
         fetch(`${BACKEND_URL}/merchants/me/surplus-offers`, { headers, cache: "no-store" }),
+        fetch(`${BACKEND_URL}/merchants/me/surplus-impact`, { headers, cache: "no-store" }),
       ]);
       if (!itemsResponse.ok || !slotsResponse.ok || !offersResponse.ok) throw new Error("Could not load menu, slots, or offers.");
       const menu: MenuItem[] = await itemsResponse.json();
       setItems(menu.filter(item => item.is_available && Number(item.price) > 0));
       setSlots(await slotsResponse.json());
       setOffers(await offersResponse.json());
+      setImpact(impactResponse.ok ? await impactResponse.json() : null);
       setError("");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load offers."); }
-  }
+  }, [merchantId]);
 
-  useEffect(() => { void load(); }, [merchantId]);
+  useEffect(() => {
+    const initial = window.setTimeout(() => void load(), 0);
+    const timer = window.setInterval(() => setNow(Date.now()), 60000);
+    return () => { window.clearTimeout(initial); window.clearInterval(timer); };
+  }, [load]);
 
-  const today = mytDate(new Date());
+  const today = mytDate(new Date(now));
   const todaySlots = slots.filter(slot => mytDate(new Date(slot.time_slot)) === today &&
-    new Date(slot.time_slot).getTime() > Date.now() && slot.current_bookings < slot.max_capacity);
+    new Date(slot.time_slot).getTime() > now && slot.current_bookings < slot.max_capacity);
   const selectedSlot = todaySlots.find(slot => slot.id === slotId);
   const selectedItem = items.find(item => item.id === itemId);
   const deadline = selectedSlot ? new Date(new Date(selectedSlot.time_slot).getTime() - minutesBefore * 60000) : null;
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedSlot || !selectedItem || !deadline || deadline.getTime() <= Date.now()) {
+    if (!selectedSlot || !selectedItem || !deadline || deadlineHasPassed(deadline)) {
       setError("Choose a pickup slot with enough time before the order deadline."); return;
     }
     setSaving(true); setError(""); setMessage("");
@@ -98,6 +111,18 @@ export default function SurplusOfferManager({ merchantId }: { merchantId: string
     </div>
     {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
     {message && <p role="status" className="rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm text-teal-800">{message}</p>}
+    {impact && <div className="rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
+      <h3 className="font-bold text-slate-900">Last 30 days of offer outcomes</h3>
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {([["Offers created", impact.offers_created], ["Listed portions", impact.listed_portions],
+          ["Confirmed orders", impact.confirmed_portions], ["Completed pickups", impact.completed_portions],
+          ["Pending portions", impact.pending_portions], ["Rejected portions", impact.rejected_portions],
+          ["Confirmed order value", `RM ${impact.confirmed_order_value.toFixed(2)}`],
+          ["Logged discards on offer days", impact.discarded_portions_on_logged_offer_days]] as const).map(([label, value]) =>
+          <div key={label} className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs text-slate-600">{label}</p><p className="mt-1 text-lg font-bold text-slate-900">{value}</p></div>)}
+      </div>
+      <p className="mt-3 text-xs text-slate-600">Food records cover {impact.logged_offer_dish_days} of {impact.past_offer_dish_days} past dish days with offers. Listed portions can include the same food when an offer is ended and relisted. Discards are merchant-reported; sales do not by themselves prove waste was prevented.</p>
+    </div>}
     <form onSubmit={create} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <h3 className="font-bold text-slate-900">Create an offer</h3>
       <div className="mt-4 grid gap-4 sm:grid-cols-2">

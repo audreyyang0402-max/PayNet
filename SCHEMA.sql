@@ -78,6 +78,7 @@ CREATE TABLE daily_food_logs (
 	merchant_id UUID NOT NULL REFERENCES merchants(id),
 	menu_item_id UUID NOT NULL REFERENCES menu_items(id),
 	service_date DATE NOT NULL,
+	was_offered BOOLEAN,
 	prepared_portions INTEGER NOT NULL DEFAULT 0 CHECK (prepared_portions >= 0),
 	unsold_portions INTEGER NOT NULL DEFAULT 0 CHECK (unsold_portions >= 0),
 	discarded_portions INTEGER NOT NULL DEFAULT 0 CHECK (discarded_portions >= 0),

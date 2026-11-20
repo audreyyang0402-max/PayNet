@@ -1,9 +1,42 @@
 import unittest
+from datetime import date, timedelta
 
-from demand_planning import forecast_portions, walk_forward_validation
+from demand_planning import forecast_portions, trained_forecast, walk_forward_validation
 
 
 class ForecastPortionsTests(unittest.TestCase):
+    def test_trained_model_waits_for_verified_history(self):
+        start = date(2026, 1, 1)
+        rows = [(start + timedelta(days=index), 3) for index in range(20)]
+        result = trained_forecast(rows, start + timedelta(days=20))
+        self.assertFalse(result["selected"])
+        self.assertIsNone(result["expected"])
+
+    def test_trend_model_is_selected_only_after_chronological_validation(self):
+        start = date(2026, 1, 1)
+        rows = [(start + timedelta(days=index), 4 + index // 5 + (3 if index % 7 == 0 else 0))
+                for index in range(70)]
+        result = trained_forecast(rows, start + timedelta(days=70), already_booked=5)
+        self.assertTrue(result["selected"])
+        self.assertLess(result["validation_model_mae"], result["validation_baseline_mae"])
+        self.assertEqual(result["holdout_days"], 10)
+        self.assertGreaterEqual(result["low"], 5)
+
+    def test_flat_history_keeps_simpler_baseline(self):
+        start = date(2026, 1, 1)
+        rows = [(start + timedelta(days=index), 3) for index in range(60)]
+        result = trained_forecast(rows, start + timedelta(days=60))
+        self.assertFalse(result["selected"])
+        self.assertEqual(result["reason"], "baseline_performed_as_well_or_better")
+
+    def test_future_observations_cannot_train_past_prediction(self):
+        start = date(2026, 1, 1)
+        rows = [(start + timedelta(days=index), 3 + index // 8) for index in range(60)]
+        target = start + timedelta(days=50)
+        baseline = trained_forecast(rows, target)
+        poisoned = trained_forecast(rows + [(target + timedelta(days=1), 10000)], target)
+        self.assertEqual(baseline, poisoned)
+
     def test_missing_history_is_not_presented_as_prediction(self):
         estimate = forecast_portions([], already_booked=3)
         self.assertIsNone(estimate["expected"])

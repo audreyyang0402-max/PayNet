@@ -62,6 +62,7 @@ class DailyFoodLog(Base):
     merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
     menu_item_id = Column(UUID(as_uuid=True), ForeignKey("menu_items.id"), nullable=False)
     service_date = Column(Date, nullable=False)
+    was_offered = Column(Boolean, nullable=True)  # NULL means older records did not answer
     prepared_portions = Column(Integer, nullable=False, default=0)
     unsold_portions = Column(Integer, nullable=False, default=0)
     discarded_portions = Column(Integer, nullable=False, default=0)
