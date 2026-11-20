@@ -37,7 +37,7 @@ from PIL import Image, ImageOps
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from database import engine, get_db
-from models import Base, User, Merchant, MenuItem, DailyFoodLog, DailyItemStock, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent
+from models import Base, User, Merchant, MenuItem, DailyFoodLog, DailyItemStock, SurplusOffer, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent
 
 # --- NEW AUTH IMPORTS ---
 from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN, validate_password, password_stamp
@@ -102,6 +102,26 @@ ORDER_STATUS_CONSTRAINT_MIGRATION = f"""
 
 
 STARTUP_MIGRATIONS = [
+    """
+        CREATE TABLE IF NOT EXISTS surplus_offers (
+            id UUID PRIMARY KEY,
+            merchant_id UUID NOT NULL REFERENCES merchants(id),
+            menu_item_id UUID NOT NULL REFERENCES menu_items(id),
+            pickup_slot_id UUID REFERENCES pickup_slots(id) ON DELETE SET NULL,
+            service_date DATE NOT NULL,
+            sale_price NUMERIC(10, 2) NOT NULL CHECK (sale_price > 0),
+            total_portions INTEGER NOT NULL CHECK (total_portions > 0),
+            expires_at TIMESTAMPTZ NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            confirmed_safe_at TIMESTAMPTZ NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """,
+    "ALTER TABLE surplus_offers ENABLE ROW LEVEL SECURITY",
+    "CREATE INDEX IF NOT EXISTS surplus_offers_merchant_expiry_idx ON surplus_offers (merchant_id, expires_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS surplus_offers_one_active_dish_day_idx ON surplus_offers (merchant_id, menu_item_id, service_date) WHERE is_active",
+    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS surplus_offer_id UUID REFERENCES surplus_offers(id)",
+    "CREATE INDEX IF NOT EXISTS order_items_surplus_offer_idx ON order_items (surplus_offer_id)",
     """
         CREATE TABLE IF NOT EXISTS daily_item_stock (
             id UUID PRIMARY KEY,
@@ -730,10 +750,20 @@ class DailyStockInput(BaseModel):
     service_date: date
     total_portions: Optional[int] = Field(default=None, ge=0, le=10000)
 
+
+class SurplusOfferCreate(BaseModel):
+    menu_item_id: UUID
+    pickup_slot_id: UUID
+    sale_price: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    total_portions: int = Field(ge=1, le=1000)
+    expires_at: datetime
+    confirm_safe_to_sell: bool
+
 class OrderItemCreate(BaseModel):
     menu_item_id: UUID
     quantity: int = Field(default=1, ge=1, le=50)
     special_instructions: Optional[str] = Field(default=None, max_length=300)
+    surplus_offer_id: Optional[UUID] = None
 
 class OrderCreate(BaseModel):
     checkout_key: UUID | None = None
@@ -1707,7 +1737,8 @@ async def delete_menu_item(
     used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
     has_planning_history = (await db.execute(select(func.count(DailyFoodLog.id)).where(DailyFoodLog.menu_item_id == item.id))).scalar_one()
     has_stock_limit = (await db.execute(select(func.count(DailyItemStock.id)).where(DailyItemStock.menu_item_id == item.id))).scalar_one()
-    if used or has_planning_history or has_stock_limit:
+    has_surplus_offer = (await db.execute(select(func.count(SurplusOffer.id)).where(SurplusOffer.menu_item_id == item.id))).scalar_one()
+    if used or has_planning_history or has_stock_limit or has_surplus_offer:
         # Preserve order receipts, planning observations and daily caps.
         item.is_available = False
         await db.commit()
@@ -1939,6 +1970,151 @@ async def set_daily_stock(item_id: UUID, payload: DailyStockInput,
             "remaining_portions": None if payload.total_portions is None else payload.total_portions - reserved}
 
 
+async def reserved_offer_quantities(db: AsyncSession, offer_ids: list[UUID]) -> dict[UUID, int]:
+    if not offer_ids:
+        return {}
+    result = await db.execute(
+        select(OrderItem.surplus_offer_id, func.sum(OrderItem.quantity))
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(OrderItem.surplus_offer_id.in_(offer_ids),
+               Order.status.in_(STOCK_RESERVATION_STATUSES))
+        .group_by(OrderItem.surplus_offer_id)
+    )
+    return {row[0]: int(row[1]) for row in result}
+
+
+async def surplus_offer_payloads(db: AsyncSession, rows: list[tuple], now: datetime) -> list[dict]:
+    reserved = await reserved_offer_quantities(db, [offer.id for offer, _, _, _ in rows])
+    result = []
+    for offer, item, slot, merchant in rows:
+        remaining = max(0, offer.total_portions - reserved.get(offer.id, 0))
+        stock = (await db.execute(select(DailyItemStock).where(
+            DailyItemStock.merchant_id == offer.merchant_id,
+            DailyItemStock.menu_item_id == offer.menu_item_id,
+            DailyItemStock.service_date == offer.service_date))).scalars().first()
+        if stock:
+            by_item = await reserved_item_quantities(db, offer.merchant_id, offer.service_date, [offer.menu_item_id])
+            remaining = min(remaining, max(0, stock.total_portions - by_item.get(offer.menu_item_id, 0)))
+        live = bool(offer.is_active and offer.expires_at > now and slot and slot.time_slot > now
+                    and shop_is_public(merchant) and item.is_available and item.approval_status == "approved")
+        result.append({"id": str(offer.id), "merchant_id": str(offer.merchant_id),
+                       "merchant_name": merchant.name, "merchant_location": merchant.location,
+                       "menu_item_id": str(item.id), "menu_item_name": item.name,
+                       "description": item.description, "image_url": public_menu_item(item)["image_url"],
+                       "regular_price": float(item.price), "sale_price": float(offer.sale_price),
+                       "total_portions": offer.total_portions, "remaining_portions": remaining,
+                       "pickup_slot_id": str(slot.id) if slot else None,
+                       "pickup_time": slot.time_slot.isoformat() if slot else None,
+                       "expires_at": offer.expires_at.isoformat(), "service_date": offer.service_date.isoformat(),
+                       "is_active": offer.is_active, "available": live and remaining > 0})
+    return result
+
+
+@app.get("/surplus-offers")
+async def list_public_surplus_offers(db: AsyncSession = Depends(get_db)):
+    await expire_stale_drafts(db)
+    now = datetime.now(timezone.utc)
+    rows = (await db.execute(
+        select(SurplusOffer, MenuItem, PickupSlot, Merchant)
+        .join(MenuItem, MenuItem.id == SurplusOffer.menu_item_id)
+        .join(Merchant, Merchant.id == SurplusOffer.merchant_id)
+        .outerjoin(PickupSlot, PickupSlot.id == SurplusOffer.pickup_slot_id)
+        .where(SurplusOffer.is_active.is_(True), SurplusOffer.expires_at > now,
+               PickupSlot.time_slot > now, Merchant.is_active.is_(True),
+               Merchant.is_preview.is_(False), Merchant.is_deleted.is_(False),
+               MenuItem.is_available.is_(True), MenuItem.approval_status == "approved")
+        .order_by(SurplusOffer.expires_at).limit(100)
+    )).all()
+    return [offer for offer in await surplus_offer_payloads(db, rows, now) if offer["available"]]
+
+
+@app.get("/merchants/me/surplus-offers")
+async def list_my_surplus_offers(db: AsyncSession = Depends(get_db),
+                                 current_user: User = Depends(get_current_user)):
+    merchant = await require_own_merchant(db, current_user)
+    now = datetime.now(timezone.utc)
+    rows = (await db.execute(
+        select(SurplusOffer, MenuItem, PickupSlot, Merchant)
+        .join(MenuItem, MenuItem.id == SurplusOffer.menu_item_id)
+        .join(Merchant, Merchant.id == SurplusOffer.merchant_id)
+        .outerjoin(PickupSlot, PickupSlot.id == SurplusOffer.pickup_slot_id)
+        .where(SurplusOffer.merchant_id == merchant.id,
+               SurplusOffer.created_at >= now - timedelta(days=30))
+        .order_by(SurplusOffer.created_at.desc()).limit(100)
+    )).all()
+    return await surplus_offer_payloads(db, rows, now)
+
+
+@app.post("/merchants/me/surplus-offers", status_code=201)
+async def create_surplus_offer(payload: SurplusOfferCreate, db: AsyncSession = Depends(get_db),
+                               current_user: User = Depends(get_current_user)):
+    await expire_stale_drafts(db)
+    merchant = await require_own_merchant(db, current_user)
+    if not payload.confirm_safe_to_sell:
+        raise HTTPException(422, "Confirm that these portions are suitable to offer and collect safely.")
+    now = datetime.now(timezone.utc)
+    expiry = as_malaysia_time(payload.expires_at)
+    if expiry <= now:
+        raise HTTPException(422, "The offer deadline must be in the future.")
+    # Same lock as checkout and stock updates: an offer cannot be created while
+    # another checkout is committing its last portion.
+    await db.execute(select(Merchant.id).where(Merchant.id == merchant.id).with_for_update())
+    now = datetime.now(timezone.utc)
+    if expiry <= now:
+        raise HTTPException(422, "The offer deadline has passed. Choose a later pickup slot.")
+    item = await db.get(MenuItem, payload.menu_item_id)
+    slot = await db.get(PickupSlot, payload.pickup_slot_id)
+    if not item or item.merchant_id != merchant.id or not item.is_available or item.approval_status != "approved":
+        raise HTTPException(404, "Available menu item not found for your stall.")
+    if not slot or slot.merchant_id != merchant.id or slot.time_slot <= now:
+        raise HTTPException(422, "Choose a future pickup slot for your stall.")
+    service_date = slot.time_slot.astimezone(MALAYSIA_TZ).date()
+    if service_date != now.astimezone(MALAYSIA_TZ).date():
+        raise HTTPException(422, "Surplus meals can only be offered for pickup today.")
+    if expiry > slot.time_slot:
+        raise HTTPException(422, "The offer deadline must be no later than its pickup time.")
+    if payload.sale_price >= item.price:
+        raise HTTPException(422, "Set a price below the regular menu price.")
+    existing = (await db.execute(select(SurplusOffer.id).where(
+        SurplusOffer.merchant_id == merchant.id, SurplusOffer.menu_item_id == item.id,
+        SurplusOffer.service_date == service_date, SurplusOffer.is_active.is_(True)))).first()
+    if existing:
+        raise HTTPException(409, "This dish already has an active surplus offer today. End it before creating another.")
+    stock = (await db.execute(select(DailyItemStock).where(
+        DailyItemStock.merchant_id == merchant.id, DailyItemStock.menu_item_id == item.id,
+        DailyItemStock.service_date == service_date))).scalars().first()
+    if stock:
+        reserved = (await reserved_item_quantities(db, merchant.id, service_date, [item.id])).get(item.id, 0)
+        if payload.total_portions > stock.total_portions - reserved:
+            raise HTTPException(409, "The offer exceeds the portions remaining in today's daily limit.")
+    offer = SurplusOffer(merchant_id=merchant.id, menu_item_id=item.id, pickup_slot_id=slot.id,
+                         service_date=service_date, sale_price=payload.sale_price,
+                         total_portions=payload.total_portions, expires_at=expiry,
+                         confirmed_safe_at=now)
+    db.add(offer)
+    try:
+        await db.commit()
+        await db.refresh(offer)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(409, "An active offer for this dish already exists today.") from exc
+    return {"id": str(offer.id), "message": "Surplus offer is live until its deadline or portions run out."}
+
+
+@app.patch("/merchants/me/surplus-offers/{offer_id}/end")
+async def end_surplus_offer(offer_id: UUID, db: AsyncSession = Depends(get_db),
+                            current_user: User = Depends(get_current_user)):
+    merchant = await require_own_merchant(db, current_user)
+    await db.execute(select(Merchant.id).where(Merchant.id == merchant.id).with_for_update())
+    offer = (await db.execute(select(SurplusOffer).where(
+        SurplusOffer.id == offer_id, SurplusOffer.merchant_id == merchant.id).with_for_update())).scalars().first()
+    if not offer:
+        raise HTTPException(404, "Surplus offer not found for your stall.")
+    offer.is_active = False
+    await db.commit()
+    return {"message": "Surplus offer ended. Existing orders keep their agreed price."}
+
+
 @app.get("/menu-items/{item_id}/image")
 async def get_legacy_menu_image(item_id: UUID, db: AsyncSession = Depends(get_db)):
     """Serve old data-URL photos separately so menu JSON remains small and fast."""
@@ -2001,9 +2177,16 @@ async def create_order(
     if slot.current_bookings >= slot.max_capacity:
         raise HTTPException(status_code=400, detail="This pickup slot is fully booked.")
 
+    offer_ids = sorted({line.surplus_offer_id for line in order_data.items if line.surplus_offer_id})
+    offers = {}
+    if offer_ids:
+        offer_rows = (await db.execute(select(SurplusOffer).where(SurplusOffer.id.in_(offer_ids))
+                                       .order_by(SurplusOffer.id).with_for_update())).scalars().all()
+        offers = {offer.id: offer for offer in offer_rows}
     total_price = Decimal("0.00")
     line_items = []
     requested_by_item: dict[UUID, int] = {}
+    requested_by_offer: dict[UUID, int] = {}
     for line in order_data.items:
         item = await db.get(MenuItem, line.menu_item_id)
         if not item:
@@ -2012,11 +2195,28 @@ async def create_order(
             raise HTTPException(status_code=400, detail="Menu item does not belong to this merchant.")
         if not item.is_available or item.approval_status == "rejected" or float(item.price) <= 0:
             raise HTTPException(status_code=400, detail=f"'{item.name}' is currently unavailable.")
-        line_total = item.price * line.quantity
+        offer = offers.get(line.surplus_offer_id) if line.surplus_offer_id else None
+        if line.surplus_offer_id:
+            if (not offer or offer.menu_item_id != item.id or offer.merchant_id != merchant.id
+                    or offer.pickup_slot_id != slot.id or not offer.is_active
+                    or offer.expires_at <= datetime.now(timezone.utc)
+                    or item.approval_status != "approved"
+                    or offer.confirmed_safe_at is None):
+                raise HTTPException(409, f"The surplus offer for '{item.name}' is no longer available for this pickup slot.")
+            requested_by_offer[offer.id] = requested_by_offer.get(offer.id, 0) + line.quantity
+        line_price = offer.sale_price if offer else item.price
+        line_total = line_price * line.quantity
         total_price += line_total
         requested_by_item[item.id] = requested_by_item.get(item.id, 0) + line.quantity
         instructions = line.special_instructions.strip() if line.special_instructions else None
-        line_items.append((item, line.quantity, instructions or None))
+        line_items.append((item, line.quantity, instructions or None, line_price, offer.id if offer else None))
+
+    if requested_by_offer:
+        reserved_offers = await reserved_offer_quantities(db, list(requested_by_offer))
+        for offer_id, requested in requested_by_offer.items():
+            remaining = offers[offer_id].total_portions - reserved_offers.get(offer_id, 0)
+            if requested > remaining:
+                raise HTTPException(409, f"Only {max(0, remaining)} surplus portions remain for this offer. Reduce the quantity and try again.")
 
     stock_rows = (await db.execute(select(DailyItemStock).where(
         DailyItemStock.merchant_id == order_data.merchant_id,
@@ -2027,7 +2227,7 @@ async def create_order(
         service_date = slot.time_slot.astimezone(MALAYSIA_TZ).date()
         reserved = await reserved_item_quantities(db, order_data.merchant_id, service_date,
                                                    [row.menu_item_id for row in stock_rows])
-        item_names = {item.id: item.name for item, _, _ in line_items}
+        item_names = {item.id: item.name for item, _, _, _, _ in line_items}
         for row in stock_rows:
             remaining = row.total_portions - reserved.get(row.menu_item_id, 0)
             if requested_by_item[row.menu_item_id] > remaining:
@@ -2055,12 +2255,13 @@ async def create_order(
 
     try:
         await db.flush()
-        for item, quantity, instructions in line_items:
+        for item, quantity, instructions, line_price, offer_id in line_items:
             db.add(OrderItem(
                 order_id=new_order.id,
                 menu_item_id=item.id,
                 quantity=quantity,
-                price_at_order=item.price,
+                price_at_order=line_price,
+                surplus_offer_id=offer_id,
                 special_instructions=instructions,
             ))
         slot.current_bookings += 1
@@ -2131,6 +2332,7 @@ async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db), current_
             "name": item.menu_item.name if item.menu_item else "Unknown Dish",
             "quantity": item.quantity,
             "price_at_order": float(item.price_at_order),
+            "surplus_offer_id": str(item.surplus_offer_id) if item.surplus_offer_id else None,
             "special_instructions": item.special_instructions,
         }
         for item in order.items
@@ -2179,6 +2381,7 @@ async def list_customer_orders(db: AsyncSession = Depends(get_db), current_user:
                 "name": item.menu_item.name if item.menu_item else "Dish",
                 "quantity": item.quantity,
                 "price_at_order": float(item.price_at_order),
+                "surplus_offer_id": str(item.surplus_offer_id) if item.surplus_offer_id else None,
                 "special_instructions": item.special_instructions,
             }
             for item in order.items
@@ -2487,6 +2690,7 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
                 "name": item.menu_item.name if item.menu_item else "Dish",
                 "quantity": item.quantity,
                 "price_at_order": float(item.price_at_order),
+                "surplus_offer_id": str(item.surplus_offer_id) if item.surplus_offer_id else None,
                 "special_instructions": item.special_instructions,
             }
             for item in order.items
@@ -3190,7 +3394,8 @@ async def admin_delete_menu_item(
     used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
     has_planning_history = (await db.execute(select(func.count(DailyFoodLog.id)).where(DailyFoodLog.menu_item_id == item.id))).scalar_one()
     has_stock_limit = (await db.execute(select(func.count(DailyItemStock.id)).where(DailyItemStock.menu_item_id == item.id))).scalar_one()
-    if used or has_planning_history or has_stock_limit:
+    has_surplus_offer = (await db.execute(select(func.count(SurplusOffer.id)).where(SurplusOffer.menu_item_id == item.id))).scalar_one()
+    if used or has_planning_history or has_stock_limit or has_surplus_offer:
         item.is_available = False
         await db.commit()
         return {"message": "This item has order or planning records, so it was hidden instead of deleted.", "hidden": True}

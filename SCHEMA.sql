@@ -111,6 +111,23 @@ CREATE TABLE pickup_slots (
 	FOREIGN KEY(merchant_id) REFERENCES merchants (id)
 );
 
+CREATE TABLE surplus_offers (
+	id UUID PRIMARY KEY,
+	merchant_id UUID NOT NULL REFERENCES merchants(id),
+	menu_item_id UUID NOT NULL REFERENCES menu_items(id),
+	pickup_slot_id UUID REFERENCES pickup_slots(id) ON DELETE SET NULL,
+	service_date DATE NOT NULL,
+	sale_price NUMERIC(10, 2) NOT NULL CHECK (sale_price > 0),
+	total_portions INTEGER NOT NULL CHECK (total_portions > 0),
+	expires_at TIMESTAMPTZ NOT NULL,
+	is_active BOOLEAN NOT NULL DEFAULT TRUE,
+	confirmed_safe_at TIMESTAMPTZ NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE surplus_offers ENABLE ROW LEVEL SECURITY;
+CREATE INDEX surplus_offers_merchant_expiry_idx ON surplus_offers (merchant_id, expires_at);
+CREATE UNIQUE INDEX surplus_offers_one_active_dish_day_idx ON surplus_offers (merchant_id, menu_item_id, service_date) WHERE is_active;
+
 CREATE TABLE event_vendors (
 	id UUID NOT NULL,
 	event_id UUID NOT NULL,
@@ -204,6 +221,7 @@ CREATE TABLE order_items (
 	id UUID NOT NULL,
 	order_id UUID NOT NULL,
 	menu_item_id UUID NOT NULL,
+	surplus_offer_id UUID REFERENCES surplus_offers(id),
 	quantity INTEGER NOT NULL,
 	price_at_order NUMERIC(10, 2) NOT NULL,
 	special_instructions TEXT,

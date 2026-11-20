@@ -8,6 +8,7 @@ import BackLink from "@/components/BackLink";
 import AnalyticsDashboard from "@/components/AnalyticsDashboard";
 import DeleteAccountButton from "@/components/DeleteAccountButton";
 import { MerchantMenuManager } from "@/components/MerchantMenuManager";
+import SurplusOfferManager from "@/components/SurplusOfferManager";
 import MerchantPickupSlots from "@/components/MerchantPickupSlots";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 import RefundManagement from "@/components/RefundManagement";
@@ -29,6 +30,7 @@ interface OrderItem {
   name: string;
   quantity: number;
   price_at_order: number;
+  surplus_offer_id?: string | null;
   special_instructions?: string | null;
 }
 
@@ -52,7 +54,7 @@ interface PickupSlot {
   current_bookings: number;
 }
 
-type Tab = "analytics" | "planning" | "profile" | "orders" | "refunds" | "menu" | "slots" | "payment";
+type Tab = "analytics" | "planning" | "profile" | "orders" | "refunds" | "menu" | "surplus" | "slots" | "payment";
 
 const TAB_LABELS: Record<Tab, string> = {
   analytics: "Overview",
@@ -61,6 +63,7 @@ const TAB_LABELS: Record<Tab, string> = {
   orders: "Manage Orders",
   refunds: "Refunds",
   menu: "Menu",
+  surplus: "Surplus Meals",
   slots: "Pickup Slots",
   payment: "Payment Setup",
 };
@@ -424,7 +427,7 @@ export default function MerchantDashboard() {
           </div>
           {/* Nav tabs */}
           <nav aria-label="Merchant portal" className="grid grid-cols-2 gap-2 border-t border-stone-100 pt-4 text-center sm:flex sm:flex-wrap sm:justify-center">
-            {(["analytics", "planning", "profile", "orders", "refunds", "menu", "slots", "payment"] as Tab[]).map(t => (
+            {(["analytics", "planning", "profile", "orders", "refunds", "menu", "surplus", "slots", "payment"] as Tab[]).map(t => (
               <button
                 key={t}
                 aria-pressed={tab === t}
@@ -515,6 +518,7 @@ export default function MerchantDashboard() {
         {tab === "planning" && <FoodPlanning />}
         {tab === "refunds" && <RefundManagement audience="merchant" embedded />}
         {tab === "menu" && <MerchantMenuManager embedded />}
+        {tab === "surplus" && merchant?.id && <SurplusOfferManager merchantId={merchant.id} />}
         {tab === "slots" && merchant?.id && (
           <MerchantPickupSlots
             merchantId={merchant.id}
@@ -615,6 +619,7 @@ export default function MerchantDashboard() {
                             <li key={idx} className="flex items-start justify-between gap-3 text-sm">
                               <div className="min-w-0">
                                 <span className="font-medium text-gray-800">{item.name}</span>
+                                {item.surplus_offer_id && <span className="ml-2 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-800">Surplus offer</span>}
                                 <span className="ml-1.5 text-gray-400">×{item.quantity}</span>
                                 {item.special_instructions && (
                                   <p className="mt-1 rounded-md bg-orange-50 px-2 py-1 text-xs font-medium text-orange-700">

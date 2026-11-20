@@ -81,6 +81,23 @@ class DailyItemStock(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class SurplusOffer(Base):
+    """Merchant-approved discount for a fixed pickup slot and limited portions."""
+    __tablename__ = "surplus_offers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False)
+    menu_item_id = Column(UUID(as_uuid=True), ForeignKey("menu_items.id"), nullable=False)
+    pickup_slot_id = Column(UUID(as_uuid=True), ForeignKey("pickup_slots.id", ondelete="SET NULL"), nullable=True)
+    service_date = Column(Date, nullable=False)
+    sale_price = Column(Numeric(10, 2), nullable=False)
+    total_portions = Column(Integer, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    confirmed_safe_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class PickupSlot(Base):
     __tablename__ = "pickup_slots"
 
@@ -176,6 +193,7 @@ class OrderItem(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
     menu_item_id = Column(UUID(as_uuid=True), ForeignKey("menu_items.id"), nullable=False)
+    surplus_offer_id = Column(UUID(as_uuid=True), ForeignKey("surplus_offers.id"), nullable=True)
     quantity = Column(Integer, nullable=False, default=1)
     price_at_order = Column(Numeric(10, 2), nullable=False)
     special_instructions = Column(Text, nullable=True)

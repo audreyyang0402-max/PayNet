@@ -50,6 +50,25 @@ interface MenuItem {
   is_available: boolean;
   image_url?: string | null;
   merchant_id: string;
+  surplus_offer_id?: string;
+  surplus_pickup_slot_id?: string;
+}
+
+interface SurplusOffer {
+  id: string;
+  merchant_id: string;
+  merchant_name: string;
+  merchant_location: string;
+  menu_item_id: string;
+  menu_item_name: string;
+  description: string | null;
+  image_url: string | null;
+  regular_price: number;
+  sale_price: number;
+  remaining_portions: number;
+  pickup_slot_id: string;
+  pickup_time: string;
+  expires_at: string;
 }
 
 interface PickupSlot {
@@ -75,8 +94,24 @@ interface CartLine {
 
 export default function Home() {
   const checkoutInFlight = useRef(false);
+  const requestedSurplusSlotId = useRef<string | null>(null);
   // ── State: Merchants & Menus ──
   const [merchants, setMerchants] = useState<Merchant[]>([]);
+  const [surplusOffers, setSurplusOffers] = useState<SurplusOffer[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSurplus() {
+      try {
+        const response = await fetch(`${BACKEND_URL}/surplus-offers`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Surplus offers unavailable");
+        const rows: SurplusOffer[] = await response.json();
+        if (!cancelled) setSurplusOffers(rows);
+      } catch { if (!cancelled) setSurplusOffers([]); }
+    }
+    void loadSurplus();
+    const timer = window.setInterval(() => { if (!document.hidden) void loadSurplus(); }, 20000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
   const [eventMerchantIds, setEventMerchantIds] = useState<string[]>([]);
   const [activeEvent, setActiveEvent] = useState<ActiveEvent | null>(null);
   useEffect(() => {
@@ -179,7 +214,9 @@ export default function Home() {
           const slots: PickupSlot[] = await response.json();
           if (!cancelled) {
             setPickupSlots(slots);
-            setSelectedSlotId(slots.find(isPickupSlotAvailable)?.id ?? "");
+            setSelectedSlotId(slots.find(slot => slot.id === requestedSurplusSlotId.current && isPickupSlotAvailable(slot))?.id
+              ?? slots.find(isPickupSlotAvailable)?.id ?? "");
+            requestedSurplusSlotId.current = null;
           }
         }
       } catch (error) {
@@ -271,7 +308,7 @@ export default function Home() {
     }
 
     const normalizedInstructions = specialInstructions.trim();
-    const lineKey = `${item.id}::${normalizedInstructions}`;
+    const lineKey = `${item.id}::${item.surplus_offer_id ?? "regular"}::${normalizedInstructions}`;
     setSelectedMerchantId(item.merchant_id);
     setCart((prev) => {
       const current = prev[lineKey]?.quantity ?? 0;
@@ -293,6 +330,22 @@ export default function Home() {
       setToastMessage((msg) => (msg?.includes(item.name) ? null : msg));
     }, 4000);
     return true;
+  };
+
+  const addSurplusToCart = (offer: SurplusOffer) => {
+    const currentOfferSlot = Object.values(cart).find(line => line.item.surplus_pickup_slot_id)?.item.surplus_pickup_slot_id;
+    if (currentOfferSlot && currentOfferSlot !== offer.pickup_slot_id) {
+      if (!window.confirm("This offer needs a different pickup time. Clear your cart and add it?")) return;
+      setCart({});
+    }
+    const item: MenuItem = {
+      id: offer.menu_item_id, merchant_id: offer.merchant_id, name: offer.menu_item_name,
+      description: offer.description, image_url: offer.image_url, price: offer.sale_price,
+      is_available: true, surplus_offer_id: offer.id, surplus_pickup_slot_id: offer.pickup_slot_id,
+    };
+    requestedSurplusSlotId.current = offer.pickup_slot_id;
+    if (!addToCart(item)) { requestedSurplusSlotId.current = null; return; }
+    if (selectedMerchantId === offer.merchant_id) setSelectedSlotId(offer.pickup_slot_id);
   };
 
   // ─── 6. Remove from Cart Handler ──────────────────────────────────────────
@@ -319,6 +372,7 @@ export default function Home() {
     () => Object.values(cart).reduce((sum, { item, quantity }) => sum + Number(item.price) * quantity, 0),
     [cart]
   );
+  const cartSurplusSlotId = Object.values(cart).find(line => line.item.surplus_pickup_slot_id)?.item.surplus_pickup_slot_id;
   const stockShortages = useMemo(() => {
     if (!stockByItem) return [];
     const totals = new Map<string, { name: string; requested: number }>();
@@ -367,6 +421,10 @@ export default function Home() {
       alert("Your cart is empty.");
       return;
     }
+    if (cartSurplusSlotId && selectedSlotId !== cartSurplusSlotId) {
+      alert("The surplus meal is available only for its listed pickup time.");
+      return;
+    }
     if (stockShortages.length > 0) {
       alert(stockShortages.map(row => `Only ${row.remaining} portions of ${row.name} remain for this pickup day.`).join("\n"));
       return;
@@ -380,6 +438,7 @@ export default function Home() {
         pickup_slot_id: selectedSlotId,
         items: Object.values(cart).map(({ item, quantity, specialInstructions }) => ({
           menu_item_id: item.id,
+          surplus_offer_id: item.surplus_offer_id ?? null,
           quantity: quantity,
           special_instructions: specialInstructions || null,
         })),
@@ -664,6 +723,26 @@ export default function Home() {
           loading={menusLoading}
         />
 
+        {surplusOffers.length > 0 && <section aria-label="Surplus meals" className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-amber-50 p-4 sm:p-6 shadow-sm">
+          <div className="mb-4">
+            <p className="text-xs font-bold uppercase tracking-widest text-violet-700">Good food, less waste</p>
+            <h2 className="text-xl font-black text-slate-900">Surplus Meals</h2>
+            <p className="text-sm text-slate-600">Limited portions at a lower price, for the listed pickup time only. Availability is confirmed at checkout.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {surplusOffers.map(offer => <article key={offer.id} className="overflow-hidden rounded-xl border border-violet-100 bg-white shadow-sm">
+              {offer.image_url && <img src={offer.image_url} alt="" className="h-36 w-full object-cover" />}
+              <div className="space-y-2 p-4">
+                <div><h3 className="font-bold text-slate-900">{offer.menu_item_name}</h3><p className="text-xs text-slate-600">{offer.merchant_name} · {offer.merchant_location}</p></div>
+                <p className="text-sm"><span className="font-bold text-violet-800">RM {Number(offer.sale_price).toFixed(2)}</span> <span className="text-slate-400 line-through">RM {Number(offer.regular_price).toFixed(2)}</span></p>
+                <p className="text-xs text-slate-600">Pickup {new Date(offer.pickup_time).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", dateStyle: "medium", timeStyle: "short" })}</p>
+                <p className="text-xs text-slate-600">Order by {new Date(offer.expires_at).toLocaleTimeString("en-MY", { timeZone: "Asia/Kuala_Lumpur", hour: "numeric", minute: "2-digit" })} · {offer.remaining_portions} left</p>
+                <button type="button" onClick={() => addSurplusToCart(offer)} className="w-full rounded-lg bg-violet-700 px-3 py-2 text-sm font-bold text-white hover:bg-violet-800">Add surplus meal</button>
+              </div>
+            </article>)}
+          </div>
+        </section>}
+
         <div className="grid grid-cols-1 items-start gap-6 ">
           <section className="min-w-0 space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-2 px-1">
@@ -861,7 +940,7 @@ export default function Home() {
                     </label>
                     {(() => {
                       // Customers only see slots that aren't full yet
-                      const availableSlots = pickupSlots.filter(isPickupSlotAvailable);
+                      const availableSlots = pickupSlots.filter(slot => isPickupSlotAvailable(slot) && (!cartSurplusSlotId || slot.id === cartSurplusSlotId));
                       if (availableSlots.length === 0) return <p className="text-xs text-red-600">No pickup slots available right now.</p>;
                       return (
                         <select

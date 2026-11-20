@@ -94,7 +94,6 @@ export default function FoodPlanning() {
 
   return <section className="space-y-5" aria-label="Food planning">
     <div className="rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 to-amber-50 p-5">
-      <p className="text-xs font-bold uppercase tracking-widest text-orange-700">FYP pilot · merchant tools</p>
       <h2 className="mt-1 text-2xl font-bold text-slate-900">Prepare with real data</h2>
       <p className="mt-2 text-sm text-slate-600">Record what you prepared and what remained. Demand estimates use your confirmed orders on days you offered pickup slots.</p>
     </div>

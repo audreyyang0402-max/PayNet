@@ -12,6 +12,8 @@ Admin analytics now has a **Download CSV** action for a pseudonymous dish/day da
 
 Merchants can now set an optional **daily bookable portion limit** per dish and pickup date. Checkout reserves portions in a draft order, counts them through completion, and excludes cancelled or rejected orders. A stale unpaid draft releases its reservation after expiry. A database lock serializes checkout and cap changes, and checkout rejects a cart that exceeds the remaining amount before payment. The pickup date is saved on each new order so a completed order still counts if its old slot is removed. A blank limit means no cap; zero prevents new orders for that dish/date. These caps represent bookable portions, not a measured kitchen inventory balance.
 
+The merchant portal also supports **same-day surplus offers** for an approved dish and a specific future pickup slot. The merchant confirms the portions are suitable to sell, chooses a lower price, a fixed quantity and an order deadline. The marketplace shows only offers that are still available. Checkout enforces the offer quantity, expiry and pickup slot under the same merchant lock as daily portion limits; it calculates the discounted price on the server and records the offer ID on each order line. Ending an offer stops new purchases but leaves agreed prices on existing orders. These offers are merchant-declared stock, not a verified measurement of prevented food waste. A purchase alone does not prove the food would otherwise have been discarded.
+
 The CSV includes the cap and a `demand_censored` flag. Hitting a cap or reporting a sellout means observed sales might be lower than real demand. The current baseline excludes those days where known. Historical availability and sellout records are still incomplete, so forecasts remain provisional.
 
 ## Data definitions
@@ -31,6 +33,6 @@ These metrics are portion counts, not food weight, nutrition, carbon emissions o
 2. Export the pseudonymous dish/day dataset and remove rows with unknown availability from model training. Add verified context variables such as campus events only when collected consistently. Keep merchants' raw commercial data access controlled.
 3. Compare a simple weekday average against candidate models using chronological holdout dates. Report MAE and error by stall and dish. Do not shuffle future observations into training.
 4. Pilot merchant-visible suggestions with human override. Compare discarded portions, sell-out days, rejected orders, revenue and pickup delays against the baseline. Report sample size, missing logs and uncertainty; do not claim causality from a simple before/after change alone.
-5. Add surplus offers only after defining merchant approval, food safety checks, pricing, expiry and payment/refund behavior. Do not infer that every unsold portion can safely be resold.
+5. Evaluate surplus offers using merchant-recorded preparation and discard logs. Record offer quantity, purchases, expiries, rejected orders and actual discarded portions separately. Do not infer that every unsold portion can safely be resold or that every discounted sale prevented waste.
 
 The dashboard refreshes every 20 seconds while visible. This refreshes observed records; it does not retrain a model every 20 seconds.

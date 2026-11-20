@@ -16,6 +16,100 @@ from main import create_order, OrderCreate, shop_is_public, require_shop_access
 
 
 class CheckoutTests(unittest.IsolatedAsyncioTestCase):
+    async def test_surplus_offer_cannot_sell_more_than_remaining_portions(self):
+        merchant_id, slot_id, item_id, offer_id = uuid4(), uuid4(), uuid4(), uuid4()
+        request = OrderCreate(merchant_id=merchant_id, pickup_slot_id=slot_id,
+                              items=[{'menu_item_id': item_id, 'surplus_offer_id': offer_id, 'quantity': 1},
+                                     {'menu_item_id': item_id, 'surplus_offer_id': offer_id, 'quantity': 1}])
+        merchant = SimpleNamespace(id=merchant_id, is_active=True, is_preview=False, is_deleted=False)
+        slot = SimpleNamespace(id=slot_id, merchant_id=merchant_id,
+                               time_slot=datetime.now(timezone.utc) + timedelta(hours=2),
+                               current_bookings=0, max_capacity=10)
+        item = SimpleNamespace(id=item_id, merchant_id=merchant_id, name="Satay",
+                               is_available=True, approval_status="approved", price=Decimal("5.00"))
+        offer = SimpleNamespace(id=offer_id, merchant_id=merchant_id, menu_item_id=item_id,
+                                pickup_slot_id=slot_id, is_active=True, total_portions=1,
+                                sale_price=Decimal("3.00"), confirmed_safe_at=datetime.now(timezone.utc),
+                                expires_at=datetime.now(timezone.utc) + timedelta(hours=1))
+        def result(first=None, all_rows=None):
+            value = MagicMock()
+            value.scalars.return_value.first.return_value = first
+            value.scalars.return_value.all.return_value = all_rows or []
+            return value
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=[result(first=merchant), result(first=slot),
+                                            result(all_rows=[offer]), []])
+        db.get = AsyncMock(return_value=item)
+        with patch('main.expire_stale_drafts', AsyncMock()):
+            with self.assertRaises(HTTPException) as error:
+                await create_order(request, db, SimpleNamespace(id=uuid4()))
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertIn("Only 1 surplus portion", error.exception.detail)
+        db.add.assert_not_called()
+
+    async def test_surplus_offer_must_match_pickup_slot(self):
+        merchant_id, slot_id, item_id, offer_id = uuid4(), uuid4(), uuid4(), uuid4()
+        request = OrderCreate(merchant_id=merchant_id, pickup_slot_id=slot_id,
+                              items=[{'menu_item_id': item_id, 'surplus_offer_id': offer_id, 'quantity': 1}])
+        merchant = SimpleNamespace(id=merchant_id, is_active=True, is_preview=False, is_deleted=False)
+        slot = SimpleNamespace(id=slot_id, merchant_id=merchant_id,
+                               time_slot=datetime.now(timezone.utc) + timedelta(hours=2),
+                               current_bookings=0, max_capacity=10)
+        item = SimpleNamespace(id=item_id, merchant_id=merchant_id, name="Satay",
+                               is_available=True, approval_status="approved", price=Decimal("5.00"))
+        offer = SimpleNamespace(id=offer_id, merchant_id=merchant_id, menu_item_id=item_id,
+                                pickup_slot_id=uuid4(), is_active=True, total_portions=1,
+                                sale_price=Decimal("3.00"), confirmed_safe_at=datetime.now(timezone.utc),
+                                expires_at=datetime.now(timezone.utc) + timedelta(hours=1))
+        def result(first=None, all_rows=None):
+            value = MagicMock()
+            value.scalars.return_value.first.return_value = first
+            value.scalars.return_value.all.return_value = all_rows or []
+            return value
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=[result(first=merchant), result(first=slot),
+                                            result(all_rows=[offer])])
+        db.get = AsyncMock(return_value=item)
+        with patch('main.expire_stale_drafts', AsyncMock()):
+            with self.assertRaises(HTTPException) as error:
+                await create_order(request, db, SimpleNamespace(id=uuid4()))
+        self.assertEqual(error.exception.status_code, 409)
+        db.add.assert_not_called()
+
+    async def test_checkout_uses_server_surplus_price(self):
+        merchant_id, slot_id, item_id, offer_id = uuid4(), uuid4(), uuid4(), uuid4()
+        request = OrderCreate(merchant_id=merchant_id, pickup_slot_id=slot_id,
+                              items=[{'menu_item_id': item_id, 'surplus_offer_id': offer_id, 'quantity': 2}])
+        merchant = SimpleNamespace(id=merchant_id, is_active=True, is_preview=False, is_deleted=False)
+        slot = SimpleNamespace(id=slot_id, merchant_id=merchant_id,
+                               time_slot=datetime.now(timezone.utc) + timedelta(hours=2),
+                               current_bookings=0, max_capacity=10)
+        item = SimpleNamespace(id=item_id, merchant_id=merchant_id, name="Satay",
+                               is_available=True, approval_status="approved", price=Decimal("5.00"))
+        offer = SimpleNamespace(id=offer_id, merchant_id=merchant_id, menu_item_id=item_id,
+                                pickup_slot_id=slot_id, is_active=True, total_portions=3,
+                                sale_price=Decimal("3.00"), confirmed_safe_at=datetime.now(timezone.utc),
+                                expires_at=datetime.now(timezone.utc) + timedelta(hours=1))
+        def result(first=None, all_rows=None):
+            value = MagicMock()
+            value.first.return_value = first
+            value.scalars.return_value.first.return_value = first
+            value.scalars.return_value.all.return_value = all_rows or []
+            return value
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=[result(first=merchant), result(first=slot),
+                                            result(all_rows=[offer]), [], result(all_rows=[]), result(first=None)])
+        db.get = AsyncMock(return_value=item)
+        db.flush = AsyncMock()
+        db.commit = AsyncMock()
+        db.refresh = AsyncMock()
+        with patch('main.expire_stale_drafts', AsyncMock()):
+            order = await create_order(request, db, SimpleNamespace(id=uuid4()))
+        self.assertEqual(order.total_price, Decimal("6.00"))
+        line = db.add.call_args_list[1].args[0]
+        self.assertEqual(line.price_at_order, Decimal("3.00"))
+        self.assertEqual(line.surplus_offer_id, offer_id)
+
     async def test_daily_limit_counts_duplicate_cart_lines_before_payment(self):
         merchant_id, slot_id, item_id = uuid4(), uuid4(), uuid4()
         request = OrderCreate(merchant_id=merchant_id, pickup_slot_id=slot_id,
