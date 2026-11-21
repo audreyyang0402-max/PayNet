@@ -23,7 +23,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import and_, case, func, or_, update, text
+from sqlalchemy import and_, case, delete, func, or_, update, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -583,6 +583,7 @@ class SurplusOfferCreate(BaseModel):
     pickup_slot_id: UUID
     sale_price: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
     total_portions: int = Field(ge=1, le=1000)
+    max_orders: int = Field(default=100, ge=1, le=1000)
     expires_at: datetime
     confirm_safe_to_sell: bool
 
@@ -1650,6 +1651,30 @@ async def sync_automatic_pickup_slots(db: AsyncSession, merchant: Merchant, now:
     merchant.pickup_schedule_synced_on = now.astimezone(PICKUP_MYT).date()
 
 
+async def prune_old_automatic_pickup_slots(db: AsyncSession, merchant_id: UUID, now: datetime) -> int:
+    """Remove a bounded batch of old, unused generated rows without touching order history."""
+    cutoff_day = now.astimezone(PICKUP_MYT).date() - timedelta(days=181)
+    cutoff = datetime.combine(cutoff_day, datetime.min.time(), PICKUP_MYT).astimezone(timezone.utc)
+    no_orders = ~select(Order.id).where(Order.pickup_slot_id == PickupSlot.id).exists()
+    no_offers = ~select(SurplusOffer.id).where(SurplusOffer.pickup_slot_id == PickupSlot.id).exists()
+    eligible = (
+        PickupSlot.merchant_id == merchant_id,
+        PickupSlot.is_automatic.is_(True),
+        PickupSlot.time_slot < cutoff,
+        PickupSlot.current_bookings == 0,
+        no_orders,
+        no_offers,
+    )
+    ids = (await db.execute(select(PickupSlot.id).where(*eligible)
+                            .order_by(PickupSlot.time_slot).limit(1000)
+                            .with_for_update(skip_locked=True))).scalars().all()
+    if not ids:
+        return 0
+    result = await db.execute(delete(PickupSlot).where(PickupSlot.id.in_(ids), *eligible)
+                              .execution_options(synchronize_session=False))
+    return result.rowcount
+
+
 @app.get("/merchants/me/pickup-schedule")
 async def get_pickup_schedule(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     merchant = await require_own_merchant(db, current_user)
@@ -1688,7 +1713,9 @@ async def put_pickup_schedule(payload: PickupSchedule, db: AsyncSession = Depend
     # Serialize with checkout and manual slot creation.
     merchant = (await db.execute(select(Merchant).where(Merchant.id == merchant.id).with_for_update())).scalars().one()
     merchant.pickup_schedule = payload.model_dump(mode="json")
-    await sync_automatic_pickup_slots(db, merchant, datetime.now(timezone.utc))
+    now = datetime.now(timezone.utc)
+    await sync_automatic_pickup_slots(db, merchant, now)
+    await prune_old_automatic_pickup_slots(db, merchant.id, now)
     await db.commit()
     return merchant.pickup_schedule
 
@@ -1782,7 +1809,9 @@ async def list_pickup_slots(merchant_id: UUID, from_date: date | None = None,
     if merchant.pickup_schedule and merchant.pickup_schedule_synced_on != today:
         merchant = (await db.execute(select(Merchant).where(Merchant.id == merchant_id).with_for_update())).scalars().one()
         if merchant.pickup_schedule_synced_on != today:
-            await sync_automatic_pickup_slots(db, merchant, datetime.now(timezone.utc))
+            now = datetime.now(timezone.utc)
+            await sync_automatic_pickup_slots(db, merchant, now)
+            await prune_old_automatic_pickup_slots(db, merchant.id, now)
             await db.commit()
     if from_date and from_date < today - timedelta(days=90):
         raise HTTPException(status_code=400, detail="Pickup slot history is available for the last 90 days.")
@@ -1946,11 +1975,28 @@ async def reserved_offer_quantities(db: AsyncSession, offer_ids: list[UUID]) -> 
     return {row[0]: int(row[1]) for row in result}
 
 
+async def reserved_offer_orders(db: AsyncSession, offer_ids: list[UUID]) -> dict[UUID, int]:
+    if not offer_ids:
+        return {}
+    result = await db.execute(
+        select(OrderItem.surplus_offer_id, func.count(func.distinct(Order.id)))
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(OrderItem.surplus_offer_id.in_(offer_ids),
+               Order.status.in_(STOCK_RESERVATION_STATUSES))
+        .group_by(OrderItem.surplus_offer_id)
+    )
+    return {row[0]: int(row[1]) for row in result}
+
+
 async def surplus_offer_payloads(db: AsyncSession, rows: list[tuple], now: datetime) -> list[dict]:
     reserved = await reserved_offer_quantities(db, [offer.id for offer, _, _, _ in rows])
+    capped_ids = [offer.id for offer, _, _, _ in rows if getattr(offer, "max_orders", None) is not None]
+    order_counts = await reserved_offer_orders(db, capped_ids)
     result = []
     for offer, item, slot, merchant in rows:
         remaining = max(0, offer.total_portions - reserved.get(offer.id, 0))
+        max_orders = getattr(offer, "max_orders", None)
+        remaining_orders = None if max_orders is None else max(0, max_orders - order_counts.get(offer.id, 0))
         stock = (await db.execute(select(DailyItemStock).where(
             DailyItemStock.merchant_id == offer.merchant_id,
             DailyItemStock.menu_item_id == offer.menu_item_id,
@@ -1958,7 +2004,13 @@ async def surplus_offer_payloads(db: AsyncSession, rows: list[tuple], now: datet
         if stock:
             by_item = await reserved_item_quantities(db, offer.merchant_id, offer.service_date, [offer.menu_item_id])
             remaining = min(remaining, max(0, stock.total_portions - by_item.get(offer.menu_item_id, 0)))
-        live = bool(offer.is_active and offer.expires_at > now and slot and slot.time_slot > now
+        schedule = PickupSchedule.model_validate(merchant.pickup_schedule) if getattr(merchant, "pickup_schedule", None) else None
+        slot_open = bool(slot and getattr(slot, "is_bookable", True)
+                         and slot.current_bookings < slot.max_capacity
+                         and not (schedule and is_closed(schedule, slot.time_slot))
+                         and (not getattr(slot, "is_automatic", False) or
+                              (schedule and slot.time_slot.astimezone(timezone.utc) in candidate_times(schedule, now))))
+        live = bool(offer.is_active and offer.expires_at > now and slot_open and slot.time_slot > now
                     and shop_is_public(merchant) and item.is_available and item.approval_status == "approved")
         result.append({"id": str(offer.id), "merchant_id": str(offer.merchant_id),
                        "merchant_name": merchant.name, "merchant_location": merchant.location,
@@ -1966,10 +2018,12 @@ async def surplus_offer_payloads(db: AsyncSession, rows: list[tuple], now: datet
                        "description": item.description, "image_url": public_menu_item(item)["image_url"],
                        "regular_price": float(item.price), "sale_price": float(offer.sale_price),
                        "total_portions": offer.total_portions, "remaining_portions": remaining,
+                       "max_orders": max_orders, "remaining_orders": remaining_orders,
                        "pickup_slot_id": str(slot.id) if slot else None,
                        "pickup_time": slot.time_slot.isoformat() if slot else None,
                        "expires_at": offer.expires_at.isoformat(), "service_date": offer.service_date.isoformat(),
-                       "is_active": offer.is_active, "available": live and remaining > 0})
+                       "is_active": offer.is_active,
+                       "available": live and remaining > 0 and (remaining_orders is None or remaining_orders > 0)})
     return result
 
 
@@ -2065,6 +2119,12 @@ async def create_surplus_offer(payload: SurplusOfferCreate, db: AsyncSession = D
         raise HTTPException(404, "Available menu item not found for your stall.")
     if not slot or slot.merchant_id != merchant.id or slot.time_slot <= now:
         raise HTTPException(422, "Choose a future pickup slot for your stall.")
+    schedule = PickupSchedule.model_validate(merchant.pickup_schedule) if merchant.pickup_schedule else None
+    if (not slot.is_bookable or (schedule and is_closed(schedule, slot.time_slot)) or
+            (slot.is_automatic and (not schedule or slot.time_slot.astimezone(timezone.utc) not in candidate_times(schedule, now)))):
+        raise HTTPException(422, "This pickup time is closed. Choose an open time for the deal.")
+    if slot.current_bookings >= slot.max_capacity:
+        raise HTTPException(422, "This pickup time is full. Choose another time for the deal.")
     service_date = slot.time_slot.astimezone(MALAYSIA_TZ).date()
     if service_date != now.astimezone(MALAYSIA_TZ).date():
         raise HTTPException(422, "Surplus meals can only be offered for pickup today.")
@@ -2086,7 +2146,7 @@ async def create_surplus_offer(payload: SurplusOfferCreate, db: AsyncSession = D
             raise HTTPException(409, "The offer exceeds the portions remaining in today's daily limit.")
     offer = SurplusOffer(merchant_id=merchant.id, menu_item_id=item.id, pickup_slot_id=slot.id,
                          service_date=service_date, sale_price=payload.sale_price,
-                         total_portions=payload.total_portions, expires_at=expiry,
+                         total_portions=payload.total_portions, max_orders=payload.max_orders, expires_at=expiry,
                          confirmed_safe_at=now)
     db.add(offer)
     try:
@@ -2215,7 +2275,13 @@ async def create_order(
 
     if requested_by_offer:
         reserved_offers = await reserved_offer_quantities(db, list(requested_by_offer))
+        capped_offer_ids = [offer_id for offer_id in requested_by_offer
+                            if getattr(offers[offer_id], "max_orders", None) is not None]
+        offer_orders = await reserved_offer_orders(db, capped_offer_ids)
         for offer_id, requested in requested_by_offer.items():
+            max_orders = getattr(offers[offer_id], "max_orders", None)
+            if max_orders is not None and offer_orders.get(offer_id, 0) >= max_orders:
+                raise HTTPException(409, "This deal has reached its order limit. Choose the regular menu item or another deal.")
             remaining = offers[offer_id].total_portions - reserved_offers.get(offer_id, 0)
             if requested > remaining:
                 raise HTTPException(409, f"Only {max(0, remaining)} surplus portions remain for this offer. Reduce the quantity and try again.")

@@ -5,7 +5,7 @@ import { BACKEND_URL } from "@/lib/backend-url";
 import { getErrorMessage } from "@/lib/errors";
 import MerchantOrdersPanel from "@/components/MerchantOrdersPanel";
 import MerchantPaymentSetup from "@/components/MerchantPaymentSetup";
-import type { MerchantProfile, Order, PickupSlot } from "@/lib/merchant-dashboard-types";
+import type { MerchantProfile, Order } from "@/lib/merchant-dashboard-types";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
@@ -23,7 +23,7 @@ const MerchantMenuManager = dynamic(
 const SurplusOfferManager = dynamic(() => import("@/components/SurplusOfferManager"));
 const MerchantPickupSlots = dynamic(() => import("@/components/MerchantPickupSlots"));
 
-type Tab = "analytics" | "planning" | "profile" | "orders" | "refunds" | "menu" | "surplus" | "slots" | "payment";
+type Tab = "analytics" | "planning" | "profile" | "orders" | "refunds" | "menu" | "slots";
 
 const TAB_LABELS: Record<Tab, string> = {
   analytics: "Overview",
@@ -32,9 +32,7 @@ const TAB_LABELS: Record<Tab, string> = {
   orders: "Manage Orders",
   refunds: "Refunds",
   menu: "Menu",
-  surplus: "Surplus Meals",
-  slots: "Pickup Slots",
-  payment: "Payment Setup",
+  slots: "Pickup Times",
 };
 
 export default function MerchantDashboard() {
@@ -84,10 +82,6 @@ export default function MerchantDashboard() {
       setSoundError("Could not enable sound. Tap again and check your device volume.");
     }
   };
-
-  // Slot summary for tab label badge — loaded at startup AND updated live
-  const [slotBookings, setSlotBookings] = useState(0);
-  const [slotCapacity, setSlotCapacity] = useState(0);
 
   const playNotificationSound = () => {
     try {
@@ -142,6 +136,7 @@ export default function MerchantDashboard() {
   const [error, setError] = useState<string | null>(null);
 
   const [tab, setTab] = useState<Tab>("analytics");
+  const [showDeals, setShowDeals] = useState(false);
   const [editStoreName, setEditStoreName] = useState("");
   const [editLocation, setEditLocation] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -164,11 +159,9 @@ export default function MerchantDashboard() {
         if (!profileRes.ok) throw new Error("Could not load merchant profile.");
         const profileData = await profileRes.json();
 
-        // Fetch user, orders AND slots together so the tab badge shows immediately
-        const [userRes, ordersRes, slotsRes] = await Promise.all([
+        const [userRes, ordersRes] = await Promise.all([
           fetch(`${BACKEND_URL}/auth/me`, { headers: { Authorization: `Bearer ${token}` } }),
           fetch(`${BACKEND_URL}/merchants/${profileData.id}/orders`, { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(`${BACKEND_URL}/merchants/${profileData.id}/pickup-slots`, { headers: { Authorization: `Bearer ${token}` } }),
         ]);
 
         setMerchant({ ...profileData, is_temporary: profileData.location?.toLowerCase().includes("boulevard") });
@@ -185,13 +178,6 @@ export default function MerchantDashboard() {
           const ordersData = await ordersRes.json();
           setOrders(ordersData);
           seenOrders.current = new Set(ordersData.map((o: Order) => o.id));
-        }
-        if (slotsRes.ok) {
-          const slotsData: PickupSlot[] = await slotsRes.json();
-          const totalBookings = slotsData.reduce((s, sl) => s + sl.current_bookings, 0);
-          const totalCapacity = slotsData.reduce((s, sl) => s + sl.max_capacity, 0);
-          setSlotBookings(totalBookings);
-          setSlotCapacity(totalCapacity);
         }
       } catch (err: unknown) {
         setError(getErrorMessage(err, "Could not load the merchant dashboard."));
@@ -340,18 +326,14 @@ export default function MerchantDashboard() {
             </p>
           </div>
           <nav aria-label="Merchant portal" className="grid grid-cols-2 gap-2 border-t border-stone-100 pt-4 text-center sm:flex sm:flex-wrap sm:justify-center">
-            {(["analytics", "planning", "profile", "orders", "refunds", "menu", "surplus", "slots", "payment"] as Tab[]).map(t => (
+            {(["analytics", "orders", "menu", "slots", "refunds", "planning", "profile"] as Tab[]).map(t => (
               <button
                 key={t}
                 aria-pressed={tab === t}
                 onClick={() => setTab(t)}
                 className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors ${tab === t ? "bg-orange-700 text-white" : "bg-orange-50 text-orange-900 hover:bg-orange-100"}`}
               >
-                {t === "orders"
-                  ? `${TAB_LABELS[t]} (${activeOrderCount})`
-                  : t === "slots" && slotCapacity > 0
-                  ? `${TAB_LABELS[t]} (${slotBookings}/${slotCapacity})`
-                  : TAB_LABELS[t]}
+                {t === "orders" ? `${TAB_LABELS[t]} (${activeOrderCount})` : TAB_LABELS[t]}
               </button>
             ))}
           </nav>
@@ -362,7 +344,7 @@ export default function MerchantDashboard() {
 
         </div>
 
-        {tab === "profile" && (
+        {tab === "profile" && <div className="space-y-4">
           <form onSubmit={handleUpdateMerchantProfile} className="space-y-4 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm sm:p-6">
             <h2 className="text-lg font-bold text-stone-900">Store profile</h2>
             <p className="text-sm text-stone-500">Your registered stall name, campus location and email are fixed. You can edit your bio, operating hours and contact phone below.</p>
@@ -426,28 +408,26 @@ export default function MerchantDashboard() {
               </div>
             )}
           </form>
-        )}
+          <details className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
+            <summary className="cursor-pointer text-sm font-semibold text-stone-800">Payment QR · {merchant?.duitnow_qr_url ? "Ready" : "Setup needed"}</summary>
+            <div className="mt-4"><MerchantPaymentSetup
+              qrUrl={merchant?.duitnow_qr_url || ""}
+              onQrUploaded={(url) => setMerchant((current) => current ? { ...current, duitnow_qr_url: url } : current)}
+            /></div>
+          </details>
+        </div>}
         {tab === "analytics" && <AnalyticsDashboard audience="merchant" embedded />}
         {tab === "planning" && <FoodPlanning />}
         {tab === "refunds" && <RefundManagement audience="merchant" embedded />}
-        {tab === "menu" && <MerchantMenuManager embedded />}
-        {tab === "surplus" && merchant?.id && <SurplusOfferManager merchantId={merchant.id} />}
-        {tab === "slots" && merchant?.id && (
-          <MerchantPickupSlots
-            merchantId={merchant.id}
-            onSlotsChange={(booked, capacity) => {
-              setSlotBookings(booked);
-              setSlotCapacity(capacity);
-            }}
-          />
-        )}
-
-        {tab === "payment" && (
-          <MerchantPaymentSetup
-            qrUrl={merchant?.duitnow_qr_url || ""}
-            onQrUploaded={(url) => setMerchant((current) => current ? { ...current, duitnow_qr_url: url } : current)}
-          />
-        )}
+        {tab === "menu" && <div className="space-y-5">
+          <MerchantMenuManager embedded />
+          {merchant?.id && <details onToggle={event => setShowDeals(event.currentTarget.open)} className="rounded-2xl border border-orange-200 bg-white p-5 shadow-sm">
+            <summary className="cursor-pointer text-sm font-bold text-orange-900">Limited-time deals (optional)</summary>
+            <p className="mt-2 text-sm text-stone-600">Offer a lower price for a set number of portions or orders. Your regular menu stays available.</p>
+            {showDeals && <div className="mt-4"><SurplusOfferManager merchantId={merchant.id} /></div>}
+          </details>}
+        </div>}
+        {tab === "slots" && merchant?.id && <MerchantPickupSlots merchantId={merchant.id} />}
 
         {tab === "orders" && (
           <MerchantOrdersPanel

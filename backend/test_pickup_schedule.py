@@ -16,7 +16,7 @@ import pytest
 from pydantic import ValidationError
 
 from pickup_schedule import PickupSchedule, candidate_times
-from main import sync_automatic_pickup_slots
+from main import prune_old_automatic_pickup_slots, sync_automatic_pickup_slots
 
 
 def schedule(**changes):
@@ -56,6 +56,39 @@ def test_schedule_validation_limits_excessive_generation():
 
 
 class MaterializationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cleanup_only_targets_old_unreferenced_automatic_slots(self):
+        slot_id = uuid4()
+        candidates = MagicMock()
+        candidates.scalars.return_value.all.return_value = [slot_id]
+        deleted = SimpleNamespace(rowcount=1)
+        db = MagicMock(execute=AsyncMock(side_effect=[candidates, deleted]))
+
+        count = await prune_old_automatic_pickup_slots(
+            db, uuid4(), datetime(2026, 11, 22, 17, tzinfo=timezone.utc)
+        )
+
+        self.assertEqual(count, 1)
+        selection = str(db.execute.await_args_list[0].args[0])
+        removal = str(db.execute.await_args_list[1].args[0])
+        for sql in (selection, removal):
+            self.assertIn("pickup_slots.is_automatic", sql)
+            self.assertIn("pickup_slots.current_bookings", sql)
+            self.assertIn("orders.pickup_slot_id", sql)
+            self.assertIn("surplus_offers.pickup_slot_id", sql)
+        self.assertIn("pickup_slots.id IN", removal)
+
+    async def test_cleanup_skips_delete_when_nothing_is_eligible(self):
+        candidates = MagicMock()
+        candidates.scalars.return_value.all.return_value = []
+        db = MagicMock(execute=AsyncMock(return_value=candidates))
+
+        count = await prune_old_automatic_pickup_slots(
+            db, uuid4(), datetime(2026, 11, 22, 17, tzinfo=timezone.utc)
+        )
+
+        self.assertEqual(count, 0)
+        db.execute.assert_awaited_once()
+
     async def test_existing_bookings_survive_capacity_change_and_missing_rows_are_added(self):
         now = datetime(2026, 11, 22, 17, tzinfo=timezone.utc)
         expected = candidate_times(schedule(), now)

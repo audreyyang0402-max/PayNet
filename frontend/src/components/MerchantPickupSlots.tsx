@@ -17,28 +17,18 @@ interface PickupSlot {
 
 export default function MerchantPickupSlots({
   merchantId,
-  onSlotsChange,
 }: {
   merchantId: string;
-  onSlotsChange?: (totalBookings: number, totalCapacity: number) => void;
 }) {
   const [slots, setSlots] = useState<PickupSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [newSlot, setNewSlot] = useState({ time_slot: "", max_capacity: "10" });
-
-  const notifyParent = (updated: PickupSlot[]) => {
-    if (onSlotsChange) {
-      const upcoming = updated.filter(sl => sl.is_bookable !== false && new Date(sl.time_slot).getTime() > Date.now());
-      onSlotsChange(upcoming.reduce((s, sl) => s + sl.current_bookings, 0), upcoming.reduce((s, sl) => s + sl.max_capacity, 0));
-    }
-  };
 
   const refreshSlots = async () => {
     const res = await fetch(`${BACKEND_URL}/merchants/${merchantId}/pickup-slots`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }, cache: "no-store" });
     if (!res.ok) throw new Error("Could not load pickup slots.");
     const data: PickupSlot[] = await res.json();
     setSlots(data.filter(sl => new Date(sl.time_slot).getTime() > Date.now()));
-    notifyParent(data);
   };
 
   useEffect(() => {
@@ -49,11 +39,6 @@ export default function MerchantPickupSlots({
         if (!active) return;
         const upcomingSlots = data.filter(sl => new Date(sl.time_slot).getTime() > Date.now());
         setSlots(upcomingSlots);
-        if (onSlotsChange) {
-          const bookable = upcomingSlots.filter(sl => sl.is_bookable !== false);
-          onSlotsChange(bookable.reduce((sum, sl) => sum + sl.current_bookings, 0),
-                        bookable.reduce((sum, sl) => sum + sl.max_capacity, 0));
-        }
       })
       .catch(() => {})
       .finally(() => { if (active) setLoading(false); });
@@ -99,7 +84,6 @@ export default function MerchantPickupSlots({
       }
       const updated = slots.filter(s => s.id !== slotId);
       setSlots(updated);
-      notifyParent(updated);
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "Could not delete pickup slot.");
     }
@@ -111,107 +95,42 @@ export default function MerchantPickupSlots({
   const bookableSlots = upcoming.filter(s => s.is_bookable !== false);
   const totalBookings = bookableSlots.reduce((s, sl) => s + sl.current_bookings, 0);
   const totalCapacity = bookableSlots.reduce((s, sl) => s + sl.max_capacity, 0);
+  const byDay: Record<string, PickupSlot[]> = {};
+  for (const slot of upcoming) {
+    const day = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Kuala_Lumpur", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(slot.time_slot));
+    (byDay[day] ||= []).push(slot);
+  }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className="space-y-4">
       <WeeklyPickupSchedule onSaved={() => { void refreshSlots(); }} />
-      <CopyPickupWeek key={merchantId} merchantId={merchantId} onUpdated={updated => { setSlots(updated.filter(sl => new Date(sl.time_slot).getTime() > Date.now())); notifyParent(updated); }} />
-
-      {/* LEFT — Create new slot */}
-      <div className="bg-white p-5 rounded-2xl shadow-sm border border-orange-100 space-y-4">
-        <div>
-          <span className="text-[10px] font-bold uppercase tracking-wider text-orange-600">Capacity & Timing</span>
-          <h2 className="text-base font-black text-slate-900">Create Pickup Slot</h2>
-          <p className="text-xs text-slate-500">Set time intervals and order limits to manage stall congestion.</p>
+      <section className="rounded-2xl border border-orange-100 bg-white p-5 shadow-sm">
+        <h2 className="text-base font-bold text-slate-900">Upcoming pickup times</h2>
+        <p className="mt-1 text-sm text-slate-600">{loading ? "Loading times…" : `${availableSlots.length} open · ${fullSlots.length} full or closed · ${totalBookings}/${totalCapacity} places booked`}</p>
+        {!loading && upcoming.length === 0 && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">No pickup times yet. Set your weekly schedule above once to start taking bookings.</p>}
+        <div className="mt-4 space-y-2">
+          {Object.keys(byDay).sort().map(day => {
+            const daySlots = byDay[day];
+            const open = daySlots.filter(slot => slot.is_bookable !== false && slot.current_bookings < slot.max_capacity).length;
+            return <details key={day} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <summary className="cursor-pointer text-sm font-semibold text-slate-800">{new Date(`${day}T12:00:00+08:00`).toLocaleDateString("en-MY", { timeZone: "Asia/Kuala_Lumpur", weekday: "long", day: "numeric", month: "short" })} · {open} open times</summary>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">{daySlots.map(slot => <SlotRow key={slot.id} slot={slot} onDelete={handleDelete} isFull={slot.is_bookable === false || slot.current_bookings >= slot.max_capacity} />)}</div>
+            </details>;
+          })}
         </div>
-        <form onSubmit={handleCreate} className="space-y-3">
-          <div>
-            <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Time Slot Date & Time</label>
-            <input
-              type="datetime-local"
-              required
-              value={newSlot.time_slot}
-              onChange={e => setNewSlot({ ...newSlot, time_slot: e.target.value })}
-              className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:ring-2 focus:ring-orange-500 text-xs text-slate-900 outline-none bg-white"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Max Capacity (Orders)</label>
-            <input
-              type="number"
-              required
-              value={newSlot.max_capacity}
-              onChange={e => setNewSlot({ ...newSlot, max_capacity: e.target.value })}
-              className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:ring-2 focus:ring-orange-500 text-xs text-slate-900 outline-none"
-              placeholder="10"
-            />
-          </div>
-          <button
-            type="submit"
-            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 rounded-xl transition text-xs shadow cursor-pointer"
-          >
-            + Generate Pickup Slot
-          </button>
-        </form>
-
-        {/* Summary pill */}
-        {upcoming.length > 0 && (
-          <div className={`rounded-xl px-4 py-2.5 text-xs font-semibold text-center border ${
-            totalBookings >= totalCapacity
-              ? "bg-red-50 border-red-200 text-red-700"
-              : totalBookings / totalCapacity >= 0.7
-              ? "bg-yellow-50 border-yellow-200 text-yellow-700"
-              : "bg-emerald-50 border-emerald-200 text-emerald-700"
-          }`}>
-            {totalCapacity === 0
-              ? "No open pickup times right now. Check your weekly hours or closed dates."
-              : totalBookings >= totalCapacity
-              ? `⚠️ All slots full (${totalBookings}/${totalCapacity}) — Add more slots!`
-              : `📊 Total bookings: ${totalBookings} / ${totalCapacity}`}
-          </div>
-        )}
-      </div>
-
-      {/* RIGHT — Active slots list */}
-      <div className="bg-white p-5 rounded-2xl shadow-sm border border-orange-100 space-y-3">
-        <div>
-          <h2 className="text-base font-black text-slate-900">
-            Upcoming slots ({upcoming.length})
-          </h2>
-          <p className="text-xs text-slate-500">Full slots are hidden from customers but shown here so you can track them.</p>
+      </section>
+      <details className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <summary className="cursor-pointer text-sm font-bold text-slate-800">Need a one-off pickup time? Open manual tools</summary>
+        <p className="mt-2 text-sm text-slate-600">Use these only for a special event or a change outside your normal weekly hours.</p>
+        <div className="mt-4 space-y-4">
+          <form onSubmit={handleCreate} className="grid gap-3 rounded-xl border border-slate-200 p-4 sm:grid-cols-[1fr_9rem_auto] sm:items-end">
+            <label className="text-xs font-semibold text-slate-700">Pickup date and time<input type="datetime-local" required value={newSlot.time_slot} onChange={e => setNewSlot({ ...newSlot, time_slot: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-sm" /></label>
+            <label className="text-xs font-semibold text-slate-700">Order capacity<input type="number" required min={1} max={500} value={newSlot.max_capacity} onChange={e => setNewSlot({ ...newSlot, max_capacity: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-sm" /></label>
+            <button type="submit" className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white">Add one-off time</button>
+          </form>
+          <CopyPickupWeek key={merchantId} merchantId={merchantId} onUpdated={updated => { setSlots(updated.filter(sl => new Date(sl.time_slot).getTime() > Date.now())); }} />
         </div>
-
-        {loading && <p className="text-xs text-slate-400">Loading slots…</p>}
-
-        {!loading && upcoming.length === 0 && (
-          <p className="text-xs text-slate-400 py-4 text-center border border-dashed border-slate-200 rounded-xl">
-            No pickup slots generated yet.
-          </p>
-        )}
-
-        {availableSlots.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">
-              Available ({availableSlots.length})
-            </p>
-            {availableSlots.map(slot => (
-              <SlotRow key={slot.id} slot={slot} onDelete={handleDelete} />
-            ))}
-          </div>
-        )}
-
-        {fullSlots.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-xs font-bold uppercase tracking-wide text-red-600">
-              Full or closed — Hidden From Customers ({fullSlots.length})
-            </p>
-            {fullSlots.map(slot => (
-              <SlotRow key={slot.id} slot={slot} onDelete={handleDelete} isFull />
-            ))}
-          </div>
-        )}
-      </div>
-
+      </details>
     </div>
   );
 }

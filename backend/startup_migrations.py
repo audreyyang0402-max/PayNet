@@ -60,6 +60,15 @@ STARTUP_MIGRATIONS = [
         )
     """,
     "ALTER TABLE surplus_offers ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE surplus_offers ADD COLUMN IF NOT EXISTS max_orders INTEGER",
+    """
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'surplus_offers_max_orders_check') THEN
+                ALTER TABLE surplus_offers ADD CONSTRAINT surplus_offers_max_orders_check
+                CHECK (max_orders IS NULL OR max_orders BETWEEN 1 AND 1000);
+            END IF;
+        END $$
+    """,
     "CREATE INDEX IF NOT EXISTS surplus_offers_merchant_expiry_idx ON surplus_offers (merchant_id, expires_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS surplus_offers_one_active_dish_day_idx ON surplus_offers (merchant_id, menu_item_id, service_date) WHERE is_active",
     "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS surplus_offer_id UUID REFERENCES surplus_offers(id)",

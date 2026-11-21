@@ -95,6 +95,7 @@ class SurplusOffer(Base):
     service_date = Column(Date, nullable=False)
     sale_price = Column(Numeric(10, 2), nullable=False)
     total_portions = Column(Integer, nullable=False)
+    max_orders = Column(Integer, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     confirmed_safe_at = Column(DateTime(timezone=True), nullable=False)

@@ -115,7 +115,7 @@ export default function MerchantOrdersPanel({
                       <li key={item.id} className="flex items-start justify-between gap-3 text-sm">
                         <div className="min-w-0">
                           <span className="font-medium text-gray-800">{item.name}</span>
-                          {item.surplus_offer_id && <span className="ml-2 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-800">Surplus offer</span>}
+                          {item.surplus_offer_id && <span className="ml-2 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-800">Deal</span>}
                           <span className="ml-1.5 text-gray-400">×{item.quantity}</span>
                           {item.special_instructions && (
                             <p className="mt-1 rounded-md bg-orange-50 px-2 py-1 text-xs font-medium text-orange-700">

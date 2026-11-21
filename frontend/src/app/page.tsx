@@ -50,6 +50,7 @@ interface SurplusOffer {
   regular_price: number;
   sale_price: number;
   remaining_portions: number;
+  remaining_orders?: number | null;
   pickup_slot_id: string;
   pickup_time: string;
   expires_at: string;
@@ -85,7 +86,7 @@ export default function Home() {
     async function loadSurplus() {
       try {
         const response = await fetch(`${BACKEND_URL}/surplus-offers`, { cache: "no-store" });
-        if (!response.ok) throw new Error("Surplus offers unavailable");
+        if (!response.ok) throw new Error("Deals unavailable");
         const rows: SurplusOffer[] = await response.json();
         if (!cancelled) setSurplusOffers(rows);
       } catch { if (!cancelled) setSurplusOffers([]); }
@@ -390,7 +391,7 @@ export default function Home() {
       return;
     }
     if (cartSurplusSlotId && selectedSlotId !== cartSurplusSlotId) {
-      alert("The surplus meal is available only for its listed pickup time.");
+      alert("This deal is available only for its listed pickup time.");
       return;
     }
     if (stockShortages.length > 0) {
@@ -688,11 +689,11 @@ export default function Home() {
           loading={menusLoading}
         />
 
-        {surplusOffers.length > 0 && <section aria-label="Surplus meals" className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-amber-50 p-4 sm:p-6 shadow-sm">
+        {surplusOffers.length > 0 && <section aria-label="Today's deals" className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-amber-50 p-4 sm:p-6 shadow-sm">
           <div className="mb-4">
-            <p className="text-xs font-bold uppercase tracking-widest text-violet-700">Good food, less waste</p>
-            <h2 className="text-xl font-black text-slate-900">Surplus Meals</h2>
-            <p className="text-sm text-slate-600">Limited portions at a lower price, for the listed pickup time only. Availability is confirmed at checkout.</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-violet-700">Limited-time prices</p>
+            <h2 className="text-xl font-black text-slate-900">Today&apos;s deals</h2>
+            <p className="text-sm text-slate-600">Selected menu items at a lower price for a specific pickup time. Availability is confirmed at checkout.</p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {surplusOffers.map(offer => <article key={offer.id} className="overflow-hidden rounded-xl border border-violet-100 bg-white shadow-sm">
@@ -701,8 +702,8 @@ export default function Home() {
                 <div><h3 className="font-bold text-slate-900">{offer.menu_item_name}</h3><p className="text-xs text-slate-600">{offer.merchant_name} · {offer.merchant_location}</p></div>
                 <p className="text-sm"><span className="font-bold text-violet-800">RM {Number(offer.sale_price).toFixed(2)}</span> <span className="text-slate-400 line-through">RM {Number(offer.regular_price).toFixed(2)}</span></p>
                 <p className="text-xs text-slate-600">Pickup {new Date(offer.pickup_time).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", dateStyle: "medium", timeStyle: "short" })}</p>
-                <p className="text-xs text-slate-600">Order by {new Date(offer.expires_at).toLocaleTimeString("en-MY", { timeZone: "Asia/Kuala_Lumpur", hour: "numeric", minute: "2-digit" })} · {offer.remaining_portions} left</p>
-                <button type="button" onClick={() => addSurplusToCart(offer)} className="w-full rounded-lg bg-violet-700 px-3 py-2 text-sm font-bold text-white hover:bg-violet-800">Add surplus meal</button>
+                <p className="text-xs text-slate-600">Order by {new Date(offer.expires_at).toLocaleTimeString("en-MY", { timeZone: "Asia/Kuala_Lumpur", hour: "numeric", minute: "2-digit" })} · {offer.remaining_portions} portions left{offer.remaining_orders != null ? ` · ${offer.remaining_orders} orders left` : ""}</p>
+                <button type="button" onClick={() => addSurplusToCart(offer)} className="w-full rounded-lg bg-violet-700 px-3 py-2 text-sm font-bold text-white hover:bg-violet-800">Add deal</button>
               </div>
             </article>)}
           </div>
