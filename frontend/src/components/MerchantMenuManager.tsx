@@ -1,20 +1,7 @@
-// src/app/vendor/menu/page.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// Vendor Menu & Pickup Slot Manager
-//
-// Features:
-//  • Complete Food Product Information (Name, Category, Description, Price,
-//    Spiciness Level, Size Variations, Add-ons, Dietary & Allergen info, Prep Time).
-//  • Food Photo Requirements (JPG/JPEG/PNG file upload, instant image preview,
-//    URL option, replace/remove photos).
-//  • Instant availability toggle (Available / Sold Out).
-//  • Pickup slot generator and management.
-//  • Mobile-friendly, compact responsive layout with warm brand colours.
-// ─────────────────────────────────────────────────────────────────────────────
-
 "use client";
 
 import { BACKEND_URL } from "@/lib/backend-url";
+import { getErrorMessage } from "@/lib/errors";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import BackLink from "@/components/BackLink";
@@ -29,8 +16,6 @@ import {
   parseMenuDescription,
   withMenuCustomizationPolicy,
 } from "@/lib/menu-customizations";
-
-// ─── Interfaces ──────────────────────────────────────────────────────────────
 
 interface MerchantProfile {
   id: string;
@@ -62,8 +47,6 @@ interface CustomizationDraft {
   ice: boolean;
   specialRequests: boolean;
 }
-
-// ─── Constants for Categories, Variations & Tags ─────────────────────────────
 
 const FOOD_CATEGORIES = [
   "Main Course",
@@ -100,7 +83,6 @@ const ALLERGEN_OPTIONS = [
 
 const PREP_TIMES = ["3-5 mins", "5-10 mins", "10-15 mins", "15-20 mins"];
 
-// ─── Main Component ──────────────────────────────────────────────────────────
 
 export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }) {
   const router = useRouter();
@@ -151,7 +133,6 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
     max_capacity: "10",
   });
 
-  // ─── Load Merchant Data on Mount ───────────────────────────────────────────
   useEffect(() => {
     async function loadMenuData() {
       try {
@@ -159,7 +140,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
         const role = localStorage.getItem("userRole");
 
         if (!token || role !== "merchant") {
-          router.push("/vendor/login" as any);
+          router.push("/vendor/login");
           return;
         }
 
@@ -185,8 +166,8 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
           const slotsData = await slotsRes.json();
           setSlots(slotsData);
         }
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err: unknown) {
+        setError(getErrorMessage(err, "Could not load menu data."));
       } finally {
         setLoading(false);
       }
@@ -201,7 +182,6 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
     };
   }, [imagePreview]);
 
-  // ─── Photo Upload & Preview Handler (JPG, JPEG, PNG) ──────────────────────
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -230,7 +210,6 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  // ─── Add Menu Item Handler ────────────────────────────────────────────────
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!merchant) return;
@@ -312,14 +291,13 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
       setSpiceOptions({ levels: [...CUSTOMER_SPICE_LEVELS], defaultLevel: "Normal spicy" });
       handleClearPhoto();
       alert("Food product added to your stall menu successfully!");
-    } catch (err: any) {
-      alert(err.message || "Failed to add food product.");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err, "Failed to add food product."));
     } finally {
       setSavingItem(false);
     }
   };
 
-  // ─── Create Pickup Slot ───────────────────────────────────────────────────
   const handleCreateSlot = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!merchant) return;
@@ -353,8 +331,8 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
       setSlots([...slots, createdSlot]);
       alert("Pickup slot created successfully!");
       setNewSlot({ time_slot: "", max_capacity: "10" });
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(getErrorMessage(err, "Failed to create pickup slot."));
     }
   };
 
@@ -373,8 +351,8 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
       }
 
       setSlots(slots.filter((s) => s.id !== slotId));
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(getErrorMessage(err, "Failed to delete pickup slot."));
     }
   };
 
@@ -456,8 +434,8 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
       } else {
         setMenuItems(menuItems.filter((i) => i.id !== itemId));
       }
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(getErrorMessage(err, "Failed to delete item."));
     }
   };
 
@@ -484,8 +462,8 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
 
       const updated = await res.json();
       setMenuItems(menuItems.map((i) => (i.id === item.id ? updated : i)));
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(getErrorMessage(err, "Failed to update item availability."));
     }
   };
 
@@ -493,7 +471,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
     localStorage.removeItem("token");
     localStorage.removeItem("userRole");
     localStorage.removeItem("userName");
-    router.push("/vendor/login" as any);
+    router.push("/vendor/login");
   };
 
   if (loading) {

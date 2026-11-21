@@ -11,12 +11,12 @@ import csv
 import hmac
 from decimal import Decimal
 from datetime import datetime, date, timedelta, timezone
-import httpx as httpx_client  # aliased since you might already have httpx elsewhere
+import httpx as httpx_client
 from fastapi import UploadFile, File, Form, HTTPException, Request, Header
 import shutil
 
 from fastapi import FastAPI, Depends, Query, status, BackgroundTasks
-from fastapi.staticfiles import StaticFiles  # <--- Added import for serving static upload files
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -26,12 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, case, func, or_, update, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload  # <--- Added import for eager loading relationships
-from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy.orm import selectinload
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from typing import List, Optional, Literal
 from uuid import UUID
 
-# --- NEW SUPABASE STORAGE IMPORTS ---
 from supabase import create_client, Client
 from PIL import Image, ImageOps
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -39,7 +38,6 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from database import engine, get_db
 from models import Base, User, Merchant, MenuItem, DailyFoodLog, DailyItemStock, SurplusOffer, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent
 
-# --- NEW AUTH IMPORTS ---
 from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN, validate_password, password_stamp
 from email_verification import check_code, normalize_email
 from email_service import send_order_ready_email
@@ -64,173 +62,7 @@ from auth_endpoints import (
 from contextlib import asynccontextmanager
 
 
-ORDER_STATUS_VALUES = (
-    "draft",
-    "pending_verification",
-    "pending",
-    "preparing",
-    "ready",
-    "completed",
-    "rejected",
-    "cancelled",
-    "cancelled_timeout",
-)
-_ORDER_STATUS_SQL = ", ".join(f"'{value}'" for value in ORDER_STATUS_VALUES)
-_ORDER_STATUS_MISSING_CHECKS = " OR ".join(
-    f"current_definition NOT LIKE '%''{value}''%'" for value in ORDER_STATUS_VALUES
-)
-ORDER_STATUS_CONSTRAINT_MIGRATION = f"""
-    DO $$
-    DECLARE
-        current_definition TEXT;
-    BEGIN
-        SELECT pg_get_constraintdef(oid)
-        INTO current_definition
-        FROM pg_constraint
-        WHERE conrelid = 'orders'::regclass
-          AND conname = 'orders_status_check';
-
-        IF current_definition IS NULL OR {_ORDER_STATUS_MISSING_CHECKS} THEN
-            ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;
-            ALTER TABLE orders
-                ADD CONSTRAINT orders_status_check
-                CHECK (status IN ({_ORDER_STATUS_SQL}));
-        END IF;
-    END;
-    $$
-"""
-
-
-STARTUP_MIGRATIONS = [
-    """
-        CREATE TABLE IF NOT EXISTS surplus_offers (
-            id UUID PRIMARY KEY,
-            merchant_id UUID NOT NULL REFERENCES merchants(id),
-            menu_item_id UUID NOT NULL REFERENCES menu_items(id),
-            pickup_slot_id UUID REFERENCES pickup_slots(id) ON DELETE SET NULL,
-            service_date DATE NOT NULL,
-            sale_price NUMERIC(10, 2) NOT NULL CHECK (sale_price > 0),
-            total_portions INTEGER NOT NULL CHECK (total_portions > 0),
-            expires_at TIMESTAMPTZ NOT NULL,
-            is_active BOOLEAN NOT NULL DEFAULT TRUE,
-            confirmed_safe_at TIMESTAMPTZ NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    """,
-    "ALTER TABLE surplus_offers ENABLE ROW LEVEL SECURITY",
-    "CREATE INDEX IF NOT EXISTS surplus_offers_merchant_expiry_idx ON surplus_offers (merchant_id, expires_at)",
-    "CREATE UNIQUE INDEX IF NOT EXISTS surplus_offers_one_active_dish_day_idx ON surplus_offers (merchant_id, menu_item_id, service_date) WHERE is_active",
-    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS surplus_offer_id UUID REFERENCES surplus_offers(id)",
-    "CREATE INDEX IF NOT EXISTS order_items_surplus_offer_idx ON order_items (surplus_offer_id)",
-    """
-        CREATE TABLE IF NOT EXISTS daily_item_stock (
-            id UUID PRIMARY KEY,
-            merchant_id UUID NOT NULL REFERENCES merchants(id),
-            menu_item_id UUID NOT NULL REFERENCES menu_items(id),
-            service_date DATE NOT NULL,
-            total_portions INTEGER NOT NULL CHECK (total_portions >= 0),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            CONSTRAINT daily_item_stock_merchant_item_date_unique
-                UNIQUE (merchant_id, menu_item_id, service_date)
-        )
-    """,
-    "ALTER TABLE daily_item_stock ENABLE ROW LEVEL SECURITY",
-    "CREATE INDEX IF NOT EXISTS daily_item_stock_merchant_date_idx ON daily_item_stock (merchant_id, service_date)",
-    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS pickup_service_date DATE",
-    """
-        UPDATE orders AS o SET pickup_service_date =
-            (timezone('Asia/Kuala_Lumpur', p.time_slot))::date
-        FROM pickup_slots AS p
-        WHERE o.pickup_slot_id = p.id AND o.pickup_service_date IS NULL
-    """,
-    "CREATE INDEX IF NOT EXISTS orders_merchant_service_date_idx ON orders (merchant_id, pickup_service_date, status)",
-    """
-        CREATE TABLE IF NOT EXISTS daily_food_logs (
-            id UUID PRIMARY KEY,
-            merchant_id UUID NOT NULL REFERENCES merchants(id),
-            menu_item_id UUID NOT NULL REFERENCES menu_items(id),
-            service_date DATE NOT NULL,
-            prepared_portions INTEGER NOT NULL DEFAULT 0 CHECK (prepared_portions >= 0),
-            unsold_portions INTEGER NOT NULL DEFAULT 0 CHECK (unsold_portions >= 0),
-            discarded_portions INTEGER NOT NULL DEFAULT 0 CHECK (discarded_portions >= 0),
-            sold_out BOOLEAN NOT NULL DEFAULT FALSE,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            CONSTRAINT daily_food_logs_portions_check
-                CHECK (unsold_portions + discarded_portions <= prepared_portions),
-            CONSTRAINT daily_food_logs_merchant_item_date_unique
-                UNIQUE (merchant_id, menu_item_id, service_date)
-        )
-    """,
-    "ALTER TABLE daily_food_logs ENABLE ROW LEVEL SECURITY",
-    "ALTER TABLE daily_food_logs ADD COLUMN IF NOT EXISTS was_offered BOOLEAN",
-    "CREATE INDEX IF NOT EXISTS daily_food_logs_merchant_date_idx ON daily_food_logs (merchant_id, service_date DESC)",
-    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_key VARCHAR",
-    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_fingerprint VARCHAR",
-    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR",
-    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_note TEXT",
-    ORDER_STATUS_CONSTRAINT_MIGRATION,
-    "CREATE UNIQUE INDEX IF NOT EXISTS orders_checkout_key_unique ON orders (checkout_key)",
-    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS special_instructions TEXT",
-    "ALTER TABLE merchants ADD COLUMN IF NOT EXISTS is_preview BOOLEAN NOT NULL DEFAULT TRUE",
-    "ALTER TABLE merchants ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0",
-    "ALTER TABLE merchants ALTER COLUMN is_preview SET DEFAULT TRUE",
-    "ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS approval_status VARCHAR NOT NULL DEFAULT 'approved'",
-    """
-        CREATE TABLE IF NOT EXISTS refund_requests (
-            id UUID PRIMARY KEY,
-            order_id UUID NOT NULL UNIQUE REFERENCES orders(id),
-            customer_id UUID NOT NULL REFERENCES users(id),
-            merchant_id UUID NOT NULL REFERENCES merchants(id),
-            amount NUMERIC(10, 2) NOT NULL,
-            status VARCHAR NOT NULL DEFAULT 'awaiting_customer',
-            method VARCHAR,
-            reason VARCHAR NOT NULL,
-            rejection_note TEXT,
-            legal_name_encrypted TEXT,
-            bank_name_encrypted TEXT,
-            account_number_encrypted TEXT,
-            account_last4 VARCHAR,
-            duitnow_qr_path TEXT,
-            proof_path TEXT,
-            merchant_note TEXT,
-            customer_dispute_note TEXT,
-            admin_note TEXT,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            requested_at TIMESTAMPTZ,
-            proof_uploaded_at TIMESTAMPTZ,
-            customer_responded_at TIMESTAMPTZ,
-            admin_approved_at TIMESTAMPTZ,
-            admin_approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
-            verified_at TIMESTAMPTZ
-        )
-    """,
-    "ALTER TABLE refund_requests ADD COLUMN IF NOT EXISTS admin_approved_at TIMESTAMPTZ",
-    "ALTER TABLE refund_requests ADD COLUMN IF NOT EXISTS admin_approved_by UUID REFERENCES users(id) ON DELETE SET NULL",
-    """
-        UPDATE refund_requests
-        SET admin_approved_at = COALESCE(admin_approved_at, requested_at, created_at)
-        WHERE admin_approved_at IS NULL
-          AND status IN ('proof_submitted', 'customer_confirmed', 'disputed', 'verified')
-    """,
-    "CREATE INDEX IF NOT EXISTS refund_requests_merchant_status_idx ON refund_requests (merchant_id, status)",
-    "CREATE INDEX IF NOT EXISTS refund_requests_customer_idx ON refund_requests (customer_id, created_at DESC)",
-    """
-        CREATE TABLE IF NOT EXISTS refund_audit_events (
-            id UUID PRIMARY KEY,
-            refund_id UUID NOT NULL REFERENCES refund_requests(id) ON DELETE CASCADE,
-            actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-            actor_role VARCHAR NOT NULL,
-            action VARCHAR NOT NULL,
-            from_status VARCHAR,
-            to_status VARCHAR NOT NULL,
-            note TEXT,
-            evidence_path TEXT,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    """,
-    "CREATE INDEX IF NOT EXISTS refund_audit_events_refund_idx ON refund_audit_events (refund_id, created_at)",
-]
+from startup_migrations import ORDER_STATUS_VALUES, ORDER_STATUS_CONSTRAINT_MIGRATION, STARTUP_MIGRATIONS
 
 
 async def run_startup_migration(statement: str, max_attempts: int = 5) -> None:
@@ -269,19 +101,17 @@ async def lifespan(app: FastAPI):
 # need to publish a public map of every route and parameter to anyone who asks.
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
-# --- RATE LIMITING (in-memory; fine for Render's single-instance free tier) ---
+# This limiter is per process; it does not coordinate across app instances.
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# --- MOUNT STATIC UPLOADS DIRECTORY ---
 # Fresh deployments may not contain this runtime-created directory.
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# --- SUPABASE STORAGE CONFIGURATION ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") # Service role key to bypass RLS for uploads
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -650,7 +480,6 @@ async def anonymize_account(user, db: AsyncSession):
     user.deleted_at = datetime.now(timezone.utc)
 
 
-# --- BULLETPROOF CORS CONFIGURATION ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -666,22 +495,19 @@ app.add_middleware(
     allow_headers=["*"], 
 )
 
-# Pydantic Schemas for validation
 class UserCreate(BaseModel):
     name: str
     phone_number: str | None = None
     email: EmailStr
-    password: str  # UPDATED: Changed from password_hash since client sends plain text
-    verification_code: str  # 6-digit code emailed via /auth/send-code
+    password: str
+    verification_code: str
     role: str = "customer"
 
-# NEW: Schema for updating user profile
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
     password: Optional[str] = None
 
-# NEW: Schema for updating merchant profile & store details
 class MerchantProfileUpdate(BaseModel):
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
@@ -690,7 +516,6 @@ class MerchantProfileUpdate(BaseModel):
     description: Optional[str] = None
     location: Optional[str] = None
 
-# NEW: Schemas for handling login and token generation
 class MerchantRegisterRequest(BaseModel):
     name: str
     email: EmailStr
@@ -698,7 +523,7 @@ class MerchantRegisterRequest(BaseModel):
     store_name: str
     location: Optional[str] = None
     description: Optional[str] = None
-    verification_code: str  # 6-digit code emailed via /auth/send-code
+    verification_code: str
     role: str = "merchant"
 
 class LoginRequest(BaseModel):
@@ -721,15 +546,14 @@ class MerchantCreate(BaseModel):
 # Public merchant data includes the merchant ID because customers need it to
 # load menus and pickup slots. It does not expose the owner's user ID.
 class MerchantPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     name: str
     location: Optional[str] = None
     description: Optional[str] = None
     duitnow_qr_url: Optional[str] = None
     is_active: Optional[bool] = True
-
-    class Config:
-        from_attributes = True
 
 class MenuItemCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
@@ -783,7 +607,7 @@ class PickupSlotBatchCreate(BaseModel):
 class ForgotPasswordRequest(BaseModel):
     email: str
     new_password: str
-    verification_code: str  # 6-digit code emailed via /auth/send-code
+    verification_code: str
 
 class SendCodeRequest(BaseModel):
     email: EmailStr
@@ -806,7 +630,6 @@ class RefundAdminReview(BaseModel):
     note: Optional[str] = Field(default=None, max_length=1000)
 
 
-# NEW: Schemas for Events
 class EventCreate(BaseModel):
     name: str
     description: Optional[str] = None
@@ -828,14 +651,12 @@ class RoleUpdateRequest(BaseModel):
     description: Optional[str] = None
 
 
-# --- ROUTES ---
 
 @app.get("/")
 def read_root():
     return {"message": "Click & Collect API is running"}
 
 
-# --- PHASE 5: RECOMMENDATION ROUTE ---
 @app.get("/recommendations/items")
 async def get_recommended_items(
     limit: int = Query(default=20, ge=1, le=100),
@@ -858,7 +679,6 @@ async def get_recommended_items(
 
 
 
-# 1. Route to create a user first (Merchants need a user_id)
 @app.post("/users", response_model=dict)
 async def create_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     existing_user = await db.execute(select(User).where(func.lower(func.trim(User.email)) == normalize_email(user_data.email)))
@@ -977,7 +797,6 @@ async def admin_delete_user(
     return {"status": "success", "message": "User deleted successfully."}
 
 
-# --- NEW: Admin Update User Role Endpoint ---
 @app.put("/admin/users/{user_id}/role")
 async def update_user_role(
     user_id: UUID,
@@ -1706,7 +1525,6 @@ async def get_merchant_details(merchant_id: UUID, db: AsyncSession = Depends(get
     return MerchantPublic.model_validate(merchant)
 
 
-# --- 1. SECURED: Create Menu Item (Merchant Owner or Admin Only) ---
 @app.post("/merchants/{merchant_id}/items")
 async def create_menu_item(
     merchant_id: UUID, 
@@ -1740,7 +1558,6 @@ async def create_menu_item(
         raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
-# --- 2. SECURED: Update Menu Item ---
 @app.put("/merchants/items/{item_id}")
 async def update_menu_item(
     item_id: UUID, 
@@ -1772,7 +1589,6 @@ async def update_menu_item(
         raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
-# --- 3. SECURED: Delete Menu Item ---
 @app.delete("/merchants/items/{item_id}")
 async def delete_menu_item(
     item_id: UUID, 
@@ -1806,7 +1622,6 @@ async def delete_menu_item(
         raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
-# --- 4. SECURED: Create Pickup Slot ---
 @app.post("/merchants/{merchant_id}/pickup-slots")
 async def create_pickup_slot(
     merchant_id: UUID, 
@@ -1881,7 +1696,6 @@ async def create_pickup_slots_batch(
     return {"created": created, "skipped": len(payload.slots) - created}
 
 
-# --- PUBLIC: List Pickup Slots ---
 @app.get("/merchants/{merchant_id}/pickup-slots")
 async def list_pickup_slots(merchant_id: UUID, db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
     await require_shop_access(db, merchant_id, authorization)
@@ -1890,7 +1704,6 @@ async def list_pickup_slots(merchant_id: UUID, db: AsyncSession = Depends(get_db
     return result.scalars().all()
 
 
-# --- 5. SECURED: Delete Pickup Slot ---
 @app.delete("/merchants/pickup-slots/{slot_id}")
 async def delete_pickup_slot(
     slot_id: UUID, 
@@ -1936,7 +1749,6 @@ async def delete_pickup_slot(
         raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
-# --- PUBLIC: List Menu Items ---
 @app.get("/merchants/{merchant_id}/items")
 async def list_menu_items(merchant_id: UUID, db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
     await require_shop_access(db, merchant_id, authorization)
@@ -2334,7 +2146,7 @@ async def create_order(
         pickup_slot_id=order_data.pickup_slot_id,
         pickup_service_date=slot.time_slot.astimezone(MALAYSIA_TZ).date(),
         order_number=order_number,
-        status="draft", # <--- UPDATED: Initial state is draft so merchant is not notified yet
+        status="draft",
         total_price=round(total_price, 2),
         transaction_ref=None
     )
@@ -2378,7 +2190,7 @@ async def submit_order_receipt(
 
     # Receipts go to a PRIVATE bucket; the customer, the stall and admins get short-lived links.
     order.transaction_ref = await upload_to_supabase(receipt_file, private=True)
-    order.status = "pending_verification" # <--- UPDATED: Transitions status from draft to pending_verification
+    order.status = "pending_verification"
 
     try:
         await db.commit()
@@ -2751,7 +2563,7 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
         select(Order)
         .where(
             Order.merchant_id == merchant_id,
-            Order.status != "draft" # <--- UPDATED: Hides draft/unpaid orders from the merchant dashboard
+            Order.status != "draft"
         )
         .options(
             selectinload(Order.items).selectinload(OrderItem.menu_item),
@@ -2955,7 +2767,6 @@ async def update_order_status(
     }
 
 
-# --- ADMIN USERS ---
 
 @app.get("/admin/users")
 async def list_all_users(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -2980,7 +2791,6 @@ async def list_all_users(db: AsyncSession = Depends(get_db), current_user: User 
     return response_data
 
 
-# --- ADMIN TRANSACTIONS ---
 
 @app.get("/admin/orders")
 async def admin_list_all_orders(
@@ -3042,7 +2852,6 @@ async def admin_list_all_orders(
     return response
 
 
-# --- EVENT ENDPOINTS ---
 
 @app.post("/events", response_model=dict)
 async def create_event(
@@ -3218,7 +3027,6 @@ async def get_event_merchants(event_id: UUID, db: AsyncSession = Depends(get_db)
                     "description": item.description,
                     "price": float(item.price),
                     "image_url": item.image_url,
-                    # Fallbacks to ensure both frontend properties are met without throwing errors
                     "is_active": getattr(item, "is_active", True),
                     "is_available": getattr(item, "is_available", True)
                 }
@@ -3324,9 +3132,6 @@ async def remove_merchant_from_event(
     return {"message": "Merchant removed from event."}
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# ADMIN EXTENDED ENDPOINTS (added for full admin authority)
-# ──────────────────────────────────────────────────────────────────────────────
 
 class AdminMerchantProfileUpdate(BaseModel):
     name: Optional[str] = None

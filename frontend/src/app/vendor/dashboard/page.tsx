@@ -2,57 +2,26 @@
 "use client";
 
 import { BACKEND_URL } from "@/lib/backend-url";
+import { getErrorMessage } from "@/lib/errors";
+import MerchantOrdersPanel from "@/components/MerchantOrdersPanel";
+import MerchantPaymentSetup from "@/components/MerchantPaymentSetup";
+import type { MerchantProfile, Order, PickupSlot } from "@/lib/merchant-dashboard-types";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import BackLink from "@/components/BackLink";
 import AnalyticsDashboard from "@/components/AnalyticsDashboard";
 import DeleteAccountButton from "@/components/DeleteAccountButton";
-import { MerchantMenuManager } from "@/components/MerchantMenuManager";
-import SurplusOfferManager from "@/components/SurplusOfferManager";
-import MerchantPickupSlots from "@/components/MerchantPickupSlots";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 import RefundManagement from "@/components/RefundManagement";
 import FoodPlanning from "@/components/FoodPlanning";
 
-interface MerchantProfile {
-  id: string;
-  name: string;
-  location: string;
-  description: string;
-  duitnow_qr_url?: string;
-  is_temporary?: boolean;
-  is_active?: boolean;
-  is_deleted?: boolean;
-}
-
-interface OrderItem {
-  id: string;
-  name: string;
-  quantity: number;
-  price_at_order: number;
-  surplus_offer_id?: string | null;
-  special_instructions?: string | null;
-}
-
-interface Order {
-  id: string;
-  order_number?: string;
-  status: string;
-  total_price: number;
-  created_at: string;
-  customer_id: string;
-  customer_name?: string;
-  transaction_ref?: string;
-  pickup_time?: string | null;
-  items?: OrderItem[];
-}
-
-interface PickupSlot {
-  id: string;
-  time_slot: string;
-  max_capacity: number;
-  current_bookings: number;
-}
+const MerchantMenuManager = dynamic(
+  () => import("@/components/MerchantMenuManager").then((module) => module.MerchantMenuManager),
+  { loading: () => <p className="p-4 text-sm text-stone-600">Loading menu tools…</p> },
+);
+const SurplusOfferManager = dynamic(() => import("@/components/SurplusOfferManager"));
+const MerchantPickupSlots = dynamic(() => import("@/components/MerchantPickupSlots"));
 
 type Tab = "analytics" | "planning" | "profile" | "orders" | "refunds" | "menu" | "surplus" | "slots" | "payment";
 
@@ -67,23 +36,6 @@ const TAB_LABELS: Record<Tab, string> = {
   slots: "Pickup Slots",
   payment: "Payment Setup",
 };
-
-// Single place that decides how each order status reads and is colored in
-// the Manage Orders card — keeps the badge, the left accent stripe and the
-// label in sync instead of three separate ad-hoc checks.
-const ORDER_STATUS_META: Record<string, { label: string; badge: string; accent: string }> = {
-  pending_verification: { label: "Verifying Payment", badge: "bg-amber-100 text-amber-800", accent: "border-l-amber-400" },
-  pending: { label: "Verifying Payment", badge: "bg-amber-100 text-amber-800", accent: "border-l-amber-400" },
-  preparing: { label: "Preparing", badge: "bg-blue-100 text-blue-800", accent: "border-l-blue-400" },
-  ready: { label: "Ready for Pickup", badge: "bg-emerald-100 text-emerald-800", accent: "border-l-emerald-400" },
-  completed: { label: "Completed", badge: "bg-stone-100 text-stone-600", accent: "border-l-stone-300" },
-  rejected: { label: "Rejected", badge: "bg-red-100 text-red-800", accent: "border-l-red-400" },
-  cancelled: { label: "Cancelled", badge: "bg-red-100 text-red-800", accent: "border-l-red-400" },
-};
-const DEFAULT_STATUS_META = { badge: "bg-stone-100 text-stone-600", accent: "border-l-stone-300" };
-function statusMeta(status: string) {
-  return ORDER_STATUS_META[status] || { ...DEFAULT_STATUS_META, label: status };
-}
 
 export default function MerchantDashboard() {
   const router = useRouter();
@@ -161,14 +113,15 @@ export default function MerchantDashboard() {
     }
   };
 
+  const merchantId = merchant?.id;
   useEffect(() => {
-    if (!merchant?.id) return;
+    if (!merchantId) return;
     let stopped = false, busy = false;
     async function refresh() {
       if (busy || document.hidden) return;
       busy = true;
       try {
-        const res = await fetch(`${BACKEND_URL}/merchants/${merchant!.id}/orders`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }, cache: "no-store" });
+        const res = await fetch(`${BACKEND_URL}/merchants/${merchantId}/orders`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }, cache: "no-store" });
         if (!res.ok) throw Error("Could not refresh orders. Please reload or sign in again.");
         const rows: Order[] = await res.json();
         if (stopped) return;
@@ -182,7 +135,7 @@ export default function MerchantDashboard() {
     }
     refresh(); const timer = setInterval(refresh, 15000);
     return () => { stopped = true; clearInterval(timer); };
-  }, [merchant?.id]);
+  }, [merchantId]);
 
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(""), 5000); return () => clearTimeout(timer); }, [notice]);
   const [loading, setLoading] = useState(true);
@@ -196,10 +149,6 @@ export default function MerchantDashboard() {
   const [editPhone, setEditPhone] = useState("");
   const [profileUpdateSuccess, setProfileUpdateSuccess] = useState("");
 
-  const [qrUrl, setQrUrl] = useState("");
-  const [qrUpdating, setQrUpdating] = useState(false);
-  const [qrUpdateMessage, setQrUpdateMessage] = useState("");
-
   const [stallBusy, setStallBusy] = useState(false);
 
   useEffect(() => {
@@ -208,7 +157,7 @@ export default function MerchantDashboard() {
         const token = localStorage.getItem("token");
         const role = localStorage.getItem("userRole");
         if (!token || role !== "merchant") {
-          router.push("/vendor/login" as any);
+          router.push("/vendor/login");
           return;
         }
         const profileRes = await fetch(`${BACKEND_URL}/merchants/me/profile`, { headers: { Authorization: `Bearer ${token}` } });
@@ -226,7 +175,6 @@ export default function MerchantDashboard() {
         setEditStoreName(profileData.name || "");
         setEditLocation(profileData.location || "");
         setEditDescription(profileData.description || "");
-        setQrUrl(profileData.duitnow_qr_url || "");
 
         if (userRes.ok) {
           const userData = await userRes.json();
@@ -245,8 +193,8 @@ export default function MerchantDashboard() {
           setSlotBookings(totalBookings);
           setSlotCapacity(totalCapacity);
         }
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err: unknown) {
+        setError(getErrorMessage(err, "Could not load the merchant dashboard."));
       } finally {
         setLoading(false);
       }
@@ -272,33 +220,9 @@ export default function MerchantDashboard() {
       const updated = await res.json();
       setMerchant((prev) => prev ? { ...prev, name: updated.store_name, location: updated.location, description: updated.description } : null);
       setProfileUpdateSuccess("Store profile updated successfully!");
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Could not update the store profile."));
     }
-  };
-
-  const handleUploadQR = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const fileInput = document.getElementById("merchant-qr-file") as HTMLInputElement;
-    if (!fileInput?.files?.[0]) { alert("Please select a QR code image file."); return; }
-    setQrUpdating(true); setQrUpdateMessage("");
-    try {
-      const token = localStorage.getItem("token");
-      const formData = new FormData();
-      formData.append("qr_file", fileInput.files[0]);
-      const res = await fetch(`${BACKEND_URL}/merchants/me/qr-upload`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setQrUpdateMessage("DuitNow QR uploaded successfully!");
-        setMerchant((prev) => prev ? { ...prev, duitnow_qr_url: data.duitnow_qr_url } : null);
-        setQrUrl(data.duitnow_qr_url);
-      } else { alert("Failed to upload QR code."); }
-    } catch (err) { console.error(err); }
-    finally { setQrUpdating(false); }
   };
 
   const handleToggleStallActive = async () => {
@@ -316,8 +240,8 @@ export default function MerchantDashboard() {
       if (!res.ok) throw new Error(data.detail || "Could not update your stall status.");
       setMerchant(prev => prev ? { ...prev, is_active: data.is_active } : prev);
       setProfileUpdateSuccess(data.message);
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(getErrorMessage(err, "Could not update the stall status."));
     } finally {
       setStallBusy(false);
     }
@@ -374,22 +298,13 @@ export default function MerchantDashboard() {
     localStorage.removeItem("token");
     localStorage.removeItem("userRole");
     localStorage.removeItem("userName");
-    router.push("/vendor/login" as any);
+    router.push("/vendor/login");
   };
 
   const activeOrderCount = orders.filter(o => ["pending", "pending_verification", "preparing", "ready"].includes(o.status)).length;
 
   if (loading) return <div className="min-h-screen flex items-center justify-center">Loading dashboard...</div>;
   if (error) return <div className="p-8 text-red-600 bg-red-50 text-center m-8 rounded-xl">{error}</div>;
-
-  const ORDER_FILTERS: { key: string; label: string }[] = [
-    { key: "active", label: "Incoming / Active" },
-    { key: "pending_verification", label: "Pending Verification" },
-    { key: "preparing", label: "Preparing" },
-    { key: "ready", label: "Ready" },
-    { key: "completed", label: "Completed" },
-    { key: "all", label: "All" },
-  ];
 
   return (
     <main className="min-h-screen bg-stone-50 p-4 sm:p-8">
@@ -404,15 +319,14 @@ export default function MerchantDashboard() {
 
         <BackLink href="/">Back to marketplace</BackLink>
 
-        {/* Header */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 space-y-4">
+        <div className="space-y-4 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-6">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <span className="bg-orange-50 text-orange-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block">
                 Merchant Portal
               </span>
               <h1 className="text-2xl font-bold text-gray-900">{merchant?.name}</h1>
-              <p className="text-gray-500 text-sm">📍 {merchant?.location}</p>
+              <p className="text-sm text-stone-600">{merchant?.location}</p>
             </div>
             <button onClick={handleLogout} className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700">Log Out</button>
           </div>
@@ -425,7 +339,6 @@ export default function MerchantDashboard() {
               {soundError || (soundReady ? "Order sounds enabled. Keep this dashboard open and visible." : "Tap to enable sounds on this device. You should hear a test chime.")}
             </p>
           </div>
-          {/* Nav tabs */}
           <nav aria-label="Merchant portal" className="grid grid-cols-2 gap-2 border-t border-stone-100 pt-4 text-center sm:flex sm:flex-wrap sm:justify-center">
             {(["analytics", "planning", "profile", "orders", "refunds", "menu", "surplus", "slots", "payment"] as Tab[]).map(t => (
               <button
@@ -447,73 +360,73 @@ export default function MerchantDashboard() {
             <div className="p-3 bg-green-50 text-green-700 text-xs rounded-xl">{profileUpdateSuccess}</div>
           )}
 
-          {/* Store Profile tab */}
-          {tab === "profile" && (
-            <form onSubmit={handleUpdateMerchantProfile} className="space-y-4 pt-4 border-t border-gray-100">
-              <p className="text-sm text-stone-500">Your registered stall name, campus location and email are fixed. You can edit your bio, operating hours and contact phone below.</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store / Stall Name</label>
-                  <input type="text" required value={editStoreName} readOnly aria-readonly="true"
-                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Campus Location</label>
-                  <input type="text" required value={editLocation} readOnly aria-readonly="true"
-                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store Bio & Opening Hours</label>
-                <textarea rows={2} value={editDescription} onChange={(e) => setEditDescription(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                  placeholder="Operating Hours: Mon-Fri 8 AM - 5 PM" />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Email Address</label>
-                  <input type="email" required value={editEmail} readOnly
-                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Phone Number</label>
-                  <input type="tel" value={editPhone} onChange={(e) => setEditPhone(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
-                    placeholder="+60123456789" />
-                </div>
-              </div>
-              <div className="flex items-center justify-between">
-                <button type="submit"
-                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer">
-                  Save Changes
-                </button>
-                <ChangePasswordButton />
-              </div>
-
-              {merchant?.is_deleted ? (
-                <p className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs font-semibold text-stone-500">
-                  🔒 This stall has been closed by an admin. Contact support if you believe this is a mistake.
-                </p>
-              ) : (
-                <div className="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-stone-50 p-4">
-                  <div>
-                    <p className="text-sm font-semibold text-stone-800">
-                      {merchant?.is_active !== false ? "Your stall is live" : "Your stall is paused"}
-                    </p>
-                    <p className="mt-0.5 text-xs text-stone-500">
-                      {merchant?.is_active !== false ? "Customers can see and order from you." : "Hidden from customers until you turn it back on."}
-                    </p>
-                  </div>
-                  <button type="button" disabled={stallBusy} onClick={handleToggleStallActive}
-                    className={`rounded-xl px-4 py-2 text-xs font-bold transition disabled:opacity-50 ${merchant?.is_active !== false ? "border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" : "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}>
-                    {stallBusy ? "Please wait…" : merchant?.is_active !== false ? "Pause my stall" : "Resume my stall"}
-                  </button>
-                </div>
-              )}
-            </form>
-          )}
         </div>
 
+        {tab === "profile" && (
+          <form onSubmit={handleUpdateMerchantProfile} className="space-y-4 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm sm:p-6">
+            <h2 className="text-lg font-bold text-stone-900">Store profile</h2>
+            <p className="text-sm text-stone-500">Your registered stall name, campus location and email are fixed. You can edit your bio, operating hours and contact phone below.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store / Stall Name</label>
+                <input type="text" required value={editStoreName} readOnly aria-readonly="true"
+                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Campus Location</label>
+                <input type="text" required value={editLocation} readOnly aria-readonly="true"
+                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Store Bio & Opening Hours</label>
+              <textarea rows={2} value={editDescription} onChange={(e) => setEditDescription(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                placeholder="Operating Hours: Mon-Fri 8 AM - 5 PM" />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Email Address</label>
+                <input type="email" required value={editEmail} readOnly
+                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Phone Number</label>
+                <input type="tel" value={editPhone} onChange={(e) => setEditPhone(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
+                  placeholder="+60123456789" />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <button type="submit"
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer">
+                Save Changes
+              </button>
+              <ChangePasswordButton />
+            </div>
+
+            {merchant?.is_deleted ? (
+              <p className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs font-semibold text-stone-500">
+                This stall has been closed by an admin. Contact support if you believe this is a mistake.
+              </p>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-200 bg-stone-50 p-4">
+                <div>
+                  <p className="text-sm font-semibold text-stone-800">
+                    {merchant?.is_active !== false ? "Your stall is live" : "Your stall is paused"}
+                  </p>
+                  <p className="mt-0.5 text-xs text-stone-500">
+                    {merchant?.is_active !== false ? "Customers can see and order from you." : "Hidden from customers until you turn it back on."}
+                  </p>
+                </div>
+                <button type="button" disabled={stallBusy} onClick={handleToggleStallActive}
+                  className={`rounded-xl px-4 py-2 text-xs font-bold transition disabled:opacity-50 ${merchant?.is_active !== false ? "border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" : "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}>
+                  {stallBusy ? "Please wait…" : merchant?.is_active !== false ? "Pause my stall" : "Resume my stall"}
+                </button>
+              </div>
+            )}
+          </form>
+        )}
         {tab === "analytics" && <AnalyticsDashboard audience="merchant" embedded />}
         {tab === "planning" && <FoodPlanning />}
         {tab === "refunds" && <RefundManagement audience="merchant" embedded />}
@@ -530,187 +443,28 @@ export default function MerchantDashboard() {
         )}
 
         {tab === "payment" && (
-          <div className="bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-6 rounded-2xl shadow-sm border border-indigo-200">
-            <p className="mb-2 text-xs font-bold uppercase tracking-widest text-indigo-600">Payment Setup</p>
-            <h2 className="text-lg font-bold text-indigo-950 mb-1">DuitNow QR Management</h2>
-            <p className="text-xs text-gray-500 mb-4">Upload your static DuitNow QR image file so customers can scan it during checkout.</p>
-            <form onSubmit={handleUploadQR} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 uppercase mb-1">Upload QR Image File</label>
-                <input id="merchant-qr-file" type="file" accept="image/*" required
-                  className="w-full px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-orange-50 file:text-orange-700 hover:file:bg-orange-100" />
-              </div>
-              {qrUrl && (
-                <div className="text-center py-3 bg-gray-50 rounded-xl border border-gray-100 max-w-xs">
-                  <p className="text-xs font-semibold text-gray-600 mb-2">Current QR Code:</p>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={qrUrl.startsWith("http") ? qrUrl : `${BACKEND_URL}${qrUrl}`} alt="DuitNow QR Preview"
-                    className="w-36 h-36 mx-auto object-contain bg-white rounded-lg border p-1" />
-                </div>
-              )}
-              {qrUpdateMessage && <p className="text-xs font-semibold text-green-600">{qrUpdateMessage}</p>}
-              <button type="submit" disabled={qrUpdating}
-                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-sm">
-                {qrUpdating ? "Uploading..." : "Upload QR Code"}
-              </button>
-            </form>
-          </div>
+          <MerchantPaymentSetup
+            qrUrl={merchant?.duitnow_qr_url || ""}
+            onQrUploaded={(url) => setMerchant((current) => current ? { ...current, duitnow_qr_url: url } : current)}
+          />
         )}
 
         {tab === "orders" && (
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 space-y-4">
-            <h2 className="scroll-mt-6 text-xl font-bold text-gray-900">Manage Orders</h2>
-            <p className="text-sm text-stone-500">Updates every 15 seconds while this page is visible. Verify payment in your banking app before accepting.</p>
-            {orderError && <p role="alert" className="text-sm text-red-700">{orderError}</p>}
-            <nav aria-label="Order status" className="flex flex-wrap gap-2">
-              {ORDER_FILTERS.map(f => (
-                <button key={f.key} onClick={() => setOrderFilter(f.key)} aria-pressed={orderFilter === f.key}
-                  className={`rounded-full px-3 py-2 text-xs font-semibold ${orderFilter === f.key ? "bg-orange-600 text-white" : "bg-stone-100 text-stone-700"}`}>
-                  {f.label}
-                </button>
-              ))}
-            </nav>
-            {!orders.some(o => orderFilter === "all" || (orderFilter === "active" ? ["pending", "pending_verification", "preparing", "ready"].includes(o.status) : o.status === orderFilter)) && (
-              <p className="p-4 text-sm text-stone-500">No orders in this category.</p>
-            )}
-            {orders.length === 0 ? (
-              <p className="text-gray-500 text-sm py-4 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">No incoming orders yet.</p>
-            ) : (
-              <div className="space-y-4">
-                {orders.filter(o => orderFilter === "all" || (orderFilter === "active" ? ["pending", "pending_verification", "preparing", "ready"].includes(o.status) : o.status === orderFilter)).map((order) => (
-                  <div key={order.id} className={`rounded-2xl border border-gray-200 border-l-4 ${statusMeta(order.status).accent} bg-white p-5 shadow-sm transition hover:shadow-md`}>
-                    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 pb-4">
-                      <div>
-                        <p className="font-mono text-sm font-bold text-gray-900">{order.order_number || `#EX-${order.id.slice(0, 6)}`}</p>
-                        <dl className="mt-2 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs">
-                          <dt className="text-gray-400">Customer</dt>
-                          <dd className="font-semibold text-gray-800">{order.customer_name || "Customer"}</dd>
-                          <dt className="text-gray-400">Placed on</dt>
-                          <dd className="text-gray-600">{new Date(order.created_at).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", dateStyle: "medium", timeStyle: "short" })}</dd>
-                          {order.pickup_time && (
-                            <>
-                              <dt className="text-gray-400">Pickup slot</dt>
-                              <dd className="font-semibold text-orange-700">{new Date(order.pickup_time).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</dd>
-                            </>
-                          )}
-                        </dl>
-                      </div>
-                      <span className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${statusMeta(order.status).badge}`}>{statusMeta(order.status).label}</span>
-                    </div>
-                    {order.transaction_ref && (
-                      <a href={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`} target="_blank" rel="noopener noreferrer"
-                        className="mt-4 flex items-center gap-3 rounded-xl border border-stone-200 bg-stone-50 p-3 transition hover:bg-stone-100">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`}
-                          alt="Payment receipt screenshot" loading="lazy" className="h-14 w-14 shrink-0 rounded-lg border border-stone-200 object-cover" />
-                        <div className="text-xs">
-                          <p className="font-semibold text-stone-700">Payment receipt uploaded</p>
-                          <p className="text-stone-400">Tap to view full size</p>
-                        </div>
-                      </a>
-                    )}
-                    <div className="mt-4 border-t border-gray-100 pt-4">
-                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Items</p>
-                      {!order.items || order.items.length === 0 ? (
-                        <p className="text-xs text-gray-400">No items found.</p>
-                      ) : (
-                        <ul className="space-y-2">
-                          {order.items.map((item, idx) => (
-                            <li key={idx} className="flex items-start justify-between gap-3 text-sm">
-                              <div className="min-w-0">
-                                <span className="font-medium text-gray-800">{item.name}</span>
-                                {item.surplus_offer_id && <span className="ml-2 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-800">Surplus offer</span>}
-                                <span className="ml-1.5 text-gray-400">×{item.quantity}</span>
-                                {item.special_instructions && (
-                                  <p className="mt-1 rounded-md bg-orange-50 px-2 py-1 text-xs font-medium text-orange-700">
-                                    Note: {item.special_instructions}
-                                  </p>
-                                )}
-                              </div>
-                              <span className="shrink-0 text-gray-700">RM {Number(item.price_at_order * item.quantity).toFixed(2)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Total</p>
-                        <p className="text-base font-bold text-gray-900">RM {Number(order.total_price).toFixed(2)}</p>
-                      </div>
-                      <div className="flex gap-2">
-                        {(order.status === "pending_verification" || order.status === "pending") && (
-                          <button onClick={() => { setRejectingOrderId(order.id); setRejectionReason("item_sold_out"); setRejectionNote(""); }}
-                            disabled={updatingOrderId === order.id}
-                            className="rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60">
-                            {updatingOrderId === order.id && updatingOrderAction === "rejected" ? "Updating…" : "Reject"}
-                          </button>
-                        )}
-                        {order.status === "pending_verification" && (
-                          <button onClick={() => handleUpdateOrderStatus(order.id, "preparing")}
-                            disabled={updatingOrderId === order.id}
-                            className="bg-green-600 hover:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all shadow-sm disabled:cursor-wait disabled:opacity-60">
-                            {updatingOrderId === order.id && updatingOrderAction === "preparing" ? "Updating…" : "Verify & Accept"}
-                          </button>
-                        )}
-                        {order.status === "pending" && (
-                          <button onClick={() => handleUpdateOrderStatus(order.id, "preparing")}
-                            disabled={updatingOrderId === order.id}
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all disabled:cursor-wait disabled:opacity-60">
-                            {updatingOrderId === order.id && updatingOrderAction === "preparing" ? "Updating…" : "Start Preparing"}
-                          </button>
-                        )}
-                        {order.status === "ready" && (
-                          <button onClick={() => handleUpdateOrderStatus(order.id, "completed")}
-                            disabled={updatingOrderId === order.id}
-                            className="rounded-lg bg-emerald-700 px-3.5 py-1.5 text-xs font-semibold text-white disabled:cursor-wait disabled:opacity-60">
-                            {updatingOrderId === order.id && updatingOrderAction === "completed" ? "Updating…" : "Mark Collected"}
-                          </button>
-                        )}
-                        {order.status === "preparing" && (
-                          <button onClick={() => handleUpdateOrderStatus(order.id, "ready")}
-                            disabled={updatingOrderId === order.id}
-                            className="bg-green-600 hover:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all disabled:cursor-wait disabled:opacity-60">
-                            {updatingOrderId === order.id && updatingOrderAction === "ready" ? "Updating…" : "Mark Ready"}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    {rejectingOrderId === order.id && (
-                      <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 space-y-3">
-                        <div>
-                          <p className="text-sm font-bold text-red-900">Why are you rejecting this paid order?</p>
-                          <p className="mt-1 text-xs text-red-700">Sold-out and unable-to-fulfil reasons automatically open a tracked refund case. Invalid payment does not.</p>
-                        </div>
-                        <select value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)}
-                          className="w-full rounded-xl border border-red-200 bg-white px-3 py-2 text-sm text-slate-800">
-                          <option value="item_sold_out">Item sold out</option>
-                          <option value="stall_unable">Stall unable to fulfil order</option>
-                          <option value="invalid_payment">Payment receipt invalid / unmatched</option>
-                          <option value="other">Other paid-order fulfilment problem</option>
-                        </select>
-                        <textarea value={rejectionNote} onChange={(e) => setRejectionNote(e.target.value)} maxLength={500}
-                          placeholder="Give the customer a clear, short explanation…" className="w-full rounded-xl border border-red-200 bg-white p-3 text-sm text-slate-800" />
-                        {orderError && (
-                          <p role="alert" className="rounded-xl border border-red-300 bg-white p-3 text-sm font-semibold text-red-800">
-                            {orderError}
-                          </p>
-                        )}
-                        <div className="flex gap-2">
-                          <button type="button" disabled={updatingOrderId === order.id}
-                            onClick={() => handleUpdateOrderStatus(order.id, "rejected", { reason: rejectionReason, note: rejectionNote })}
-                            className="rounded-xl bg-red-700 px-4 py-2 text-xs font-black text-white disabled:opacity-50">
-                            {updatingOrderId === order.id && updatingOrderAction === "rejected" ? "Rejecting…" : "Confirm rejection"}
-                          </button>
-                          <button type="button" onClick={() => setRejectingOrderId(null)} className="rounded-xl border border-stone-200 bg-white px-4 py-2 text-xs font-bold text-stone-700">Cancel</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <MerchantOrdersPanel
+            orders={orders}
+            orderFilter={orderFilter}
+            setOrderFilter={setOrderFilter}
+            orderError={orderError}
+            updatingOrderId={updatingOrderId}
+            updatingOrderAction={updatingOrderAction}
+            rejectingOrderId={rejectingOrderId}
+            setRejectingOrderId={setRejectingOrderId}
+            rejectionReason={rejectionReason}
+            setRejectionReason={setRejectionReason}
+            rejectionNote={rejectionNote}
+            setRejectionNote={setRejectionNote}
+            onUpdateOrderStatus={handleUpdateOrderStatus}
+          />
         )}
 
         {tab === "profile" && (

@@ -4,10 +4,6 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { BACKEND_URL } from "@/lib/backend-url";
 import { isDisplayableFood } from "@/lib/menu-visibility";
 
-// ---------------------------------------------------------------------------
-// Types – kept compatible with the existing props contract
-// ---------------------------------------------------------------------------
-
 interface RecommendationItem {
   id: string;
   merchant_id: string;
@@ -31,10 +27,6 @@ interface RecommendationWidgetProps {
   loading: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Tab definitions – each tab has a unique key, emoji, label, and helper text
-// ---------------------------------------------------------------------------
-
 type TabKey = "hot-deals" | "budget" | "rahmah" | "not-spicy" | "popular";
 
 interface TabDefinition {
@@ -52,18 +44,7 @@ const TABS: TabDefinition[] = [
   { key: "popular", emoji: "⭐", label: "Campus favourites", helper: "Most ordered across campus · completed orders in the last 30 days" },
 ];
 
-// ---------------------------------------------------------------------------
-// Spice-detection regex — matches common spicy keywords in Malay & English
-// ---------------------------------------------------------------------------
-
-const SPICY_PATTERN = /spicy|chili|chilli|sambal|pedas|hot\s*sauce/i;
-
-// Brand colour constant (PayNet orange)
 const BRAND_ORANGE = "#F04B14";
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 
 export default function RecommendationWidget({
   items,
@@ -72,7 +53,6 @@ export default function RecommendationWidget({
   onViewItem,
   loading,
 }: RecommendationWidgetProps) {
-  // Activated by user click/tap – collapsed by default
   const [isOpen, setIsOpen] = useState(false);
 
   const [popular, setPopular] = useState<{id: string; quantity: number}[]>([]);
@@ -81,7 +61,6 @@ export default function RecommendationWidget({
   useEffect(() => {
     if (!isOpen) return;
     const controller = new AbortController();
-    setPopularityLoading(true);
     fetch(`${BACKEND_URL}/recommendations/items?limit=100`, { signal: controller.signal, cache: "no-store" })
       .then(r => { if (!r.ok) throw new Error("Campus favourites are temporarily unavailable."); return r.json(); })
       .then(rows => { setPopular(rows); setPopularityError(""); })
@@ -89,22 +68,16 @@ export default function RecommendationWidget({
       .finally(() => { if (!controller.signal.aborted) setPopularityLoading(false); });
     return () => controller.abort();
   }, [isOpen]);
-  // Active tab – defaults to "hot-deals"
   const [activeTab, setActiveTab] = useState<TabKey>("popular");
 
-  // Ref for the tab bar so we can auto-scroll the active pill into view
   const tabBarRef = useRef<HTMLDivElement>(null);
-
-  // -------------------------------------------------------------------------
-  // Derived: only available items + price-sorted list for deal cutoff calc
-  // -------------------------------------------------------------------------
 
   const availableItems = useMemo(
     () => items.filter((item) => item.is_available && isDisplayableFood(item)),
     [items],
   );
 
-  // 25th-percentile price threshold for "Hot Deals"
+  // Use the lowest price quartile of visible menu items for this category.
   const dealCutoff = useMemo(() => {
     const sorted = availableItems
       .map((item) => Number(item.price))
@@ -113,33 +86,30 @@ export default function RecommendationWidget({
     return sorted[Math.max(0, Math.ceil(sorted.length * 0.25) - 1)];
   }, [availableItems]);
 
-  // -------------------------------------------------------------------------
-  // Filter logic keyed by active tab
-  // -------------------------------------------------------------------------
+  const availableItemsById = useMemo(
+    () => new Map(availableItems.map((item) => [item.id, item])),
+    [availableItems],
+  );
 
   const filteredItems = useMemo(() => {
     let result: RecommendationItem[];
 
     switch (activeTab) {
       case "hot-deals":
-        // Cheapest 25% of available items
         result = availableItems.filter(
           (item) => Number(item.price) <= dealCutoff,
         );
         break;
 
       case "budget":
-        // Items under RM 10
         result = availableItems.filter((item) => Number(item.price) < 10);
         break;
 
       case "rahmah":
-        // Rahmah Madani — RM 5 and below
         result = availableItems.filter((item) => Number(item.price) <= 5);
         break;
 
       case "not-spicy":
-        // Exclude items whose name or description contains spicy keywords
         result = availableItems.filter((item) => {
           const text = `${item.name} ${item.description ?? ""}`.toLowerCase();
           return /\b(mild|not spicy|non-spicy|tidak pedas)\b/i.test(text);
@@ -147,19 +117,17 @@ export default function RecommendationWidget({
         break;
 
       case "popular":
-        return popular.flatMap(rank => { const item = availableItems.find(item => item.id === rank.id); return item ? [item] : []; });
+        return popular.flatMap((rank) => {
+          const item = availableItemsById.get(rank.id);
+          return item ? [item] : [];
+        });
       default:
         result = [];
         break;
     }
 
-    // Always sort by price ascending
     return result.sort((a, b) => Number(a.price) - Number(b.price));
-  }, [activeTab, availableItems, dealCutoff, popular]);
-
-  // -------------------------------------------------------------------------
-  // Auto-scroll the active tab pill into view on mobile
-  // -------------------------------------------------------------------------
+  }, [activeTab, availableItems, availableItemsById, dealCutoff, popular]);
 
   useEffect(() => {
     if (!tabBarRef.current) return;
@@ -173,28 +141,19 @@ export default function RecommendationWidget({
     });
   }, [activeTab]);
 
-  // -------------------------------------------------------------------------
-  // Helper: look up merchant name by id
-  // -------------------------------------------------------------------------
-
   const merchantName = (merchantId: string): string => {
     return merchants.find((m) => m.id === merchantId)?.name ?? "Campus stall";
   };
 
-  // -------------------------------------------------------------------------
-  // Render
-  // -------------------------------------------------------------------------
-
   return (
     <section className="overflow-hidden rounded-2xl border border-orange-200 bg-white shadow-sm transition-all">
 
-      {/* ================================================================
-          Interactive Click-to-Activate Header Banner
-          Requires user click/tap before opening recommendations
-          ================================================================ */}
       <button
         type="button"
-        onClick={() => setIsOpen((open) => !open)}
+        onClick={() => {
+          if (!isOpen) setPopularityLoading(true);
+          setIsOpen(!isOpen);
+        }}
         className="w-full flex items-center justify-between gap-3 bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 px-4 sm:px-6 py-4 text-left text-white transition hover:from-orange-700 hover:to-amber-600 cursor-pointer"
         aria-expanded={isOpen}
       >
@@ -204,8 +163,8 @@ export default function RecommendationWidget({
           </h2>
           <p className="mt-0.5 text-xs sm:text-sm text-orange-100">
             {isOpen
-              ? "Tap to hide recommendation categories"
-              : "Tap here to explore budget meals, hot deals & preferences"}
+              ? "Hide categories"
+              : "Browse meals by price, popularity and preference"}
           </p>
         </div>
 
@@ -215,13 +174,9 @@ export default function RecommendationWidget({
         </span>
       </button>
 
-      {/* ================================================================
-          Content area – only revealed after clicking / activating
-          ================================================================ */}
       {isOpen && (
         <div className="pt-2 animate-slide-up">
           {activeTab === "popular" && (popularityError || popularityLoading) && <p role="status" className="px-5 pt-3 text-xs text-slate-600">{popularityError || "Loading campus favourites…"}</p>}
-          {/* Horizontal scrollable tab bar */}
           <div
             ref={tabBarRef}
             className="flex gap-2 overflow-x-auto scroll-smooth px-4 py-3 snap-x sm:px-6 hide-scrollbar"
@@ -256,13 +211,11 @@ export default function RecommendationWidget({
             })}
           </div>
 
-          {/* Active tab helper text */}
           <p className="px-5 pb-2 text-xs text-slate-500 sm:px-6">
             {TABS.find((t) => t.key === activeTab)?.helper}
           </p>
 
           <div className="px-4 pb-5 sm:px-6 sm:pb-6">
-            {/* Contextual disclaimers / notes shown for specific tabs */}
             {activeTab === "not-spicy" && (
               <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 🌶️ Spice matching uses keywords in the item name and description.
@@ -286,7 +239,6 @@ export default function RecommendationWidget({
               </p>
             )}
 
-            {/* Loading state */}
             {loading && (
               <div className="rounded-xl bg-slate-50 p-8 text-center">
                 <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-4 border-orange-200 border-t-orange-600" />
@@ -296,7 +248,6 @@ export default function RecommendationWidget({
               </div>
             )}
 
-            {/* Empty state */}
             {!loading && filteredItems.length === 0 && (
               <div className="rounded-xl bg-slate-50 p-8 text-center">
                 <p className="text-3xl">🍽️</p>
@@ -304,12 +255,11 @@ export default function RecommendationWidget({
                   No items match this category right now
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  Try another tab — there might be something tasty elsewhere!
+                  Try another category.
                 </p>
               </div>
             )}
 
-            {/* Item grid */}
             {!loading && filteredItems.length > 0 && (
               <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 md:grid-cols-3">
                 {filteredItems.map((item) => (

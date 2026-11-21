@@ -1,29 +1,13 @@
-// frontend/src/app/page.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// Sunway Express Lane — Campus Food Marketplace
-//
-// Features:
-//  • Mobile-first, responsive, compact UI with warm PayNet brand colours.
-//  • Header with Payvolution logo and user Profile.
-//  • Animated jumping profile avatar & toast banner when items are added to cart.
-//  • Payvolution Events interactive promo section.
-//  • Tab-based AI & Smart Recommendation Widget (Hot Deals, Rahmah RM5, etc.).
-//  • Stall-by-stall menu browsing with compact, colourful food cards.
-//  • Dual-mode Cart: sticky sidebar on desktop, floating bottom drawer on mobile.
-//  • Seamless DuitNow QR checkout flow.
-// ─────────────────────────────────────────────────────────────────────────────
-
 "use client";
 
 import { BACKEND_URL } from "@/lib/backend-url";
+import { getErrorMessage } from "@/lib/errors";
 import { useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
 import ShopDetailsDialog from "@/components/ShopDetailsDialog";
 import RecommendationWidget from "@/components/RecommendationWidget";
 import FoodDetailsDialog from "@/components/FoodDetailsDialog";
 import MenuScrollRow from "@/components/MenuScrollRow";
-
-// ─── Type Definitions ────────────────────────────────────────────────────────
 
 interface Merchant {
   id: string;
@@ -90,12 +74,9 @@ interface CartLine {
   specialInstructions: string;
 }
 
-// ─── Main Component ─────────────────────────────────────────────────────────
-
 export default function Home() {
   const checkoutInFlight = useRef(false);
   const requestedSurplusSlotId = useRef<string | null>(null);
-  // ── State: Merchants & Menus ──
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [surplusOffers, setSurplusOffers] = useState<SurplusOffer[]>([]);
   useEffect(() => {
@@ -115,7 +96,6 @@ export default function Home() {
   const [eventMerchantIds, setEventMerchantIds] = useState<string[]>([]);
   const [activeEvent, setActiveEvent] = useState<ActiveEvent | null>(null);
   useEffect(() => {
-    // Load the currently active event for the banner
     fetch(`${BACKEND_URL}/events`)
       .then(r => r.ok ? r.json() : [])
       .then((evs: ActiveEvent[]) => {
@@ -133,34 +113,28 @@ export default function Home() {
   const [menuItemsByMerchant, setMenuItemsByMerchant] = useState<Record<string, MenuItem[]>>({});
   const [menuStatusByMerchant, setMenuStatusByMerchant] = useState<Record<string, MenuLoadStatus>>({});
 
-  // ── State: Pickup Slots ──
   const [pickupSlots, setPickupSlots] = useState<PickupSlot[]>([]);
   const [selectedSlotId, setSelectedSlotId] = useState<string>("");
   const [stockByItem, setStockByItem] = useState<Record<string, number> | null>(null);
   const [stockError, setStockError] = useState(false);
   const [stockRefreshKey, setStockRefreshKey] = useState(0);
 
-  // ── State: Cart (single stall at a time) ──
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [selectedShop, setSelectedShop] = useState<Merchant | null>(null);
   const [selectedMenuItem, setSelectedMenuItem] = useState<MenuItem | null>(null);
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
 
-  // ── State: Animations & Toasts ──
   const [isProfileJumping, setIsProfileJumping] = useState(false);
   const [isCartBouncing, setIsCartBouncing] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // ── State: User Profile (from localStorage) ──
   const [userProfilePic, setUserProfilePic] = useState<string | null>(null);
   const [userDisplayName, setUserDisplayName] = useState<string>("");
 
-  // ── State: Page status ──
   const [errorMessage, setErrorMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [checkingOut, setCheckingOut] = useState(false);
 
-  // ─── 1. Load User Profile Info from localStorage ───────────────────────────
   useEffect(() => {
     if (typeof window !== "undefined") {
       const pic = localStorage.getItem("profilePicture");
@@ -172,7 +146,6 @@ export default function Home() {
     }
   }, []);
 
-  // ─── 2. Fetch Merchants on Load ───────────────────────────────────────────
   useEffect(() => {
     async function loadMerchants() {
       try {
@@ -200,7 +173,6 @@ export default function Home() {
     loadMerchants();
   }, []);
 
-  // ─── 3. Load Pickup Slots for Selected Stall ──────────────────────────────
   useEffect(() => {
     let cancelled = false;
     setPickupSlots([]);
@@ -255,7 +227,6 @@ export default function Home() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [selectedMerchantId, selectedSlotId, pickupSlots, stockRefreshKey]);
 
-  // ─── 4. Load Stall Menus for All Backend Merchants ────────────────────────
   useEffect(() => {
     if (merchants.length === 0) return;
 
@@ -294,7 +265,6 @@ export default function Home() {
     };
   }, [merchants]);
 
-  // ─── 5. Add to Cart Handler (with jumping animation & toast) ───────────────
   const addToCart = (item: MenuItem, specialInstructions = "") => {
     if (!item.is_available) return false;
     if (selectedMerchantId && selectedMerchantId !== item.merchant_id && Object.keys(cart).length > 0) {
@@ -348,7 +318,6 @@ export default function Home() {
     if (selectedMerchantId === offer.merchant_id) setSelectedSlotId(offer.pickup_slot_id);
   };
 
-  // ─── 6. Remove from Cart Handler ──────────────────────────────────────────
   const removeFromCart = (lineKey: string) => {
     setCart((prev) => {
       const copy = { ...prev };
@@ -367,7 +336,6 @@ export default function Home() {
       : prev);
   };
 
-  // ── Derived Cart Values ──
   const cartTotal = useMemo(
     () => Object.values(cart).reduce((sum, { item, quantity }) => sum + Number(item.price) * quantity, 0),
     [cart]
@@ -400,7 +368,6 @@ export default function Home() {
     [merchants, selectedMerchantId]
   );
 
-  // ─── 7. Checkout Handler (FastAPI + DuitNow) ──────────────────────────────
   const handleCheckout = async () => {
     if (checkoutInFlight.current) return;
     const token = localStorage.getItem("token");
@@ -469,16 +436,15 @@ export default function Home() {
       sessionStorage.removeItem(storageKey);
 
       window.location.href = `/checkout/success/${orderId}`;
-    } catch (err: any) {
+    } catch (err: unknown) {
       setStockRefreshKey(current => current + 1);
-      alert(err.message || "Checkout failed.");
+      alert(getErrorMessage(err, "Checkout failed."));
     } finally {
       checkoutInFlight.current = false;
       setCheckingOut(false);
     }
   };
 
-  // ─── 8. Compact Item Card Component ───────────────────────────────────────
   const ItemCard = ({ item }: { item: MenuItem }) => {
     const desc = item.description || "";
     const savedSpiceLevel = desc.match(/Spiciness:\s*([^|\]\n]+)/i)?.[1]?.trim().toLowerCase();
@@ -668,13 +634,11 @@ export default function Home() {
           </div>
         )}
 
-        {/* Dynamic event banner — only shows when an event is live */}
         {activeEvent && (
           <div className="relative overflow-hidden rounded-2xl shadow-md w-full text-white"
             style={activeEvent.banner_image_url
               ? { backgroundImage: `url(${activeEvent.banner_image_url})`, backgroundSize: "cover", backgroundPosition: "center" }
               : { background: "linear-gradient(135deg, #5b21b6, #4338ca, #6d28d9)" }}>
-            {/* Dark overlay for readability when poster is set */}
             {activeEvent.banner_image_url && <div className="absolute inset-0 bg-black/50" />}
             <div className="relative z-10 p-4 sm:p-6">
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
@@ -698,7 +662,7 @@ export default function Home() {
                   </Link>
                 </div>
               </div>
-              <p className="mt-3 text-sm text-white/80">{activeEvent.description || "Meet the participating campus vendors and open any shop to see its real menu."}</p>
+              <p className="mt-3 text-sm text-white/80">{activeEvent.description || "Browse the stalls joining this event."}</p>
               <div className="mt-4 flex flex-wrap gap-3">
                 {merchants.filter(m => eventMerchantIds.includes(m.id)).map(m => (
                   <button key={m.id} onClick={() => setSelectedShop(m)}
@@ -708,7 +672,7 @@ export default function Home() {
                   </button>
                 ))}
                 {!merchants.some(m => eventMerchantIds.includes(m.id)) && (
-                  <p className="rounded-xl bg-white/10 px-4 py-3 text-sm text-white/70">Event vendors will appear here when their shop is on board.</p>
+                  <p className="rounded-xl bg-white/10 px-4 py-3 text-sm text-white/70">No stalls have been added to this event yet.</p>
                 )}
               </div>
             </div>

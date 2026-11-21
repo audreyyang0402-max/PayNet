@@ -32,7 +32,7 @@ class Merchant(Base):
     name = Column(String, nullable=False)
     description = Column(Text)
     location = Column(String)
-    duitnow_qr_url = Column(Text, nullable=True)  # <--- ADDED: Store vendor's static DuitNow QR image URL
+    duitnow_qr_url = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     is_preview = Column(Boolean, nullable=False, default=True, server_default="true")  # new stalls stay hidden until an admin shows them
     is_deleted = Column(Boolean, nullable=False, default=False, server_default="false")  # admin closed this stall for good (reversible only by support, not shown in the vendors list)
@@ -120,7 +120,7 @@ class Order(Base):
     status = Column(String, nullable=False, default="pending_verification") 
     total_price = Column(Numeric(10, 2), nullable=False)
     
-    transaction_ref = Column(String, nullable=True)  # <--- ADDED: Bank reference code entered by the student
+    transaction_ref = Column(String, nullable=True)
     order_number = Column(String, nullable=True)
     checkout_key = Column(String, nullable=True, unique=True)
     checkout_fingerprint = Column(String, nullable=True)
@@ -131,7 +131,6 @@ class Order(Base):
     pickup_service_date = Column(Date, nullable=True)  # retained if a completed slot is later removed
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # --- RELATIONSHIPS ---
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
     customer = relationship("User", back_populates="orders")
 
@@ -199,7 +198,6 @@ class OrderItem(Base):
     price_at_order = Column(Numeric(10, 2), nullable=False)
     special_instructions = Column(Text, nullable=True)
 
-    # --- RELATIONSHIPS ---
     order = relationship("Order", back_populates="items")
     menu_item = relationship("MenuItem")
 

@@ -64,8 +64,8 @@ export default function EmailCodeField({
       }
       setInfo(`Check your inbox (and spam folder). The code expires in 10 minutes.`);
       setCooldown(60);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not send the code.");
     } finally {
       setSending(false);
     }
@@ -79,11 +79,12 @@ export default function EmailCodeField({
           type="text"
           inputMode="numeric"
           autoComplete="one-time-code"
-          maxLength={6}
+          maxLength={8}
+          pattern="[0-9]{6,8}"
           required
           value={code}
           onChange={(e) => onCodeChange(e.target.value.replace(/\D/g, ""))}
-          placeholder="6-digit code"
+          placeholder="6 to 8 digit code"
           className={`flex-1 min-w-0 px-3 py-2 rounded-xl border border-gray-300 text-sm text-gray-900 tracking-widest focus:ring-2 ${colors.input} outline-none`}
         />
         <button
