@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Boolean, Text, Numeric, Date, DateTime, Integer, ForeignKey, func
+from sqlalchemy import Column, String, Boolean, Text, Numeric, Date, DateTime, Integer, ForeignKey, JSON, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from database import Base
@@ -37,6 +37,8 @@ class Merchant(Base):
     is_preview = Column(Boolean, nullable=False, default=True, server_default="true")  # new stalls stay hidden until an admin shows them
     is_deleted = Column(Boolean, nullable=False, default=False, server_default="false")  # admin closed this stall for good (reversible only by support, not shown in the vendors list)
     display_order = Column(Integer, nullable=False, default=0)
+    pickup_schedule = Column(JSON, nullable=True)
+    pickup_schedule_synced_on = Column(Date, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -107,6 +109,8 @@ class PickupSlot(Base):
     time_slot = Column(DateTime(timezone=True), nullable=False)
     max_capacity = Column(Integer, nullable=False, default=10)
     current_bookings = Column(Integer, nullable=False, default=0)
+    is_automatic = Column(Boolean, nullable=False, default=False, server_default="false")
+    is_bookable = Column(Boolean, nullable=False, default=True, server_default="true")
 
 
 class Order(Base):

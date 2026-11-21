@@ -16,6 +16,27 @@ from main import create_order, OrderCreate, shop_is_public, require_shop_access
 
 
 class CheckoutTests(unittest.IsolatedAsyncioTestCase):
+    async def test_closed_pickup_date_blocks_checkout(self):
+        merchant_id, slot_id = uuid4(), uuid4()
+        when = datetime.now(timezone.utc) + timedelta(days=2)
+        merchant = SimpleNamespace(id=merchant_id, is_active=True, is_preview=False, is_deleted=False,
+                                   pickup_schedule={"enabled": False, "closed_dates": [(when + timedelta(hours=8)).date().isoformat()]})
+        slot = SimpleNamespace(id=slot_id, merchant_id=merchant_id, time_slot=when,
+                               current_bookings=0, max_capacity=10, is_bookable=True)
+        def result(value):
+            row = MagicMock()
+            row.scalars.return_value.first.return_value = value
+            return row
+        db = MagicMock(execute=AsyncMock(side_effect=[result(merchant), result(slot)]))
+        request = OrderCreate(merchant_id=merchant_id, pickup_slot_id=slot_id,
+                              items=[{"menu_item_id": uuid4(), "quantity": 1}])
+        with patch('main.expire_stale_drafts', AsyncMock()):
+            with self.assertRaises(HTTPException) as error:
+                await create_order(request, db, SimpleNamespace(id=uuid4()))
+        self.assertEqual(error.exception.status_code, 400)
+        self.assertIn("no longer available", error.exception.detail)
+        db.add.assert_not_called()
+
     async def test_surplus_offer_cannot_sell_more_than_remaining_portions(self):
         merchant_id, slot_id, item_id, offer_id = uuid4(), uuid4(), uuid4(), uuid4()
         request = OrderCreate(merchant_id=merchant_id, pickup_slot_id=slot_id,

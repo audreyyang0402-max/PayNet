@@ -60,10 +60,11 @@ interface PickupSlot {
   time_slot: string;
   current_bookings: number;
   max_capacity: number;
+  is_bookable?: boolean;
 }
 
 function isPickupSlotAvailable(slot: PickupSlot) {
-  return slot.current_bookings < slot.max_capacity && new Date(slot.time_slot).getTime() > Date.now();
+  return slot.is_bookable !== false && slot.current_bookings < slot.max_capacity && new Date(slot.time_slot).getTime() > Date.now();
 }
 
 type MenuLoadStatus = "loading" | "loaded" | "error";

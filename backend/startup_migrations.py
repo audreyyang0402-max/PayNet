@@ -38,6 +38,12 @@ ORDER_STATUS_CONSTRAINT_MIGRATION = f"""
 
 
 STARTUP_MIGRATIONS = [
+    "ALTER TABLE merchants ADD COLUMN IF NOT EXISTS pickup_schedule JSON",
+    "ALTER TABLE merchants ADD COLUMN IF NOT EXISTS pickup_schedule_synced_on DATE",
+    "ALTER TABLE pickup_slots ADD COLUMN IF NOT EXISTS is_automatic BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE pickup_slots ADD COLUMN IF NOT EXISTS is_bookable BOOLEAN NOT NULL DEFAULT TRUE",
+    "CREATE UNIQUE INDEX IF NOT EXISTS pickup_slots_auto_time_unique ON pickup_slots (merchant_id, time_slot) WHERE is_automatic",
+    "CREATE INDEX IF NOT EXISTS pickup_slots_merchant_time_idx ON pickup_slots (merchant_id, time_slot)",
     """
         CREATE TABLE IF NOT EXISTS surplus_offers (
             id UUID PRIMARY KEY,

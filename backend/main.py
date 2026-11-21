@@ -41,6 +41,7 @@ from models import Base, User, Merchant, MenuItem, DailyFoodLog, DailyItemStock,
 from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN, validate_password, password_stamp
 from email_verification import check_code, normalize_email
 from email_service import send_order_ready_email
+from pickup_schedule import MYT as PICKUP_MYT, PickupSchedule, candidate_times, default_schedule, is_closed
 
 logger = logging.getLogger(__name__)
 
@@ -1622,6 +1623,76 @@ async def delete_menu_item(
         raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
+async def sync_automatic_pickup_slots(db: AsyncSession, merchant: Merchant, now: datetime) -> None:
+    """Keep a rolling week of bookable rows under the merchant transaction lock."""
+    if not merchant.pickup_schedule:
+        return
+    schedule = PickupSchedule.model_validate(merchant.pickup_schedule)
+    horizon = datetime.combine(now.astimezone(PICKUP_MYT).date() + timedelta(days=7),
+                               datetime.min.time(), PICKUP_MYT).astimezone(timezone.utc)
+    existing = (await db.execute(select(PickupSlot).where(
+        PickupSlot.merchant_id == merchant.id,
+        PickupSlot.time_slot >= now,
+        PickupSlot.time_slot < horizon,
+    ).with_for_update())).scalars().all()
+    desired = set(candidate_times(schedule, now))
+    occupied = {slot.time_slot.astimezone(timezone.utc) for slot in existing}
+    for slot in existing:
+        if slot.is_automatic:
+            active = slot.time_slot.astimezone(timezone.utc) in desired
+            slot.is_bookable = active
+            if active:
+                slot.max_capacity = max(slot.current_bookings, schedule.max_capacity)
+    for when in desired - occupied:
+        db.add(PickupSlot(merchant_id=merchant.id, time_slot=when,
+                          max_capacity=schedule.max_capacity, current_bookings=0,
+                          is_automatic=True, is_bookable=True))
+    merchant.pickup_schedule_synced_on = now.astimezone(PICKUP_MYT).date()
+
+
+@app.get("/merchants/me/pickup-schedule")
+async def get_pickup_schedule(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    merchant = await require_own_merchant(db, current_user)
+    return merchant.pickup_schedule or default_schedule()
+
+
+@app.get("/merchants/me/pickup-demand")
+async def get_pickup_demand(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Observed pickup demand, for planning only; merchants choose their own capacity."""
+    from customer_analytics import PAID
+
+    merchant = await require_own_merchant(db, current_user)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=28)
+    rows = (await db.execute(select(PickupSlot.time_slot).join(Order, Order.pickup_slot_id == PickupSlot.id)
+        .where(Order.merchant_id == merchant.id, Order.status.in_(PAID),
+               PickupSlot.time_slot >= cutoff)
+        .order_by(PickupSlot.time_slot.desc()).limit(5000))).scalars().all()
+    buckets: dict[tuple[int, int], dict] = {}
+    for when in rows:
+        local = when.astimezone(PICKUP_MYT)
+        key = (local.weekday(), local.hour)
+        bucket = buckets.setdefault(key, {"orders": 0, "dates": set()})
+        bucket["orders"] += 1
+        bucket["dates"].add(local.date())
+    busiest = sorted(buckets.items(), key=lambda pair: pair[1]["orders"], reverse=True)[:3]
+    return {"period_days": 28, "confirmed_orders": len(rows), "enough_history": len(rows) >= 10,
+            "busiest_hours": [{"weekday": weekday, "hour": hour,
+                               "orders": data["orders"], "observed_days": len(data["dates"])}
+                              for (weekday, hour), data in busiest] if len(rows) >= 10 else []}
+
+
+@app.put("/merchants/me/pickup-schedule")
+async def put_pickup_schedule(payload: PickupSchedule, db: AsyncSession = Depends(get_db),
+                              current_user: User = Depends(get_current_user)):
+    merchant = await require_own_merchant(db, current_user)
+    # Serialize with checkout and manual slot creation.
+    merchant = (await db.execute(select(Merchant).where(Merchant.id == merchant.id).with_for_update())).scalars().one()
+    merchant.pickup_schedule = payload.model_dump(mode="json")
+    await sync_automatic_pickup_slots(db, merchant, datetime.now(timezone.utc))
+    await db.commit()
+    return merchant.pickup_schedule
+
+
 @app.post("/merchants/{merchant_id}/pickup-slots")
 async def create_pickup_slot(
     merchant_id: UUID, 
@@ -1639,6 +1710,8 @@ async def create_pickup_slot(
     when = as_malaysia_time(slot_data.time_slot)
     if when < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Pickup time must be in the future.")
+    if getattr(merchant, "pickup_schedule", None) and is_closed(PickupSchedule.model_validate(merchant.pickup_schedule), when):
+        raise HTTPException(status_code=400, detail="This date is marked closed in your pickup schedule.")
     existing = (await db.execute(select(PickupSlot).where(
         PickupSlot.merchant_id == merchant_id, PickupSlot.time_slot == when
     ))).scalars().first()
@@ -1676,6 +1749,10 @@ async def create_pickup_slots_batch(
     times = [as_malaysia_time(slot.time_slot) for slot in payload.slots]
     if any(when <= datetime.now(timezone.utc) for when in times):
         raise HTTPException(status_code=400, detail="All pickup times must be in the future. Refresh your preview.")
+    if getattr(merchant, "pickup_schedule", None):
+        schedule = PickupSchedule.model_validate(merchant.pickup_schedule)
+        if any(is_closed(schedule, when) for when in times):
+            raise HTTPException(status_code=400, detail="One or more dates are marked closed in your pickup schedule.")
     existing = set((await db.execute(select(PickupSlot.time_slot).where(
         PickupSlot.merchant_id == merchant_id, PickupSlot.time_slot.in_(times)
     ))).scalars().all())
@@ -1697,11 +1774,30 @@ async def create_pickup_slots_batch(
 
 
 @app.get("/merchants/{merchant_id}/pickup-slots")
-async def list_pickup_slots(merchant_id: UUID, db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
-    await require_shop_access(db, merchant_id, authorization)
+async def list_pickup_slots(merchant_id: UUID, from_date: date | None = None,
+                            db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
+    merchant = await require_shop_access(db, merchant_id, authorization)
     await expire_stale_drafts(db)
-    result = await db.execute(select(PickupSlot).where(PickupSlot.merchant_id == merchant_id).order_by(PickupSlot.time_slot))
-    return result.scalars().all()
+    today = datetime.now(PICKUP_MYT).date()
+    if merchant.pickup_schedule and merchant.pickup_schedule_synced_on != today:
+        merchant = (await db.execute(select(Merchant).where(Merchant.id == merchant_id).with_for_update())).scalars().one()
+        if merchant.pickup_schedule_synced_on != today:
+            await sync_automatic_pickup_slots(db, merchant, datetime.now(timezone.utc))
+            await db.commit()
+    if from_date and from_date < today - timedelta(days=90):
+        raise HTTPException(status_code=400, detail="Pickup slot history is available for the last 90 days.")
+    first_day = from_date or (today - timedelta(days=8))
+    cutoff = datetime.combine(first_day, datetime.min.time(), PICKUP_MYT).astimezone(timezone.utc)
+    result = await db.execute(select(PickupSlot).where(PickupSlot.merchant_id == merchant_id,
+                                                      PickupSlot.time_slot >= cutoff).order_by(PickupSlot.time_slot))
+    schedule = PickupSchedule.model_validate(merchant.pickup_schedule) if merchant.pickup_schedule else None
+    current_auto_times = set(candidate_times(schedule, datetime.now(timezone.utc))) if schedule else set()
+    return [{"id": slot.id, "merchant_id": slot.merchant_id, "time_slot": slot.time_slot,
+             "max_capacity": slot.max_capacity, "current_bookings": slot.current_bookings,
+             "is_automatic": slot.is_automatic,
+             "is_bookable": slot.is_bookable and not (schedule and is_closed(schedule, slot.time_slot))
+                            and (not slot.is_automatic or slot.time_slot.astimezone(timezone.utc) in current_auto_times)}
+            for slot in result.scalars().all()]
 
 
 @app.delete("/merchants/pickup-slots/{slot_id}")
@@ -1719,6 +1815,8 @@ async def delete_pickup_slot(
         raise HTTPException(status_code=404, detail="Merchant not found.")
     if current_user.role != "admin" and (current_user.role != "merchant" or merchant.user_id != current_user.id):
         raise HTTPException(status_code=403, detail="Access denied.")
+    if getattr(slot, "is_automatic", False):
+        raise HTTPException(status_code=400, detail="Edit your weekly schedule or close the date to remove automatic times.")
 
     # Expire abandoned drafts before deciding whether this slot is still in use.
     await expire_stale_drafts(db)
@@ -2073,6 +2171,11 @@ async def create_order(
         raise HTTPException(status_code=400, detail="Pickup slot does not belong to this merchant.")
     if slot.time_slot < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="This pickup time has already passed.")
+    schedule = PickupSchedule.model_validate(merchant.pickup_schedule) if getattr(merchant, "pickup_schedule", None) else None
+    if not getattr(slot, "is_bookable", True) or (schedule and is_closed(schedule, slot.time_slot)):
+        raise HTTPException(status_code=400, detail="This pickup time is no longer available.")
+    if getattr(slot, "is_automatic", False) and (not schedule or slot.time_slot.astimezone(timezone.utc) not in candidate_times(schedule, datetime.now(timezone.utc))):
+        raise HTTPException(status_code=400, detail="This pickup time is no longer in the merchant's schedule.")
     if slot.current_bookings >= slot.max_capacity:
         raise HTTPException(status_code=400, detail="This pickup slot is fully booked.")
 
