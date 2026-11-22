@@ -36,7 +36,8 @@ from PIL import Image, ImageOps
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from database import engine, get_db
-from models import Base, User, Merchant, MenuItem, DailyFoodLog, DailyItemStock, SurplusOffer, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent
+from models import Base, User, Merchant, MenuItem, DailyFoodLog, DailyItemStock, SurplusOffer, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent, AdminAuditLog
+from admin_audit import log_admin_action, is_super_admin
 
 from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN, validate_password, password_stamp
 from email_verification import check_code, normalize_email
@@ -794,7 +795,13 @@ async def admin_delete_user(
         raise HTTPException(status_code=400, detail="You cannot delete your own account here.")
     # Hard-deleting fails once the user has orders (foreign keys), and would erase sales history.
     # Anonymising keeps history, removes personal data, hides their stall and stops their logins.
+    deleted_email, deleted_role = target_user.email, target_user.role
     await anonymize_account(target_user, db)
+    await log_admin_action(
+        db, current_user, "user.delete",
+        f"Deleted account {deleted_email} ({deleted_role})",
+        target_type="user", target_id=target_user.id, target_label=deleted_email,
+    )
     await db.commit()
     return {"status": "success", "message": "User deleted successfully."}
 
@@ -821,6 +828,7 @@ async def update_user_role(
 
     if target_user.id == current_user.id and payload.role != "admin":
         raise HTTPException(status_code=400, detail="You cannot remove your own admin role.")
+    previous_role = target_user.role
     target_user.role = payload.role
 
     if payload.role == "merchant":
@@ -848,6 +856,12 @@ async def update_user_role(
                     existing_merchant.location = payload.location
 
     try:
+        await log_admin_action(
+            db, current_user, "user.role_change",
+            f"Changed {target_user.email}'s role: {previous_role} → {payload.role}",
+            target_type="user", target_id=target_user.id, target_label=target_user.email,
+            details={"from": previous_role, "to": payload.role},
+        )
         await db.commit()
         await db.refresh(target_user)
         return {"status": "success", "message": "User role updated successfully.", "role": target_user.role}
@@ -2708,6 +2722,11 @@ async def review_refund(
         refund.proof_uploaded_at = None
     refund.admin_note = note or None
     refund.updated_at = datetime.now(timezone.utc)
+    await log_admin_action(
+        db, current_user, "refund.review",
+        f"Refund case {str(refund.id)[:8]}: {review.action} ({previous_status} → {refund.status})",
+        target_type="refund", target_id=refund.id,
+    )
     record_refund_event(
         db, refund, current_user,
         (
@@ -2935,6 +2954,65 @@ async def update_order_status(
         "refund_eligible": refund_case is not None,
     }
 
+
+
+@app.get("/admin/audit-log/access")
+async def admin_audit_log_access(current_user: User = Depends(get_current_user)):
+    """Lets the frontend quietly decide whether to show the Activity tab at all.
+
+    Always 200 with a boolean -- never 403/404 here -- so this check itself gives
+    nothing away to an admin who isn't on the list.
+    """
+    return {"allowed": current_user.role == "admin" and is_super_admin(current_user)}
+
+
+@app.get("/admin/audit-log")
+async def admin_audit_log(
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    target_type: Optional[str] = Query(default=None),
+    actor_email: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None, description="Search within the summary / target label"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Deliberately 404, not 403: an admin who isn't one of the two founders should
+    # see this look exactly like a route that doesn't exist.
+    if current_user.role != "admin" or not is_super_admin(current_user):
+        raise HTTPException(status_code=404, detail="Not found.")
+
+    stmt = select(AdminAuditLog)
+    if target_type:
+        stmt = stmt.where(AdminAuditLog.target_type == target_type)
+    if actor_email:
+        stmt = stmt.where(func.lower(AdminAuditLog.actor_email) == actor_email.strip().lower())
+    if q:
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(or_(AdminAuditLog.summary.ilike(like), AdminAuditLog.target_label.ilike(like)))
+    total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    rows = (await db.execute(
+        stmt.order_by(AdminAuditLog.created_at.desc()).offset(offset).limit(limit)
+    )).scalars().all()
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "entries": [
+            {
+                "id": str(r.id),
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "actor_name": r.actor_name,
+                "actor_email": r.actor_email,
+                "action": r.action,
+                "target_type": r.target_type,
+                "target_id": r.target_id,
+                "target_label": r.target_label,
+                "summary": r.summary,
+                "details": r.details,
+            }
+            for r in rows
+        ],
+    }
 
 
 @app.get("/admin/users")
@@ -3335,13 +3413,25 @@ async def admin_update_merchant(
     merchant = await db.get(Merchant, merchant_id)
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found.")
-    if payload.name is not None:
+    before = {"name": merchant.name, "description": merchant.description, "location": merchant.location}
+    changed_fields = []
+    if payload.name is not None and payload.name.strip() != merchant.name:
         merchant.name = payload.name.strip()
-    if payload.description is not None:
+        changed_fields.append("name")
+    if payload.description is not None and payload.description != merchant.description:
         merchant.description = payload.description
-    if payload.location is not None:
+        changed_fields.append("description")
+    if payload.location is not None and payload.location != merchant.location:
         merchant.location = payload.location
+        changed_fields.append("location")
     try:
+        if changed_fields:
+            await log_admin_action(
+                db, current_user, "merchant.edit",
+                f"Edited {', '.join(changed_fields)} for stall '{before['name']}'",
+                target_type="merchant", target_id=merchant.id, target_label=merchant.name,
+                details={"before": before, "after": {"name": merchant.name, "description": merchant.description, "location": merchant.location}},
+            )
         await db.commit()
         await db.refresh(merchant)
         return {"message": "Merchant profile updated.", "id": str(merchant.id), "name": merchant.name, "location": merchant.location, "description": merchant.description}
@@ -3363,6 +3453,11 @@ async def admin_toggle_merchant_active(
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found.")
     merchant.is_active = not merchant.is_active
+    await log_admin_action(
+        db, current_user, "merchant.activate" if merchant.is_active else "merchant.deactivate",
+        f"{'Activated' if merchant.is_active else 'Deactivated'} stall '{merchant.name}'",
+        target_type="merchant", target_id=merchant.id, target_label=merchant.name,
+    )
     await db.commit()
     await db.refresh(merchant)
     return {"message": f"Merchant {'activated' if merchant.is_active else 'deactivated'}.", "is_active": merchant.is_active}
@@ -3409,6 +3504,11 @@ async def admin_delete_merchant(
         merchant.is_deleted = True
         await db.execute(update(MenuItem).where(MenuItem.merchant_id == merchant_id).values(is_available=False))
         await db.execute(EventMerchant.__table__.delete().where(EventMerchant.merchant_id == merchant_id))
+        await log_admin_action(
+            db, current_user, "merchant.close",
+            f"Closed stall '{merchant.name}' (hidden from the vendors list, all its menu items disabled)",
+            target_type="merchant", target_id=merchant.id, target_label=merchant.name,
+        )
         await db.commit()
         return {"message": "This stall has been closed and removed from the vendors list. It's still available under the Closed tab.", "closed": True}
     except Exception:
@@ -3432,6 +3532,11 @@ async def admin_approve_menu_item(
     item.approval_status = payload.approval_status
     item.is_available = payload.approval_status == "approved"
     try:
+        await log_admin_action(
+            db, current_user, "menu_item.approval",
+            f"Set '{item.name}' to {payload.approval_status}",
+            target_type="menu_item", target_id=item.id, target_label=item.name,
+        )
         await db.commit()
         await db.refresh(item)
         return {"message": f"Menu item {payload.approval_status}.", "id": str(item.id), "approval_status": payload.approval_status}
@@ -3458,10 +3563,21 @@ async def admin_delete_menu_item(
     has_surplus_offer = (await db.execute(select(func.count(SurplusOffer.id)).where(SurplusOffer.menu_item_id == item.id))).scalar_one()
     if used or has_planning_history or has_stock_limit or has_surplus_offer:
         item.is_available = False
+        await log_admin_action(
+            db, current_user, "menu_item.hide",
+            f"Hid '{item.name}' (has order/planning history, so it couldn't be fully deleted)",
+            target_type="menu_item", target_id=item.id, target_label=item.name,
+        )
         await db.commit()
         return {"message": "This item has order or planning records, so it was hidden instead of deleted.", "hidden": True}
     try:
+        item_name = item.name
         await db.delete(item)
+        await log_admin_action(
+            db, current_user, "menu_item.delete",
+            f"Deleted menu item '{item_name}'",
+            target_type="menu_item", target_id=item_id, target_label=item_name,
+        )
         await db.commit()
         return {"message": "Menu item deleted."}
     except Exception as e:
@@ -3495,7 +3611,13 @@ async def admin_delete_pickup_slot(
         for order in linked_orders.scalars().all():
             order.pickup_slot_id = None
         await db.flush()
+        slot_time, slot_merchant_id = slot.time_slot, slot.merchant_id
         await db.delete(slot)
+        await log_admin_action(
+            db, current_user, "pickup_slot.delete",
+            f"Deleted pickup slot at {slot_time.isoformat() if slot_time else slot_id}",
+            target_type="pickup_slot", target_id=slot_id, target_label=str(slot_merchant_id),
+        )
         await db.commit()
         return {"message": "Pickup slot deleted. Completed order history was preserved."}
     except Exception as e:
@@ -3517,6 +3639,11 @@ async def admin_reorder_merchants(
             merchant = await db.get(Merchant, merchant_id)
             if merchant:
                 setattr(merchant, "display_order", index)
+        await log_admin_action(
+            db, current_user, "merchant.reorder",
+            f"Reordered {len(payload.ordered_ids)} vendors on the vendors list",
+            target_type="merchant", details={"ordered_ids": [str(i) for i in payload.ordered_ids]},
+        )
         await db.commit()
         return {"message": "Merchant display order updated."}
     except Exception as e:
@@ -3540,6 +3667,11 @@ async def admin_toggle_preview(
     current_val = getattr(merchant, "is_preview", False) or False
     setattr(merchant, "is_preview", not current_val)
     try:
+        await log_admin_action(
+            db, current_user, "merchant.hide" if merchant.is_preview else "merchant.show",
+            f"{'Hid' if merchant.is_preview else 'Made visible'} stall '{merchant.name}' on the public marketplace",
+            target_type="merchant", target_id=merchant.id, target_label=merchant.name,
+        )
         await db.commit()
         await db.refresh(merchant)
         return {"id": str(merchant.id), "is_preview": getattr(merchant, "is_preview", False)}
@@ -3598,6 +3730,11 @@ async def admin_upload_event_banner(
     public_url = await upload_to_supabase(banner_file, optimize_for_display=True)
     event.banner_image_url = public_url
     try:
+        await log_admin_action(
+            db, current_user, "event.banner_update",
+            f"Updated banner image for event '{event.name}'",
+            target_type="event", target_id=event.id, target_label=event.name,
+        )
         await db.commit()
         await db.refresh(event)
         return {"message": "Event banner uploaded.", "banner_image_url": event.banner_image_url}
@@ -3634,6 +3771,13 @@ async def admin_update_event(
     if payload.event_url is not None:
         setattr(event, "event_url", payload.event_url)
     try:
+        changed = [f for f in ("name", "description", "location", "event_date", "start_time", "end_time", "event_url") if getattr(payload, f, None) is not None]
+        if changed:
+            await log_admin_action(
+                db, current_user, "event.edit",
+                f"Edited {', '.join(changed)} for event '{event.name}'",
+                target_type="event", target_id=event.id, target_label=event.name,
+            )
         await db.commit()
         await db.refresh(event)
         return {

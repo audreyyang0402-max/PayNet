@@ -181,4 +181,21 @@ STARTUP_MIGRATIONS = [
         )
     """,
     "CREATE INDEX IF NOT EXISTS refund_audit_events_refund_idx ON refund_audit_events (refund_id, created_at)",
+    """
+        CREATE TABLE IF NOT EXISTS admin_audit_logs (
+            id UUID PRIMARY KEY,
+            actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+            actor_name VARCHAR NOT NULL,
+            actor_email VARCHAR NOT NULL,
+            action VARCHAR NOT NULL,
+            target_type VARCHAR,
+            target_id VARCHAR,
+            target_label VARCHAR,
+            summary TEXT NOT NULL,
+            details JSON,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """,
+    "CREATE INDEX IF NOT EXISTS admin_audit_logs_created_idx ON admin_audit_logs (created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS admin_audit_logs_target_idx ON admin_audit_logs (target_type, target_id)",
 ]

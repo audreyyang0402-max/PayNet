@@ -250,6 +250,27 @@ class EmailVerification(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class AdminAuditLog(Base):
+    """Append-only record of every admin change, for the two super-admins only.
+
+    Snapshots the actor's name/email at write time (not a join) so the log still
+    reads correctly even if that account is later renamed, role-changed, or deleted.
+    """
+    __tablename__ = "admin_audit_logs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    actor_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_name = Column(String, nullable=False)
+    actor_email = Column(String, nullable=False)
+    action = Column(String, nullable=False)  # short code, e.g. "merchant.deactivate"
+    target_type = Column(String, nullable=True)  # "merchant" / "menu_item" / "user" / "event" / "pickup_slot" / "refund"
+    target_id = Column(String, nullable=True)
+    target_label = Column(String, nullable=True)  # human-readable name of the thing changed
+    summary = Column(Text, nullable=False)  # one-line, human-readable description of exactly what changed
+    details = Column(JSON, nullable=True)  # optional structured before/after values
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class SDGMetric(Base):
     __tablename__ = "sdg_metrics"
 
