@@ -1481,6 +1481,12 @@ async def create_merchant(merchant_data: MerchantCreate, db: AsyncSession = Depe
         location=merchant_data.location
     )
     db.add(new_merchant)
+    await db.flush()
+    await log_admin_action(
+        db, current_user, "merchant.create",
+        f"Created stall '{new_merchant.name}'",
+        target_type="merchant", target_id=new_merchant.id, target_label=new_merchant.name,
+    )
     await db.commit()
     await db.refresh(new_merchant)
     return new_merchant
@@ -2973,6 +2979,9 @@ async def admin_audit_log(
     target_type: Optional[str] = Query(default=None),
     actor_email: Optional[str] = Query(default=None),
     q: Optional[str] = Query(default=None, description="Search within the summary / target label"),
+    days: Optional[int] = Query(default=None, ge=1, le=365, description="Only entries from the last N days"),
+    since: Optional[datetime] = Query(default=None, description="Only entries at/after this timestamp (overrides `days` if both given)"),
+    until: Optional[datetime] = Query(default=None, description="Only entries at/before this timestamp"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -2989,6 +2998,11 @@ async def admin_audit_log(
     if q:
         like = f"%{q.strip()}%"
         stmt = stmt.where(or_(AdminAuditLog.summary.ilike(like), AdminAuditLog.target_label.ilike(like)))
+    effective_since = since or (datetime.now(timezone.utc) - timedelta(days=days) if days else None)
+    if effective_since:
+        stmt = stmt.where(AdminAuditLog.created_at >= effective_since)
+    if until:
+        stmt = stmt.where(AdminAuditLog.created_at <= until)
     total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     rows = (await db.execute(
         stmt.order_by(AdminAuditLog.created_at.desc()).offset(offset).limit(limit)
@@ -3134,6 +3148,11 @@ async def create_event(
         event_merchant = EventMerchant(event_id=new_event.id, merchant_id=merchant_id)
         db.add(event_merchant)
     
+    await log_admin_action(
+        db, current_user, "event.create",
+        f"Created event '{new_event.name}' with {len(merchant_ids)} vendor(s)",
+        target_type="event", target_id=new_event.id, target_label=new_event.name,
+    )
     await db.commit()
     await db.refresh(new_event)
     return {
@@ -3316,6 +3335,11 @@ async def add_merchant_to_event(
         stall_number=merchant_data.stall_number
     )
     db.add(event_merchant)
+    await log_admin_action(
+        db, current_user, "event.add_merchant",
+        f"Added '{merchant.name}' to event '{event.name}'",
+        target_type="event", target_id=event.id, target_label=event.name,
+    )
     await db.commit()
     
     return {"message": "Merchant added to event successfully"}
@@ -3351,10 +3375,16 @@ async def delete_event(
     event = await db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
+    event_name = event.name
     memberships = (await db.execute(select(EventMerchant).where(EventMerchant.event_id == event_id))).scalars().all()
     for membership in memberships:
         await db.delete(membership)
     await db.delete(event)
+    await log_admin_action(
+        db, current_user, "event.delete",
+        f"Deleted event '{event_name}'",
+        target_type="event", target_id=event_id, target_label=event_name,
+    )
     await db.commit()
     return {"message": "Event deleted. Its vendors are back in Browse Campus Stalls."}
 
@@ -3374,7 +3404,14 @@ async def remove_merchant_from_event(
     ))).scalars().first()
     if not membership:
         raise HTTPException(status_code=404, detail="Merchant is not assigned to this event.")
+    removed_merchant = await db.get(Merchant, merchant_id)
+    removed_event = await db.get(Event, event_id)
     await db.delete(membership)
+    await log_admin_action(
+        db, current_user, "event.remove_merchant",
+        f"Removed '{removed_merchant.name if removed_merchant else merchant_id}' from event '{removed_event.name if removed_event else event_id}'",
+        target_type="event", target_id=event_id, target_label=removed_event.name if removed_event else None,
+    )
     await db.commit()
     return {"message": "Merchant removed from event."}
 

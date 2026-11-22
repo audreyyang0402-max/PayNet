@@ -30,6 +30,13 @@ const TARGET_COLORS: Record<string, string> = {
 
 const PAGE_SIZE = 50;
 
+const DATE_RANGES = [
+  { label: "Last 5 days", days: 5 },
+  { label: "Last 10 days", days: 10 },
+  { label: "Last 30 days", days: 30 },
+  { label: "All time", days: null as number | null },
+];
+
 export default function AdminActivityPage() {
   const router = useRouter();
 
@@ -46,6 +53,7 @@ export default function AdminActivityPage() {
   const [search, setSearch] = useState("");
   const [targetType, setTargetType] = useState("all");
   const [actorEmail, setActorEmail] = useState("all");
+  const [days, setDays] = useState<number | null>(10);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const fetchPage = useCallback(
@@ -57,6 +65,7 @@ export default function AdminActivityPage() {
       if (targetType !== "all") params.set("target_type", targetType);
       if (actorEmail !== "all") params.set("actor_email", actorEmail);
       if (search.trim()) params.set("q", search.trim());
+      if (days != null) params.set("days", String(days));
 
       const res = await fetch(`${BACKEND_URL}/admin/audit-log?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -73,7 +82,7 @@ export default function AdminActivityPage() {
       setOffset(nextOffset + data.entries.length);
       setEntries((prev) => (replace ? data.entries : [...prev, ...data.entries]));
     },
-    [router, targetType, actorEmail, search]
+    [router, targetType, actorEmail, search, days]
   );
 
   // Initial load + reload whenever a filter changes
@@ -84,7 +93,7 @@ export default function AdminActivityPage() {
       .catch((err: any) => setError(err.message))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targetType, actorEmail]);
+  }, [targetType, actorEmail, days]);
 
   // Debounce free-text search
   useEffect(() => {
@@ -130,10 +139,6 @@ export default function AdminActivityPage() {
         {/* Header */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
           <h1 className="text-2xl font-bold text-gray-900">Activity Log</h1>
-          <p className="text-gray-500 text-sm mt-1">
-            Every change made in the admin portal — who did it, when, and exactly what changed.
-            This page is only visible to the two of you.
-          </p>
         </div>
 
         {error && <div className="p-4 bg-red-50 text-red-600 text-sm rounded-xl">{error}</div>}
@@ -155,6 +160,20 @@ export default function AdminActivityPage() {
 
           {/* Filters */}
           <div className="flex flex-wrap gap-3">
+            <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-semibold w-fit">
+              {DATE_RANGES.map((r) => (
+                <button
+                  key={r.label}
+                  onClick={() => setDays(r.days)}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                    days === r.days ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"
+                  }`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+
             <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-semibold w-fit">
               {TARGET_TYPES.map((t) => (
                 <button

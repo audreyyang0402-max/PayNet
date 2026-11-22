@@ -96,7 +96,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
             {/* Nav links */}
             <nav className="flex items-center gap-1">
-              {(showActivityTab ? [...NAV_ITEMS, ACTIVITY_NAV_ITEM] : NAV_ITEMS).map((item) => {
+              {(showActivityTab ? [NAV_ITEMS[0], ACTIVITY_NAV_ITEM, ...NAV_ITEMS.slice(1)] : NAV_ITEMS).map((item) => {
                 const active = pathname.startsWith(item.href);
                 return (
                   <Link
