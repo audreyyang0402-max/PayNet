@@ -32,7 +32,7 @@ const TAB_LABELS: Record<Tab, string> = {
   orders: "Manage Orders",
   refunds: "Refunds",
   menu: "Menu",
-  slots: "Pickup Times",
+  slots: "Pickup Slots",
 };
 
 export default function MerchantDashboard() {
@@ -326,7 +326,7 @@ export default function MerchantDashboard() {
             </p>
           </div>
           <nav aria-label="Merchant portal" className="grid grid-cols-2 gap-2 border-t border-stone-100 pt-4 text-center sm:flex sm:flex-wrap sm:justify-center">
-            {(["analytics", "orders", "menu", "slots", "refunds", "planning", "profile"] as Tab[]).map(t => (
+            {(["analytics", "profile", "menu", "orders", "slots", "planning", "refunds"] as Tab[]).map(t => (
               <button
                 key={t}
                 aria-pressed={tab === t}
