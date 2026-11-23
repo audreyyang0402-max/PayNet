@@ -711,16 +711,6 @@ export default function Home() {
 
         <div className="grid grid-cols-1 items-start gap-6 ">
           <section className="min-w-0 space-y-4">
-            <div className="flex flex-wrap items-end justify-between gap-2 px-1">
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700">
-                  Find your next meal
-                </p>
-                <h2 className="mt-0.5 text-xl sm:text-2xl font-black text-slate-900">Browse Campus Stalls</h2>
-              </div>
-              <p className="text-xs text-slate-500">Swipe or use the arrows to browse the menu</p>
-            </div>
-
             {merchants.filter(m => !eventMerchantIds.includes(m.id)).length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">
                 No stalls are available right now.
