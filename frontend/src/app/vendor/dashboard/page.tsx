@@ -37,6 +37,14 @@ const TAB_LABELS: Record<Tab, string> = {
 
 const actionButtonClass = "inline-flex items-center justify-center rounded-xl border border-stone-200 px-4 py-2.5 text-sm font-semibold text-center transition hover:bg-stone-50 focus-visible:outline-2 focus-visible:outline-orange-600";
 
+// A location field that's really just leftover placeholder text (e.g. "-Admin-"
+// typed in during setup) looks broken when printed as-is with its stray dashes.
+// Strip those and fall back to something sensible instead of an ugly literal "-".
+function cleanLocationLabel(raw: string | null | undefined): string {
+  const trimmed = (raw || "").trim().replace(/^[-\s]+|[-\s]+$/g, "").trim();
+  return trimmed || "No campus location set";
+}
+
 export default function MerchantDashboard() {
   const router = useRouter();
   const [merchant, setMerchant] = useState<MerchantProfile | null>(null);
@@ -145,6 +153,10 @@ export default function MerchantDashboard() {
   const [editEmail, setEditEmail] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [profileUpdateSuccess, setProfileUpdateSuccess] = useState("");
+  // Bug fix: this never auto-cleared before, so a pause/resume confirmation (now
+  // shown right under the status badge, not buried at the bottom of the page)
+  // would sit there indefinitely looking stuck/stale long after it stopped being news.
+  useEffect(() => { if (!profileUpdateSuccess) return; const timer = setTimeout(() => setProfileUpdateSuccess(""), 6000); return () => clearTimeout(timer); }, [profileUpdateSuccess]);
 
   const [stallBusy, setStallBusy] = useState(false);
 
@@ -316,18 +328,21 @@ export default function MerchantDashboard() {
               <div className="min-w-0 flex-1">
                 <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-orange-700">Merchant Portal</p>
                 <h1 className="mt-1 break-words text-2xl font-bold tracking-tight text-gray-900">{merchant?.name}</h1>
-                <p className="mt-1 text-sm text-stone-600">{merchant?.location}</p>
+                <p className="mt-1 text-sm text-stone-600">📍 {cleanLocationLabel(merchant?.location)}</p>
+                {editEmail && <p className="mt-0.5 text-sm text-stone-500 break-all">{editEmail}</p>}
 
                 {/* Stall status lives here, not buried inside Store Profile, because the
                     stall can be paused while you're on any other tab and that needs to
-                    be visible no matter where you are. */}
+                    be visible no matter where you are. Solid fill (not a pale tint) so
+                    paused vs. live reads instantly -- this is the one thing on the page
+                    that genuinely needs a strong color signal. */}
                 {merchant?.is_deleted ? (
-                  <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-stone-100 px-2.5 py-1 text-xs font-bold text-stone-500">
-                    <span className="h-2 w-2 rounded-full bg-stone-400" /> Closed by admin
+                  <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-stone-200 px-2.5 py-1 text-xs font-bold text-stone-600">
+                    <span className="h-2 w-2 rounded-full bg-stone-500" /> Closed by admin
                   </span>
                 ) : (
-                  <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${merchant?.is_active !== false ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
-                    <span className={`h-2 w-2 rounded-full ${merchant?.is_active !== false ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
+                  <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold text-white shadow-sm ${merchant?.is_active !== false ? "bg-emerald-500" : "bg-amber-500"}`}>
+                    <span className={`h-2 w-2 rounded-full bg-white ${merchant?.is_active !== false ? "animate-pulse" : ""}`} />
                     {merchant?.is_active !== false ? "Live to customers" : "Paused — hidden from customers"}
                   </span>
                 )}
@@ -352,7 +367,7 @@ export default function MerchantDashboard() {
               <span className={`${actionButtonClass} cursor-default border-stone-200 bg-stone-50 text-stone-400`}>Closed by admin</span>
             ) : (
               <button type="button" disabled={stallBusy} onClick={handleToggleStallActive}
-                className={`${actionButtonClass} disabled:opacity-50 ${merchant?.is_active !== false ? "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100" : "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"}`}>
+                className={`${actionButtonClass} border-transparent text-white shadow-sm disabled:opacity-50 ${merchant?.is_active !== false ? "bg-emerald-600 hover:bg-emerald-700" : "bg-amber-500 hover:bg-amber-600"}`}>
                 {stallBusy ? "Please wait…" : merchant?.is_active !== false ? "Live — tap to pause" : "Paused — tap to resume"}
               </button>
             )}
