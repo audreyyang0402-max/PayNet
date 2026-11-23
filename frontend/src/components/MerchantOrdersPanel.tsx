@@ -19,12 +19,10 @@ function statusMeta(status: string) {
 }
 
 const ORDER_FILTERS: { key: string; label: string }[] = [
-  { key: "active", label: "Incoming / Active" },
+  { key: "active", label: "Active" },
   { key: "pending_verification", label: "Pending Verification" },
   { key: "preparing", label: "Preparing" },
-  { key: "ready", label: "Ready" },
   { key: "completed", label: "Completed" },
-  { key: "all", label: "All" },
 ];
 // "Active" means not yet closed out -- the order still needs the vendor's
 // attention in some way, whether that's verifying payment, cooking, or
@@ -62,6 +60,28 @@ export default function MerchantOrdersPanel({
     <div className="space-y-4 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-6">
       <h2 className="scroll-mt-6 text-xl font-bold text-gray-900">Manage Orders</h2>
       <p className="text-sm text-stone-500">Updates every 15 seconds while this page is visible. Verify payment in your banking app before accepting.</p>
+
+      <details className="rounded-2xl border border-orange-200 bg-orange-50/60 p-4 sm:p-5">
+        <summary className="cursor-pointer text-sm font-bold text-orange-900">👋 New here? How to process an order (3 steps)</summary>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-orange-100 bg-white p-3">
+            <p className="text-sm font-bold text-slate-900">1️⃣ Verify &amp; Accept</p>
+            <p className="mt-1.5 text-xs leading-relaxed text-slate-600">Open the customer’s payment receipt and check the items and quantities in their order. If the amount paid matches the order total, tap <strong>Verify &amp; Accept</strong>.</p>
+            <p className="mt-1.5 text-xs text-slate-400">The customer will see their order status change to <strong>Preparing</strong>.</p>
+          </div>
+          <div className="rounded-xl border border-orange-100 bg-white p-3">
+            <p className="text-sm font-bold text-slate-900">2️⃣ Mark Ready</p>
+            <p className="mt-1.5 text-xs leading-relaxed text-slate-600">Once the full order is packed and ready for pickup, tap <strong>Mark Ready</strong>.</p>
+            <p className="mt-1.5 text-xs text-slate-400">The customer will be notified that their food is ready to collect.</p>
+          </div>
+          <div className="rounded-xl border border-orange-100 bg-white p-3">
+            <p className="text-sm font-bold text-slate-900">3️⃣ Mark Collected</p>
+            <p className="mt-1.5 text-xs leading-relaxed text-slate-600">After handing the food to the customer, tap <strong>Mark Collected</strong>.</p>
+            <p className="mt-1.5 text-xs italic text-slate-400">The customer will receive their invoice, and the order will be closed.</p>
+          </div>
+        </div>
+      </details>
+
       {orderError && <p role="alert" className="text-sm text-red-700">{orderError}</p>}
       <nav aria-label="Order status" className="flex flex-wrap gap-2">
         {ORDER_FILTERS.map(f => (

@@ -129,8 +129,7 @@ function SalesDashboard({ audience, embedded = false }: { audience: string; embe
               {!embedded && !isAdmin && <Link href={isCustomer ? "/profile" : "/vendor/dashboard"} className="inline-block rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-800">
                 Back to {isCustomer ? "my account" : "vendor dashboard"}
               </Link>}
-              <p className="mt-4 text-xs font-bold uppercase tracking-[0.18em] text-orange-700">Analytics</p>
-              <h2 className="mt-1 text-2xl font-bold text-slate-900">{isAdmin ? "Platform analytics" : isCustomer ? "Your spending" : "Store analytics"}</h2>
+              <h2 className="mt-4 text-2xl font-bold text-slate-900">{isAdmin ? "Platform Analytics" : isCustomer ? "Your Spending" : "Store Analytics"}</h2>
               <p className="mt-2 text-sm text-slate-500">{isCustomer ? "Your completed purchases and order activity from the selected period." : "Sales and order activity from the selected period."}</p>
             </div>
             <label className="text-sm font-medium text-slate-700">

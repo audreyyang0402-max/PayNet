@@ -35,6 +35,8 @@ const TAB_LABELS: Record<Tab, string> = {
   slots: "Pickup Slots",
 };
 
+const actionButtonClass = "inline-flex items-center justify-center rounded-xl border border-stone-200 px-4 py-2.5 text-sm font-semibold text-center transition hover:bg-stone-50 focus-visible:outline-2 focus-visible:outline-orange-600";
+
 export default function MerchantDashboard() {
   const router = useRouter();
   const [merchant, setMerchant] = useState<MerchantProfile | null>(null);
@@ -305,27 +307,60 @@ export default function MerchantDashboard() {
 
         <BackLink href="/">Back to marketplace</BackLink>
 
-        <div className="space-y-4 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-6">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div>
-              <span className="bg-orange-50 text-orange-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block">
-                Merchant Portal
-              </span>
-              <h1 className="text-2xl font-bold text-gray-900">{merchant?.name}</h1>
-              <p className="text-sm text-stone-600">{merchant?.location}</p>
+        <section className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm">
+          <div className="p-5 sm:p-7">
+            <div className="flex items-start gap-4 sm:gap-6">
+              <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-orange-50 text-3xl font-semibold text-orange-700 ring-1 ring-orange-100 sm:h-24 sm:w-24">
+                {(merchant?.name || "S").charAt(0).toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-orange-700">Merchant Portal</p>
+                <h1 className="mt-1 break-words text-2xl font-bold tracking-tight text-gray-900">{merchant?.name}</h1>
+                <p className="mt-1 text-sm text-stone-600">{merchant?.location}</p>
+
+                {/* Stall status lives here, not buried inside Store Profile, because the
+                    stall can be paused while you're on any other tab and that needs to
+                    be visible no matter where you are. */}
+                {merchant?.is_deleted ? (
+                  <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-stone-100 px-2.5 py-1 text-xs font-bold text-stone-500">
+                    <span className="h-2 w-2 rounded-full bg-stone-400" /> Closed by admin
+                  </span>
+                ) : (
+                  <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${merchant?.is_active !== false ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                    <span className={`h-2 w-2 rounded-full ${merchant?.is_active !== false ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
+                    {merchant?.is_active !== false ? "Live to customers" : "Paused — hidden from customers"}
+                  </span>
+                )}
+              </div>
             </div>
-            <button onClick={handleLogout} className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700">Log Out</button>
+
+            {soundError ? (
+              <p role="status" className="mt-4 rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">{soundError}</p>
+            ) : profileUpdateSuccess ? (
+              <p role="status" className="mt-4 rounded-xl bg-green-50 p-3 text-xs font-semibold text-green-700">{profileUpdateSuccess}</p>
+            ) : !soundReady ? (
+              <p className="mt-4 text-xs text-stone-400">Tip: tap “Enable order sounds” once on this device so you hear new order alerts.</p>
+            ) : null}
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 p-3">
-            <button type="button" onClick={enableOrderSounds} className="rounded-lg bg-orange-700 px-4 py-2 text-sm font-bold text-white hover:bg-orange-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-700">
+          <nav aria-label="Stall actions" className="grid grid-cols-1 gap-3 border-t border-stone-100 p-5 sm:grid-cols-3 sm:p-7">
+            <button type="button" onClick={enableOrderSounds} className={actionButtonClass}>
               {soundReady ? "Test order sound" : "Enable order sounds"}
             </button>
-            <p role="status" className="text-sm text-stone-700">
-              {soundError || (soundReady ? "Order sounds enabled. Keep this dashboard open and visible." : "Tap to enable sounds on this device. You should hear a test chime.")}
-            </p>
-          </div>
-          <nav aria-label="Merchant portal" className="grid grid-cols-2 gap-2 border-t border-stone-100 pt-4 text-center sm:flex sm:flex-wrap sm:justify-center">
+
+            {merchant?.is_deleted ? (
+              <span className={`${actionButtonClass} cursor-default border-stone-200 bg-stone-50 text-stone-400`}>Closed by admin</span>
+            ) : (
+              <button type="button" disabled={stallBusy} onClick={handleToggleStallActive}
+                className={`${actionButtonClass} disabled:opacity-50 ${merchant?.is_active !== false ? "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100" : "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"}`}>
+                {stallBusy ? "Please wait…" : merchant?.is_active !== false ? "Live — tap to pause" : "Paused — tap to resume"}
+              </button>
+            )}
+
+            <button onClick={handleLogout} className={`${actionButtonClass} border-red-200 bg-red-50 text-red-700 hover:bg-red-100`}>Log out</button>
+          </nav>
+
+          <nav aria-label="Merchant portal" className="grid grid-cols-2 gap-2 border-t border-stone-100 p-5 text-center sm:flex sm:flex-wrap sm:justify-center sm:p-7 sm:pt-5">
             {(["analytics", "profile", "menu", "orders", "slots", "planning", "refunds"] as Tab[]).map(t => (
               <button
                 key={t}
@@ -337,12 +372,7 @@ export default function MerchantDashboard() {
               </button>
             ))}
           </nav>
-
-          {profileUpdateSuccess && (
-            <div className="p-3 bg-green-50 text-green-700 text-xs rounded-xl">{profileUpdateSuccess}</div>
-          )}
-
-        </div>
+        </section>
 
         {tab === "profile" && <div className="space-y-4">
           <form onSubmit={handleUpdateMerchantProfile} className="space-y-4 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm sm:p-6">
@@ -387,26 +417,6 @@ export default function MerchantDashboard() {
               <ChangePasswordButton />
             </div>
 
-            {merchant?.is_deleted ? (
-              <p className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs font-semibold text-stone-500">
-                This stall has been closed by an admin. Contact support if you believe this is a mistake.
-              </p>
-            ) : (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-200 bg-stone-50 p-4">
-                <div>
-                  <p className="text-sm font-semibold text-stone-800">
-                    {merchant?.is_active !== false ? "Your stall is live" : "Your stall is paused"}
-                  </p>
-                  <p className="mt-0.5 text-xs text-stone-500">
-                    {merchant?.is_active !== false ? "Customers can see and order from you." : "Hidden from customers until you turn it back on."}
-                  </p>
-                </div>
-                <button type="button" disabled={stallBusy} onClick={handleToggleStallActive}
-                  className={`rounded-xl px-4 py-2 text-xs font-bold transition disabled:opacity-50 ${merchant?.is_active !== false ? "border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" : "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}>
-                  {stallBusy ? "Please wait…" : merchant?.is_active !== false ? "Pause my stall" : "Resume my stall"}
-                </button>
-              </div>
-            )}
           </form>
           <details className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
             <summary className="cursor-pointer text-sm font-semibold text-stone-800">Payment QR · {merchant?.duitnow_qr_url ? "Ready" : "Setup needed"}</summary>
