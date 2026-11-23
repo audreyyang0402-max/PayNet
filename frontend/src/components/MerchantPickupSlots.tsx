@@ -5,6 +5,7 @@ import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState } from "react";
 import CopyPickupWeek from "./CopyPickupWeek";
 import WeeklyPickupSchedule from "./WeeklyPickupSchedule";
+import PickupSlotsTour from "./PickupSlotsTour";
 
 interface PickupSlot {
   id: string;
@@ -105,8 +106,18 @@ export default function MerchantPickupSlots({
     <div className="space-y-4">
       <WeeklyPickupSchedule onSaved={() => { void refreshSlots(); }} />
       <section className="rounded-2xl border border-orange-100 bg-white p-5 shadow-sm">
-        <h2 className="text-base font-bold text-slate-900">Upcoming pickup times</h2>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h2 className="text-base font-bold text-slate-900">Upcoming pickup times</h2>
+          <PickupSlotsTour />
+        </div>
         <p className="mt-1 text-sm text-slate-600">{loading ? "Loading times…" : `${availableSlots.length} open · ${fullSlots.length} full or closed · ${totalBookings}/${totalCapacity} places booked`}</p>
+        {!loading && upcoming.length > 0 && (
+          <p className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <span className="rounded-full bg-teal-100 px-2.5 py-1 font-bold text-teal-800">{upcoming.filter(s => s.is_automatic).length} auto (from your weekly hours)</span>
+            <span className="rounded-full bg-indigo-100 px-2.5 py-1 font-bold text-indigo-800">{upcoming.filter(s => !s.is_automatic).length} added manually</span>
+            <span className="text-slate-400">Seeing both for the same time? Delete whichever one you don't need below.</span>
+          </p>
+        )}
         {!loading && upcoming.length === 0 && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">No pickup times yet. Set your weekly schedule above once to start taking bookings.</p>}
         <div className="mt-4 space-y-2">
           {Object.keys(byDay).sort().map(day => {
@@ -142,9 +153,12 @@ function SlotRow({ slot, onDelete, isFull = false }: { slot: PickupSlot; onDelet
         <p className="font-bold text-slate-900">
           {new Date(slot.time_slot).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
         </p>
-        <p className={`text-[11px] mt-0.5 ${isFull ? "text-red-600 font-semibold" : "text-slate-500"}`}>
-          {slot.current_bookings} / {slot.max_capacity} orders · {slot.is_automatic ? "Weekly" : "Manual"}
-          {isFull && <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">{slot.is_bookable === false ? "CLOSED" : "FULL"}</span>}
+        <p className={`text-[11px] mt-0.5 flex items-center gap-1.5 ${isFull ? "text-red-600 font-semibold" : "text-slate-500"}`}>
+          <span>{slot.current_bookings} / {slot.max_capacity} orders</span>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${slot.is_automatic ? "bg-teal-100 text-teal-700" : "bg-indigo-100 text-indigo-700"}`}>
+            {slot.is_automatic ? "Weekly" : "Manual"}
+          </span>
+          {isFull && <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">{slot.is_bookable === false ? "CLOSED" : "FULL"}</span>}
         </p>
       </div>
       {!slot.is_automatic && <button onClick={() => onDelete(slot.id)} className="text-red-600 hover:underline font-semibold px-2 py-1">Delete</button>}

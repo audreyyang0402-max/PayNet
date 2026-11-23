@@ -10,7 +10,9 @@ type Merchant = {
   email: string; phone_number: string; owner_name: string;
   is_active: boolean; is_preview?: boolean; is_deleted?: boolean; duitnow_qr_url?: string; display_order?: number;
 };
-type Slot = { id: string; time_slot: string; current_bookings: number; max_capacity: number; is_full?: boolean };
+type Slot = { id: string; time_slot: string; current_bookings: number; max_capacity: number; is_full?: boolean; is_automatic?: boolean; is_bookable?: boolean };
+type OperatingHours = { enabled: boolean; paused: boolean; days: { weekday: number; opens: string; closes: string }[]; closed_dates: string[] };
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 type Item = { id: string; name: string; price: number; is_available: boolean; image_url?: string | null; approval_status?: string; created_at?: string };
 type Order = { id: string; order_number?: string; customer_name: string; status: string; total_price: number; transaction_ref?: string; items: { name: string; quantity: number }[] };
 
@@ -46,6 +48,7 @@ export default function AdminMerchants() {
   const [slots, setSlots] = useState<Slot[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [operatingHours, setOperatingHours] = useState<OperatingHours | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
   const [editMerchant, setEditMerchant] = useState<Merchant | null>(null);
@@ -95,13 +98,14 @@ export default function AdminMerchants() {
   useEffect(() => {
     if (!selectedId) return;
     let stopped = false;
-    setDetailLoading(true); setItems([]); setSlots([]); setOrders([]);
+    setDetailLoading(true); setItems([]); setSlots([]); setOrders([]); setOperatingHours(null);
     Promise.all([
       api(`/admin/merchants/${selectedId}/items`),
       api(`/admin/merchants/${selectedId}/pickup-slots`),
       api(`/merchants/${selectedId}/orders`),
-    ]).then(([i, s, o]) => {
-      if (!stopped) { setItems(i); setSlots(s); setOrders(o); }
+      api(`/admin/merchants/${selectedId}/pickup-schedule`).catch(() => null),
+    ]).then(([i, s, o, h]) => {
+      if (!stopped) { setItems(i); setSlots(s); setOrders(o); setOperatingHours(h); }
     }).catch(e => { if (!stopped) showToast(e.message, "err"); })
       .finally(() => { if (!stopped) setDetailLoading(false); });
     return () => { stopped = true; };
@@ -370,12 +374,42 @@ export default function AdminMerchants() {
           )}
         </div>
 
+        {/* Operating Hours */}
+        <div className="rounded-2xl border border-stone-200 bg-white shadow-sm p-5">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="font-black text-slate-900">Operating Hours</h3>
+            {detailLoading && <Spinner small />}
+          </div>
+          {!detailLoading && (!operatingHours || !operatingHours.enabled || operatingHours.days.length === 0) && (
+            <p className="text-sm text-stone-400 py-4">No weekly schedule set -- this vendor hasn't configured operating hours yet.</p>
+          )}
+          {operatingHours && operatingHours.enabled && operatingHours.days.length > 0 && (
+            <div className="mt-2">
+              {operatingHours.paused && (
+                <span className="inline-block mb-2 rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">New bookings paused</span>
+              )}
+              <p className="text-sm text-slate-700">
+                {operatingHours.days.slice().sort((a, b) => a.weekday - b.weekday)
+                  .map(d => `${WEEKDAYS[d.weekday]} ${d.opens.slice(0, 5)}–${d.closes.slice(0, 5)}`).join(" · ")}
+              </p>
+              {operatingHours.closed_dates.length > 0 && (
+                <p className="mt-1 text-xs text-stone-400">{operatingHours.closed_dates.length} closed date(s) on file</p>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Pickup Slots */}
         <div className="rounded-2xl border border-stone-200 bg-white shadow-sm p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-1">
             <h3 className="font-black text-slate-900">Pickup Slots <span className="text-stone-400 font-normal">({slots.length})</span></h3>
             {detailLoading && <Spinner small />}
           </div>
+          {slots.length > 0 && (
+            <p className="text-[11px] text-stone-400 mb-3">
+              {slots.filter(s => s.is_automatic).length} auto-generated from weekly hours · {slots.filter(s => !s.is_automatic).length} added manually by the vendor
+            </p>
+          )}
           {!detailLoading && slots.length === 0 && (
             <p className="text-sm text-stone-400 py-6 text-center bg-stone-50 rounded-xl">No pickup slots configured.</p>
           )}
@@ -387,6 +421,9 @@ export default function AdminMerchants() {
                     <p className="text-sm font-semibold">{fmt(s.time_slot)}</p>
                     <div className="mt-0.5 flex items-center gap-2 text-xs text-stone-500">
                       <span>{s.current_bookings} / {s.max_capacity} booked</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${s.is_automatic ? "bg-teal-100 text-teal-700" : "bg-indigo-100 text-indigo-700"}`}>
+                        {s.is_automatic ? "Weekly" : "Manual"}
+                      </span>
                       {s.is_full && <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-600">FULL</span>}
                     </div>
                   </div>

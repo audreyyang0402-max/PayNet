@@ -53,6 +53,33 @@ const STATUS_STYLES: Record<string, string> = {
   cancelled: "bg-red-100 text-red-700",
 };
 
+// Never show a pickup slot's time without its date -- a slot picked days out
+// must never read like it's for today. "Today"/"Tomorrow" keep the common
+// case easy to scan; anything further out always spells out the date.
+function formatPickupLabel(isoString: string): { label: string; isToday: boolean } {
+  const pickup = new Date(isoString);
+  const tz = "Asia/Kuala_Lumpur";
+  const dayKey = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: tz }); // YYYY-MM-DD, stable for comparison
+
+  const now = new Date();
+  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+  const pickupDay = dayKey(pickup);
+  const todayDay = dayKey(now);
+  const tomorrowDay = dayKey(tomorrow);
+
+  const time = pickup.toLocaleString("en-MY", { timeZone: tz, hour: "2-digit", minute: "2-digit" });
+
+  if (pickupDay === todayDay) {
+    return { label: `Today, ${time}`, isToday: true };
+  }
+  if (pickupDay === tomorrowDay) {
+    return { label: `Tomorrow, ${time}`, isToday: false };
+  }
+  const dateStr = pickup.toLocaleDateString("en-MY", { timeZone: tz, weekday: "short", day: "numeric", month: "short" });
+  return { label: `${dateStr} · ${time}`, isToday: false };
+}
+
 export default function OrderReceiptPage() {
   const params = useParams();
   const orderId = params.id;
@@ -260,11 +287,20 @@ export default function OrderReceiptPage() {
                   {data.merchant_location && (
                     <p className="text-gray-600">{data.merchant_location}</p>
                   )}
-                  {data.pickup_time && (
-                    <p className="text-gray-700 mt-1">
-                      🕐 Pickup slot: <strong>{new Date(data.pickup_time).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", hour: "2-digit", minute: "2-digit" })}</strong>
-                    </p>
-                  )}
+                  {data.pickup_time && (() => {
+                    const { label, isToday } = formatPickupLabel(data.pickup_time);
+                    return (
+                      <p className="text-gray-700 mt-1">
+                        🕐 Pickup slot:{" "}
+                        <strong className={isToday ? "" : "text-orange-800"}>{label}</strong>
+                        {!isToday && (
+                          <span className="block text-xs text-orange-600 font-semibold mt-0.5">
+                            Not today -- don't head to the stall until this date.
+                          </span>
+                        )}
+                      </p>
+                    );
+                  })()}
                 </div>
               )}
 

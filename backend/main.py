@@ -556,6 +556,10 @@ class MerchantPublic(BaseModel):
     description: Optional[str] = None
     duitnow_qr_url: Optional[str] = None
     is_active: Optional[bool] = True
+    # Weekly operating hours -- surfaced so customers (and the stall's own
+    # profile) can see exactly when pickup slots get auto-generated, instead
+    # of only seeing the slots themselves with no sense of the pattern.
+    operating_hours: Optional[dict] = None
 
 class MenuItemCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
@@ -1544,7 +1548,10 @@ async def list_merchants_sorted(db: AsyncSession = Depends(get_db)):
 @app.get("/merchants/{merchant_id}", response_model=MerchantPublic)
 async def get_merchant_details(merchant_id: UUID, db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
     merchant = await require_shop_access(db, merchant_id, authorization)
-    return MerchantPublic.model_validate(merchant)
+    public = MerchantPublic.model_validate(merchant)
+    if merchant.pickup_schedule:
+        public.operating_hours = merchant.pickup_schedule
+    return public
 
 
 @app.post("/merchants/{merchant_id}/items")
@@ -2460,7 +2467,22 @@ async def list_customer_orders(db: AsyncSession = Depends(get_db), current_user:
         .order_by(Order.created_at.desc())
     )
     orders = result.scalars().all()
-    
+
+    # Customers need the pickup date front and center -- a slot days away must
+    # never look like "today" on this list. Batch-fetch slot times and merchant
+    # names in two queries instead of one lookup per order.
+    slot_ids = {order.pickup_slot_id for order in orders if order.pickup_slot_id}
+    pickup_times: dict[str, Optional[str]] = {}
+    if slot_ids:
+        slot_rows = (await db.execute(select(PickupSlot.id, PickupSlot.time_slot).where(PickupSlot.id.in_(slot_ids)))).all()
+        pickup_times = {str(slot_id): (time_slot.isoformat() if time_slot else None) for slot_id, time_slot in slot_rows}
+
+    merchant_ids = {order.merchant_id for order in orders if order.merchant_id}
+    merchant_names: dict[str, str] = {}
+    if merchant_ids:
+        merchant_rows = (await db.execute(select(Merchant.id, Merchant.name).where(Merchant.id.in_(merchant_ids)))).all()
+        merchant_names = {str(merchant_id): name for merchant_id, name in merchant_rows}
+
     response = []
     for order in orders:
         items_data = [
@@ -2477,9 +2499,14 @@ async def list_customer_orders(db: AsyncSession = Depends(get_db), current_user:
         response.append({
             "id": str(order.id),
             "merchant_id": str(order.merchant_id),
+            "merchant_name": merchant_names.get(str(order.merchant_id), "Merchant"),
             "status": order.status,
             "total_price": float(order.total_price),
             "created_at": order.created_at.isoformat() if order.created_at else None,
+            "pickup_time": pickup_times.get(str(order.pickup_slot_id)) if order.pickup_slot_id else None,
+            # Kept even if the slot is later deleted -- this is the reliable field
+            # for "is this order for today", set once at checkout and never moved.
+            "pickup_service_date": order.pickup_service_date.isoformat() if order.pickup_service_date else None,
             "items": items_data
         })
     return response
@@ -3878,6 +3905,25 @@ async def admin_list_pickup_slots(
             "max_capacity": s.max_capacity,
             "current_bookings": s.current_bookings,
             "is_full": s.current_bookings >= s.max_capacity,
+            # So admins can tell at a glance which slots came from the weekly
+            # schedule versus a one-off the merchant added by hand.
+            "is_automatic": bool(getattr(s, "is_automatic", False)),
+            "is_bookable": getattr(s, "is_bookable", True) is not False,
         }
         for s in slots
     ]
+
+
+@app.get("/admin/merchants/{merchant_id}/pickup-schedule")
+async def admin_get_pickup_schedule(
+    merchant_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Read-only view of a vendor's weekly operating hours, for the admin vendor detail panel."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required.")
+    merchant = await db.get(Merchant, merchant_id)
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant not found.")
+    return merchant.pickup_schedule or default_schedule()
