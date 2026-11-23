@@ -123,14 +123,17 @@ function SalesDashboard({ audience, embedded = false }: { audience: string; embe
   return (
     <Container className={embedded ? "" : "min-h-screen bg-stone-50 p-5 sm:p-8"}>
       <div className="mx-auto max-w-5xl space-y-6">
-        <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-4">
+        {/* Not much vertical room to spare on a phone -- this used to reserve a
+            fixed top margin above the heading for a back-link that isn't even
+            shown in the embedded (vendor dashboard) context, leaving dead space. */}
+        <header className={`rounded-2xl border border-slate-200 bg-white shadow-sm ${embedded ? "p-4" : "p-4 sm:p-6"}`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              {!embedded && !isAdmin && <Link href={isCustomer ? "/profile" : "/vendor/dashboard"} className="inline-block rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-800">
+              {!embedded && !isAdmin && <Link href={isCustomer ? "/profile" : "/vendor/dashboard"} className="mb-3 inline-block rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-800">
                 Back to {isCustomer ? "my account" : "vendor dashboard"}
               </Link>}
-              <h2 className="mt-4 text-2xl font-bold text-slate-900">{isAdmin ? "Platform Analytics" : isCustomer ? "Your Spending" : "Store Analytics"}</h2>
-              <p className="mt-2 text-sm text-slate-500">{isCustomer ? "Your completed purchases and order activity from the selected period." : "Sales and order activity from the selected period."}</p>
+              <h2 className="text-xl font-bold text-slate-900 sm:text-2xl">{isAdmin ? "Platform Analytics" : isCustomer ? "Your Spending" : "Store Analytics"}</h2>
+              <p className="mt-1 text-xs text-slate-500 sm:text-sm">{isCustomer ? "Your completed purchases and order activity from the selected period." : "Sales and order activity from the selected period."}</p>
             </div>
             <label className="text-sm font-medium text-slate-700">
               Date range

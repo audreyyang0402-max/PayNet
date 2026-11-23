@@ -145,6 +145,24 @@ export default function MerchantDashboard() {
   }, [merchantId]);
 
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(""), 5000); return () => clearTimeout(timer); }, [notice]);
+
+  // Menu, Pickup Slots and Surplus Offers are code-split (next/dynamic) so the
+  // first dashboard load stays small -- but that means the FIRST time a merchant
+  // opens one of those tabs, the browser also has to fetch its JS chunk over the
+  // network before it can even start loading data, which is extra-noticeable on
+  // slower campus wifi. Quietly warm those chunks in the background once the
+  // dashboard itself has settled, so by the time the tab is tapped the code is
+  // already cached and only the data fetch is left to wait on.
+  useEffect(() => {
+    const w = window as Window & { requestIdleCallback?: (cb: () => void) => number };
+    const schedule = w.requestIdleCallback ? w.requestIdleCallback.bind(w) : (cb: () => void) => window.setTimeout(cb, 300);
+    schedule(() => {
+      import("@/components/MerchantMenuManager");
+      import("@/components/SurplusOfferManager");
+      import("@/components/MerchantPickupSlots");
+    });
+  }, []);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -339,18 +357,12 @@ export default function MerchantDashboard() {
                 <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-orange-700">Merchant Portal</p>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                   <h1 className="break-words text-lg font-bold leading-tight tracking-tight text-gray-900">{merchant?.name}</h1>
-                  {/* Stall status lives here, not buried inside Store Profile, because the
-                      stall can be paused while you're on any other tab and that needs to
-                      be visible no matter where you are. Pale tint (not a solid fill) so
-                      it reads as a calm status badge instead of a jarring alert color. */}
-                  {merchant?.is_deleted ? (
+                  {/* Only shown for an admin-closed stall. Live/paused used to be repeated
+                      here too, but the toggle button right below already shows that state
+                      clearly (and in color), so showing it twice was redundant. */}
+                  {merchant?.is_deleted && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-stone-200 px-2 py-0.5 text-[11px] font-bold text-stone-600">
                       <span className="h-1.5 w-1.5 rounded-full bg-stone-500" /> Closed
-                    </span>
-                  ) : (
-                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ${merchant?.is_active !== false ? "bg-emerald-100 text-emerald-800 ring-emerald-200" : "bg-amber-100 text-amber-800 ring-amber-200"}`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${merchant?.is_active !== false ? "bg-emerald-500" : "bg-amber-500"}`} />
-                      {merchant?.is_active !== false ? "Live" : "Paused"}
                     </span>
                   )}
                 </div>
@@ -362,12 +374,13 @@ export default function MerchantDashboard() {
               <p role="status" className="mt-3 rounded-lg bg-red-50 p-2.5 text-xs font-semibold text-red-700">{soundError}</p>
             ) : profileUpdateSuccess ? (
               <p role="status" className="mt-3 rounded-lg bg-green-50 p-2.5 text-xs font-semibold text-green-700">{profileUpdateSuccess}</p>
-            ) : !soundReady ? (
-              <p className="mt-3 text-[11px] text-stone-400">Tip: tap “Enable sounds” once on this device for new-order alerts.</p>
             ) : null}
 
             <nav aria-label="Stall actions" className="mt-3 flex flex-wrap gap-2">
-              <button type="button" onClick={enableOrderSounds} className={actionButtonClass}>
+              {/* Muted gray, not white-with-a-border -- this is a one-time device
+                  setting, not a frequent action, so it shouldn't compete visually
+                  with the pause/resume toggle next to it. */}
+              <button type="button" onClick={enableOrderSounds} className={`${actionButtonClass} border-stone-200 bg-stone-100 text-stone-500 hover:bg-stone-200`}>
                 {soundReady ? "Test sound" : "Enable sounds"}
               </button>
 
@@ -376,12 +389,18 @@ export default function MerchantDashboard() {
               ) : (
                 <button type="button" disabled={stallBusy} onClick={handleToggleStallActive}
                   className={`${actionButtonClass} disabled:opacity-50 ${merchant?.is_active !== false ? "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100" : "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"}`}>
-                  {stallBusy ? "Please wait…" : merchant?.is_active !== false ? "Live — tap to pause" : "Paused — tap to resume"}
+                  {stallBusy ? "Please wait…" : merchant?.is_active !== false ? "Visible to customers, tap to pause" : "Hidden from customers, tap to resume"}
                 </button>
               )}
 
               <button onClick={handleLogout} className={`${actionButtonClass} border-red-200 bg-red-50 text-red-700 hover:bg-red-100`}>Log out</button>
             </nav>
+
+            {/* Moved below the buttons -- it's a passive tip, not something that
+                should push the actions further down the page. */}
+            {!soundError && !profileUpdateSuccess && !soundReady && (
+              <p className="mt-3 text-[11px] text-stone-400">Tip: tap “Enable sounds” once on this device for new-order alerts.</p>
+            )}
           </div>
 
           <nav aria-label="Merchant portal" className="grid grid-cols-2 gap-2 border-t border-stone-100 p-3 text-center sm:flex sm:flex-wrap sm:justify-center sm:p-4">
