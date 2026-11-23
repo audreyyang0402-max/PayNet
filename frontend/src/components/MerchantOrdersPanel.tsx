@@ -26,6 +26,10 @@ const ORDER_FILTERS: { key: string; label: string }[] = [
   { key: "completed", label: "Completed" },
   { key: "all", label: "All" },
 ];
+// "Active" means not yet closed out -- the order still needs the vendor's
+// attention in some way, whether that's verifying payment, cooking, or
+// waiting for the customer to collect it. Only Completed/Rejected/Cancelled
+// orders are truly done and drop out of this view.
 const ACTIVE_STATUSES = new Set(["pending", "pending_verification", "preparing", "ready"]);
 
 interface MerchantOrdersPanelProps {
@@ -76,35 +80,33 @@ export default function MerchantOrdersPanel({
           {filteredOrders.map((order) => (
             <div key={order.id} className={`rounded-2xl border border-gray-200 border-l-4 ${statusMeta(order.status).accent} bg-white p-4 shadow-sm transition hover:shadow-md sm:p-5`}>
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 pb-4">
-                <div>
-                  <p className="font-mono text-sm font-bold text-gray-900">{order.order_number || `#EX-${order.id.slice(0, 6)}`}</p>
-                  <dl className="mt-2 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs">
-                    <dt className="text-gray-400">Customer</dt>
-                    <dd className="font-semibold text-gray-800">{order.customer_name || "Customer"}</dd>
-                    <dt className="text-gray-400">Placed on</dt>
-                    <dd className="text-gray-600">{new Date(order.created_at).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", dateStyle: "medium", timeStyle: "short" })}</dd>
-                    {order.pickup_time && (
-                      <>
-                        <dt className="text-gray-400">Pickup slot</dt>
-                        <dd className="font-semibold text-orange-700">{new Date(order.pickup_time).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</dd>
-                      </>
-                    )}
-                  </dl>
-                </div>
+                <p className="font-mono text-xs text-gray-400">{order.order_number || `#EX-${order.id.slice(0, 6)}`}</p>
                 <span className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${statusMeta(order.status).badge}`}>{statusMeta(order.status).label}</span>
               </div>
-              {order.transaction_ref && (
-                <a href={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`} target="_blank" rel="noopener noreferrer"
-                  className="mt-4 flex items-center gap-3 rounded-xl border border-stone-200 bg-stone-50 p-3 transition hover:bg-stone-100">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`}
-                    alt="Payment receipt screenshot" loading="lazy" className="h-14 w-14 shrink-0 rounded-lg border border-stone-200 object-cover" />
-                  <div className="text-xs">
-                    <p className="font-semibold text-stone-700">Payment receipt uploaded</p>
-                    <p className="text-stone-400">Tap to view full size</p>
+
+              {/* Customer + pickup slot: the two things a vendor needs at a glance.
+                  Pickup slot is the most prominent element on the card -- it's what
+                  determines when the food needs to be ready, so it can't be missed. */}
+              <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-stretch sm:justify-between">
+                <div className="min-w-0">
+                  <p className="truncate text-lg font-bold text-gray-900 sm:text-xl">{order.customer_name || "Customer"}</p>
+                  <p className="mt-0.5 text-[11px] text-gray-400">
+                    Placed {new Date(order.created_at).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", dateStyle: "medium", timeStyle: "short" })}
+                  </p>
+                </div>
+                {order.pickup_time && (
+                  <div className="shrink-0 rounded-xl border border-orange-200 bg-orange-50 px-4 py-2 text-center sm:text-right">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-orange-500">Pickup slot</p>
+                    <p className="text-xl font-black leading-tight text-orange-700 sm:text-2xl">
+                      {new Date(order.pickup_time).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                    <p className="text-[11px] font-semibold text-orange-500">
+                      {new Date(order.pickup_time).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", day: "2-digit", month: "short" })}
+                    </p>
                   </div>
-                </a>
-              )}
+                )}
+              </div>
+
               <div className="mt-4 border-t border-gray-100 pt-4">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Items</p>
                 {!order.items || order.items.length === 0 ? (
@@ -129,6 +131,20 @@ export default function MerchantOrdersPanel({
                   </ul>
                 )}
               </div>
+
+              {order.transaction_ref && (
+                <a href={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`} target="_blank" rel="noopener noreferrer"
+                  className="mt-4 flex items-center gap-3 rounded-xl border border-stone-200 bg-stone-50 p-3 transition hover:bg-stone-100">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={order.transaction_ref.startsWith("http") ? order.transaction_ref : `${BACKEND_URL}${order.transaction_ref}`}
+                    alt="Payment receipt screenshot" loading="lazy" className="h-10 w-10 shrink-0 rounded-lg border border-stone-200 object-cover" />
+                  <div className="text-xs">
+                    <p className="font-semibold text-stone-700">Payment receipt uploaded</p>
+                    <p className="text-stone-400">Tap to view full size</p>
+                  </div>
+                </a>
+              )}
+
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Total</p>

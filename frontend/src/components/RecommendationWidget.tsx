@@ -159,7 +159,7 @@ export default function RecommendationWidget({
       >
         <div>
           <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
-            <span>✨ Recommended For You</span>
+            <span>Recommended For You</span>
           </h2>
           <p className="mt-0.5 text-xs sm:text-sm text-orange-100">
             {isOpen
