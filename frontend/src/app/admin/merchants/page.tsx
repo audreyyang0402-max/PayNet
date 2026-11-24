@@ -180,9 +180,20 @@ export default function AdminMerchants() {
     if (!window.confirm("Delete this menu item?")) return;
     setBusy(true);
     try {
-      await api(`/admin/menu-items/${itemId}`, { method: "DELETE" });
-      setItems(is => is.filter(i => i.id !== itemId));
-      showToast("Item deleted.");
+      // The backend refuses to actually delete an item that's ever been used in
+      // an order (or has planning/stock/surplus history) -- it hides it instead
+      // (is_available: false) and returns { hidden: true } so the order history
+      // it's attached to stays intact. This used to be ignored here, so the UI
+      // claimed "Item deleted" and dropped it from the list either way -- making
+      // it look deleted for that one session, only for it to reappear (because it
+      // never actually left the database) the next time this page reloaded data.
+      const r = await api(`/admin/menu-items/${itemId}`, { method: "DELETE" });
+      if (r.hidden) {
+        setItems(is => is.map(i => i.id === itemId ? { ...i, is_available: false } : i));
+      } else {
+        setItems(is => is.filter(i => i.id !== itemId));
+      }
+      showToast(r.message || (r.hidden ? "Item hidden." : "Item deleted."));
     } catch (ex: any) { showToast(ex.message, "err"); }
     finally { setBusy(false); }
   }
@@ -342,6 +353,11 @@ export default function AdminMerchants() {
                       </div>
                       <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
                         <StatusBadge status={status} />
+                        {status === "approved" && !item.is_available && (
+                          <span title="This item has order or planning history, so a delete attempt hid it instead of fully removing it. Customers never see it." className="rounded-full bg-stone-200 px-2 py-0.5 text-[10px] font-bold text-stone-600">
+                            🔒 Hidden (can't fully delete)
+                          </span>
+                        )}
                         {item.created_at && (
                           <span title="Visible to admins only — merchants and customers never see this" className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold text-slate-500">
                             🔒 Added {fmt(item.created_at)}
