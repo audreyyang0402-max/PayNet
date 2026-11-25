@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { isAdminSessionLive, clearAdminSession } from "@/lib/admin-session";
+import { BACKEND_URL } from "@/lib/backend-url";
 
 const NAV_ITEMS = [
   { href: "/admin/users", label: "Users", icon: "👥", description: "Manage all platform accounts" },
@@ -15,10 +16,15 @@ const NAV_ITEMS = [
   { href: "/admin/analytics", label: "Analytics", icon: "📊", description: "Orders & revenue insights" },
 ];
 
+// Shown only to the two founder accounts (server-checked — see /admin/audit-log/access).
+// Left out of NAV_ITEMS entirely so it never renders, not even disabled, for anyone else.
+const ACTIVITY_NAV_ITEM = { href: "/admin/activity", label: "Activity", icon: "🔍", description: "Who changed what, and when" };
+
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [authed, setAuthed] = useState(false);
+  const [showActivityTab, setShowActivityTab] = useState(false);
 
   // Skip layout for the login page
   const isLoginPage = pathname === "/admin/login";
@@ -49,6 +55,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoginPage, pathname]);
 
+  // Quietly ask the backend whether this admin is one of the two founders.
+  // Anyone else gets { allowed: false } and never sees this tab — the backend
+  // never reveals the tab exists to them (see admin_audit.py).
+  useEffect(() => {
+    if (isLoginPage) return;
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    fetch(`${BACKEND_URL}/admin/audit-log/access`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : { allowed: false }))
+      .then((data) => setShowActivityTab(!!data.allowed))
+      .catch(() => setShowActivityTab(false));
+  }, [isLoginPage]);
+
   // Hard 8-minute ceiling even if the admin never reloads or navigates again.
   useEffect(() => {
     if (isLoginPage) return;
@@ -77,7 +96,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
             {/* Nav links */}
             <nav className="flex items-center gap-1">
-              {NAV_ITEMS.map((item) => {
+              {(showActivityTab ? [NAV_ITEMS[0], ACTIVITY_NAV_ITEM, ...NAV_ITEMS.slice(1)] : NAV_ITEMS).map((item) => {
                 const active = pathname.startsWith(item.href);
                 return (
                   <Link

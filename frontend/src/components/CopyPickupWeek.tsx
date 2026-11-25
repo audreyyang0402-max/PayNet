@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { BACKEND_URL } from "@/lib/backend-url";
 
-type Slot = { id: string; time_slot: string; max_capacity: number; current_bookings: number };
+type Slot = { id: string; time_slot: string; max_capacity: number; current_bookings: number; is_automatic?: boolean; is_bookable?: boolean };
 type Draft = { time: string; capacity: number; included: boolean };
 
 function malaysiaDate(value: string | number) {
@@ -20,34 +20,37 @@ export default function CopyPickupWeek({ merchantId, onUpdated }: { merchantId: 
   const [existing, setExisting] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [referenceNow, setReferenceNow] = useState(() => Date.now());
   const headers = () => ({ Authorization: `Bearer ${localStorage.getItem("token")}` });
-  async function loadSlots(): Promise<Slot[]> {
-    const response = await fetch(`${BACKEND_URL}/merchants/${merchantId}/pickup-slots`, { headers: headers(), cache: "no-store" });
+  async function loadSlots(fromDate?: string): Promise<Slot[]> {
+    const query = fromDate ? `?from_date=${encodeURIComponent(fromDate)}` : "";
+    const response = await fetch(`${BACKEND_URL}/merchants/${merchantId}/pickup-slots${query}`, { headers: headers(), cache: "no-store" });
     if (!response.ok) throw new Error("Could not load pickup slots. Please try again.");
     return response.json();
   }
   async function preview() {
     setBusy(true); setMessage(""); setDrafts([]);
+    setReferenceNow(Date.now());
     try {
-      const slots = await loadSlots();
+      const slots = await loadSlots(source);
       const end = addDays(source, 7);
       const offset = (Date.parse(`${target}T00:00:00Z`) - Date.parse(`${source}T00:00:00Z`)) / 86400000;
       const rows = slots.filter(slot => {
         const day = malaysiaDate(slot.time_slot).slice(0, 10);
-        return day >= source && day < end;
+        return !slot.is_automatic && day >= source && day < end;
       }).map(slot => {
         const local = malaysiaDate(slot.time_slot);
         return { time: `${addDays(local.slice(0, 10), offset)}T${local.slice(11)}`, capacity: slot.max_capacity, included: true };
       });
       setExisting(slots.map(slot => Date.parse(slot.time_slot)));
       setDrafts(rows);
-      if (!rows.length) setMessage("No saved slots in this source week. Choose another week. Deleted slots cannot be copied.");
+      if (!rows.length) setMessage("No manual slots in this source week. Automatic times are already created from your weekly schedule.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not preview slots."); }
     finally { setBusy(false); }
   }
   function skipReason(row: Draft, index: number) {
     const time = Date.parse(`${row.time}:00+08:00`);
-    if (!Number.isFinite(time) || time <= Date.now()) return "Past or invalid time — skipped";
+    if (!Number.isFinite(time) || time <= referenceNow) return "Past or invalid time — skipped";
     if (existing.includes(time) || drafts.slice(0, index).some(other => other.included && other.time === row.time)) return "Duplicate time — skipped";
     return "";
   }
@@ -73,8 +76,8 @@ export default function CopyPickupWeek({ merchantId, onUpdated }: { merchantId: 
   }
   const inputClass = "mt-1 block w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900";
   return <section className="rounded-2xl border border-orange-200 bg-orange-50 p-5 md:col-span-2 space-y-3">
-    <h2 className="font-bold text-slate-900">Copy weekly pickup slots</h2>
-    <p className="text-sm text-slate-600">Start on any day. Copy seven consecutive days of saved slots to a new start date, then adjust your schedule. All times are Malaysia time (UTC+8).</p>
+    <h2 className="font-bold text-slate-900">Copy manual pickup slots</h2>
+    <p className="text-sm text-slate-600">For one-off plans, copy seven days of manual slots. Regular times come from your weekly schedule. All times are Malaysia time (UTC+8).</p>
     <form onSubmit={event => { event.preventDefault(); void preview(); }}>
       <fieldset disabled={busy} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm font-semibold">Copy from — start date<input type="date" required className={inputClass} value={source} onChange={event => { setSource(event.target.value); setDrafts([]); setMessage(""); }} />{source && <span className="mt-1 block text-xs font-normal">Source range: {source} to {addDays(source, 6)}</span>}</label>

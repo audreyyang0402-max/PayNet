@@ -242,9 +242,3 @@ def send_order_ready_email(
         subject=f"🍽️ Your order {order_number} is ready for pickup!",
         html=html,
     )
-
-
-# Keep stubs so nothing else breaks
-def generate_verification_code(): pass
-def hash_code(code): pass
-def get_expiration_time(): pass

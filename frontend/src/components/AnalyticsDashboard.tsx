@@ -43,6 +43,26 @@ function SalesDashboard({ audience, embedded = false }: { audience: string; embe
   const isCustomer = audience === "customer";
   const loginPath = isAdmin ? "/admin/login" : isCustomer ? "/login" : "/vendor/login";
 
+  async function downloadFoodDataset() {
+    setError(null);
+    try {
+      const response = await fetch(`${API_URL}/admin/food-planning/dataset.csv?days=90`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }, cache: "no-store",
+      });
+      if (!response.ok) throw new Error("Could not download the food planning dataset.");
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `sunway-food-planning-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not download the dataset.");
+    }
+  }
+
   useEffect(() => {
     let cancelled = false, inFlight = false;
     async function load() {
@@ -104,15 +124,17 @@ function SalesDashboard({ audience, embedded = false }: { audience: string; embe
   return (
     <Container className={embedded ? "" : "min-h-screen bg-stone-50 p-5 sm:p-8"}>
       <div className="mx-auto max-w-5xl space-y-6">
-        <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-4">
+        {/* Not much vertical room to spare on a phone -- this used to reserve a
+            fixed top margin above the heading for a back-link that isn't even
+            shown in the embedded (vendor dashboard) context, leaving dead space. */}
+        <header className={`rounded-2xl border border-slate-200 bg-white shadow-sm ${embedded ? "p-4" : "p-4 sm:p-6"}`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              {!embedded && !isAdmin && <Link href={isCustomer ? "/profile" : "/vendor/dashboard"} className="inline-block rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-800">
+              {!embedded && !isAdmin && <Link href={isCustomer ? "/profile" : "/vendor/dashboard"} className="mb-3 inline-block rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-800">
                 Back to {isCustomer ? "my account" : "vendor dashboard"}
               </Link>}
-              <p className="mt-4 text-xs font-bold uppercase tracking-[0.18em] text-orange-700">Analytics</p>
-              <h2 className="mt-1 text-2xl font-bold text-slate-900">{isAdmin ? "Platform analytics" : isCustomer ? "Your spending" : "Store analytics"}</h2>
-              <p className="mt-2 text-sm text-slate-500">{isCustomer ? "Your completed purchases and order activity from the selected period." : "Sales and order activity from the selected period."}</p>
+              <h2 className="text-xl font-bold text-slate-900 sm:text-2xl">{isAdmin ? "Platform Analytics" : isCustomer ? "Your Spending" : "Store Analytics"}</h2>
+              <p className="mt-1 text-xs text-slate-500 sm:text-sm">{isCustomer ? "Your completed purchases and order activity from the selected period." : "Sales and order activity from the selected period."}</p>
             </div>
             <label className="text-sm font-medium text-slate-700">
               Date range
@@ -124,6 +146,11 @@ function SalesDashboard({ audience, embedded = false }: { audience: string; embe
             </label>
           </div>
         </header>
+
+        {isAdmin && <div className="rounded-2xl border border-teal-200 bg-teal-50 p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
+          <div><p className="font-semibold text-slate-900">Food planning research dataset</p><p className="mt-1 text-xs text-slate-600">Last 90 days · pseudonymous dish and merchant codes · blank demand means availability is unknown.</p></div>
+          <button type="button" onClick={downloadFoodDataset} className="mt-3 rounded-xl bg-teal-800 px-4 py-2 text-sm font-semibold text-white sm:mt-0">Download CSV</button>
+        </div>}
 
         {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-stone-500"><p>{updatedAt ? `Updated ${updatedAt} MYT · refreshes every 15 seconds` : "Loading latest totals"}</p><button onClick={() => setRefreshKey(k => k + 1)} className="rounded-xl border bg-white px-4 py-2 font-semibold text-orange-700">Refresh</button></div>

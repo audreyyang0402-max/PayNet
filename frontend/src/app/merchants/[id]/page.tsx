@@ -6,12 +6,22 @@ import BackLink from "@/components/BackLink";
 import FoodDetailsDialog from "@/components/FoodDetailsDialog";
 import { BACKEND_URL } from "@/lib/backend-url";
 
+interface OperatingHours {
+  enabled: boolean;
+  paused: boolean;
+  days: { weekday: number; opens: string; closes: string }[];
+  closed_dates: string[];
+}
+
 interface Merchant {
   id: string;
   name: string;
   description: string | null;
   location: string;
+  operating_hours?: OperatingHours | null;
 }
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 interface MenuItem {
   id: string;
@@ -118,6 +128,24 @@ export default function MerchantMenuPage() {
             )}
             {merchant.location && (
               <p className="text-xs text-orange-700 font-medium mt-1">📍 {merchant.location}</p>
+            )}
+
+            {merchant.operating_hours && merchant.operating_hours.enabled && merchant.operating_hours.days.length > 0 && (
+              <div className="mt-3 rounded-xl border border-orange-100 bg-orange-50 px-3 py-2.5">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-orange-700">
+                  🕐 Operating Hours{merchant.operating_hours.paused ? " · new bookings paused" : ""}
+                </p>
+                <p className="mt-1 text-xs text-slate-700">
+                  {merchant.operating_hours.days
+                    .slice()
+                    .sort((a, b) => a.weekday - b.weekday)
+                    .map((d) => `${WEEKDAYS[d.weekday]} ${d.opens.slice(0, 5)}–${d.closes.slice(0, 5)}`)
+                    .join(" · ")}
+                </p>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Pickup times are generated automatically from these hours. If a pickup slot you want isn't listed, it may be outside these hours.
+                </p>
+              </div>
             )}
           </div>
         )}

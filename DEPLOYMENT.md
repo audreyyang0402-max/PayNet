@@ -74,8 +74,20 @@ Log out and in again. Admins land on `/admin/users`, where they give other accou
 
 ## 6. Smoke test
 
+After deploying the new backend, run the read-only public API check from the repo root:
+
+```bash
+python scripts/smoke_public.py https://payvolution.onrender.com
+```
+
+A 404 on `/surplus-offers` means the latest backend is not deployed. The script checks public stall menus and browser CORS without creating orders or moving money. Confirm the backend startup migration completed before testing the merchant tab.
+
 1. Vendor: upload a DuitNow QR, add a menu item, add a pickup slot for tomorrow.
 2. Customer: order, upload a receipt. The order shows *pending verification*.
 3. Vendor: Verify & Accept → Mark Ready → Mark Collected. Reject a paid order as sold out to open a tracked refund case and free its pickup place.
 4. Customer: choose online or walk-in refund from the rejected order receipt. Vendor uploads refund proof; customer confirms or disputes; admin reviews it under **Refunds**.
 5. Without logging in, `GET /orders/<id>` returns 401.
+6. Merchant: create one safe same-day surplus offer with a future pickup slot. Customer: confirm the reduced price and fixed pickup time in checkout. Merchant: verify the order carries the Surplus offer badge. End the offer and confirm new customers cannot buy it; the existing order must retain its agreed price.
+7. Merchant: save a Food Planning record for a past dish day, including whether the dish was offered. Confirm unavailable days do not become zero-demand training records. Check the surplus outcome summary and the admin CSV after a real order is complete.
+
+Use a controlled test order and the normal payment/refund process for steps 1–4 and 6. The public smoke script cannot verify authenticated purchases, bank transfers, refunds, or whether the merchant's preparation and discard counts are accurate.

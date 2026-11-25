@@ -8,14 +8,56 @@ import { EMPTY_FILTERS, matchesFilters, metadata, type DiscoveryItem, type Disco
 import { parseMenuDescription } from "@/lib/menu-customizations";
 import OfferPrice from "./OfferPrice";
 
+<<<<<<< HEAD
 const TABS = [
   ["all", "🍽️", "Browse all"], ["deals", "🏷️", "Deals & Discounts"],
   ["value", "✨", "Best Value"], ["budget", "💰", "Under RM10"],
   ["rahmah", "🍚", "RM5 & Below"], ["not-spicy", "🌱", "Not Spicy"],
   ["popular", "⭐", "Campus Favourites"],
+=======
+interface RecommendationItem {
+  id: string;
+  merchant_id: string;
+  name: string;
+  description: string | null;
+  price: number;
+  is_available: boolean;
+  image_url?: string | null;
+}
+
+interface RecommendationMerchant {
+  id: string;
+  name: string;
+}
+
+interface RecommendationWidgetProps {
+  items: RecommendationItem[];
+  merchants: RecommendationMerchant[];
+  onViewItem?: (item: RecommendationItem) => void;
+  onAddToCart: (item: RecommendationItem) => void;
+  loading: boolean;
+}
+
+type TabKey = "hot-deals" | "budget" | "rahmah" | "not-spicy" | "popular";
+
+interface TabDefinition {
+  key: TabKey;
+  emoji: string;
+  label: string;
+  helper: string;
+}
+
+const TABS: TabDefinition[] = [
+  { key: "hot-deals", emoji: "🔥", label: "Hot Deals",       helper: "Best value picks" },
+  { key: "budget",    emoji: "💰", label: "Budget Friendly", helper: "Under RM 10" },
+  { key: "rahmah",    emoji: "🍚", label: "RM5 Rahmah",      helper: "Makanan Rahmah RM5 & below" },
+  { key: "not-spicy", emoji: "🌶️", label: "Not Spicy",       helper: "Mild & gentle flavours" },
+  { key: "popular", emoji: "⭐", label: "Campus favourites", helper: "Most ordered across campus · completed orders in the last 30 days" },
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
 ];
 const control = "rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100";
 
+<<<<<<< HEAD
 export default function RecommendationWidget({ items, merchants, onViewItem, onAddToCart, loading }: {
   items: DiscoveryItem[]; merchants: DiscoveryMerchant[]; onViewItem?: (item: DiscoveryItem) => void;
   onAddToCart: (item: DiscoveryItem) => void; loading: boolean;
@@ -33,9 +75,26 @@ export default function RecommendationWidget({ items, merchants, onViewItem, onA
   const [showFilters, setShowFilters] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
 
+=======
+const BRAND_ORANGE = "#F04B14";
+
+export default function RecommendationWidget({
+  items,
+  merchants,
+  onAddToCart,
+  onViewItem,
+  loading,
+}: RecommendationWidgetProps) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const [popular, setPopular] = useState<{id: string; quantity: number}[]>([]);
+  const [popularityError, setPopularityError] = useState("");
+  const [popularityLoading, setPopularityLoading] = useState(false);
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
+<<<<<<< HEAD
     Promise.all([
       fetch(`${BACKEND_URL}/recommendations/items?limit=100`, { signal: controller.signal, cache: "no-store" }),
       fetch(`${BACKEND_URL}/recommendations/pickup-availability`, { signal: controller.signal, cache: "no-store" }),
@@ -49,6 +108,75 @@ export default function RecommendationWidget({ items, merchants, onViewItem, onA
     const refresh = setInterval(() => { if (!document.hidden) setRetry((r) => r + 1); }, 60000);
     return () => { controller.abort(); clearInterval(timer); clearInterval(refresh); };
   }, [open, retry]);
+=======
+    fetch(`${BACKEND_URL}/recommendations/items?limit=100`, { signal: controller.signal, cache: "no-store" })
+      .then(r => { if (!r.ok) throw new Error("Campus favourites are temporarily unavailable."); return r.json(); })
+      .then(rows => { setPopular(rows); setPopularityError(""); })
+      .catch(e => { if (!controller.signal.aborted) setPopularityError(e.message); })
+      .finally(() => { if (!controller.signal.aborted) setPopularityLoading(false); });
+    return () => controller.abort();
+  }, [isOpen]);
+  const [activeTab, setActiveTab] = useState<TabKey>("popular");
+
+  const tabBarRef = useRef<HTMLDivElement>(null);
+
+  const availableItems = useMemo(
+    () => items.filter((item) => item.is_available && isDisplayableFood(item)),
+    [items],
+  );
+
+  // Use the lowest price quartile of visible menu items for this category.
+  const dealCutoff = useMemo(() => {
+    const sorted = availableItems
+      .map((item) => Number(item.price))
+      .sort((a, b) => a - b);
+    if (sorted.length === 0) return 0;
+    return sorted[Math.max(0, Math.ceil(sorted.length * 0.25) - 1)];
+  }, [availableItems]);
+
+  const availableItemsById = useMemo(
+    () => new Map(availableItems.map((item) => [item.id, item])),
+    [availableItems],
+  );
+
+  const filteredItems = useMemo(() => {
+    let result: RecommendationItem[];
+
+    switch (activeTab) {
+      case "hot-deals":
+        result = availableItems.filter(
+          (item) => Number(item.price) <= dealCutoff,
+        );
+        break;
+
+      case "budget":
+        result = availableItems.filter((item) => Number(item.price) < 10);
+        break;
+
+      case "rahmah":
+        result = availableItems.filter((item) => Number(item.price) <= 5);
+        break;
+
+      case "not-spicy":
+        result = availableItems.filter((item) => {
+          const text = `${item.name} ${item.description ?? ""}`.toLowerCase();
+          return /\b(mild|not spicy|non-spicy|tidak pedas)\b/i.test(text);
+        });
+        break;
+
+      case "popular":
+        return popular.flatMap((rank) => {
+          const item = availableItemsById.get(rank.id);
+          return item ? [item] : [];
+        });
+      default:
+        result = [];
+        break;
+    }
+
+    return result.sort((a, b) => Number(a.price) - Number(b.price));
+  }, [activeTab, availableItems, availableItemsById, dealCutoff, popular]);
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
 
   useEffect(() => {
     if (!showFilters) return;
@@ -59,6 +187,7 @@ export default function RecommendationWidget({ items, merchants, onViewItem, onA
     return () => { node?.close(); document.body.style.overflow = previous; };
   }, [showFilters]);
 
+<<<<<<< HEAD
   const available = useMemo(() => items.filter((item) => item.is_available && isDisplayableFood(item)).map((item) => customerPrice(item, clock)), [items, clock]);
   const categories = [...new Set(available.map((item) => metadata(item, "Category")).filter(Boolean))].sort();
   const locations = [...new Set(merchants.map((m) => m.location || "").filter(Boolean))].sort();
@@ -136,4 +265,192 @@ export default function RecommendationWidget({ items, merchants, onViewItem, onA
       <div className="sticky bottom-0 flex items-center gap-3 border-t bg-white p-5"><button type="button" onClick={() => setFilters(EMPTY_FILTERS)} className="rounded-xl border px-4 py-3 text-sm font-semibold">Reset</button><button type="button" onClick={() => setShowFilters(false)} className="flex-1 rounded-xl bg-orange-600 px-4 py-3 text-sm font-bold text-white">Show {filtered.length} dishes</button></div>
     </dialog>}
   </section>;
+=======
+  const merchantName = (merchantId: string): string => {
+    return merchants.find((m) => m.id === merchantId)?.name ?? "Campus stall";
+  };
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-orange-200 bg-white shadow-sm transition-all">
+
+      <button
+        type="button"
+        onClick={() => {
+          if (!isOpen) setPopularityLoading(true);
+          setIsOpen(!isOpen);
+        }}
+        className="w-full flex items-center justify-between gap-3 bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 px-4 sm:px-6 py-4 text-left text-white transition hover:from-orange-700 hover:to-amber-600 cursor-pointer"
+        aria-expanded={isOpen}
+      >
+        <div>
+          <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
+            <span>Recommended For You</span>
+          </h2>
+          <p className="mt-0.5 text-xs sm:text-sm text-orange-100">
+            {isOpen
+              ? "Hide categories"
+              : "Browse meals by price, popularity and preference"}
+          </p>
+        </div>
+
+        <span className="shrink-0 rounded-xl bg-white/20 hover:bg-white/30 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-bold text-white transition border border-white/25 flex items-center gap-1.5">
+          <span>{isOpen ? "Close" : "Explore"}</span>
+          <span className="text-xs">{isOpen ? "▲" : "▼"}</span>
+        </span>
+      </button>
+
+      {isOpen && (
+        <div className="pt-2 animate-slide-up">
+          {activeTab === "popular" && (popularityError || popularityLoading) && <p role="status" className="px-5 pt-3 text-xs text-slate-600">{popularityError || "Loading campus favourites…"}</p>}
+          <div
+            ref={tabBarRef}
+            className="flex gap-2 overflow-x-auto scroll-smooth px-4 py-3 snap-x sm:px-6 hide-scrollbar"
+            role="tablist"
+            aria-label="Recommendation categories"
+          >
+            {TABS.map((tab) => {
+              const isActive = activeTab === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  data-tab={tab.key}
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`
+                    flex shrink-0 snap-start items-center gap-1.5 rounded-full
+                    px-4 py-2 text-sm font-semibold whitespace-nowrap
+                    transition-all duration-200 cursor-pointer
+                    ${
+                      isActive
+                        ? "text-white shadow-md"
+                        : "border border-slate-200 bg-white text-slate-700 hover:border-orange-300 hover:bg-orange-50"
+                    }
+                  `}
+                  style={isActive ? { backgroundColor: BRAND_ORANGE } : undefined}
+                >
+                  <span className="text-base">{tab.emoji}</span>
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="px-5 pb-2 text-xs text-slate-500 sm:px-6">
+            {TABS.find((t) => t.key === activeTab)?.helper}
+          </p>
+
+          <div className="px-4 pb-5 sm:px-6 sm:pb-6">
+            {activeTab === "not-spicy" && (
+              <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                🌶️ Spice matching uses keywords in the item name and description.
+                Please double-check with the stall if you have a serious spice
+                sensitivity.
+              </p>
+            )}
+
+            {activeTab === "rahmah" && (
+              <p className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                🍚 <strong>Menu Rahmah Madani</strong> — Affordable meals at RM 5 &amp;
+                below, supporting the Malaysian government&apos;s initiative for
+                accessible food.
+              </p>
+            )}
+
+            {activeTab === "hot-deals" && availableItems.length > 0 && (
+              <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                🔥 Hot Deals highlights the cheapest 25% of available items (at or
+                below RM&nbsp;{dealCutoff.toFixed(2)}).
+              </p>
+            )}
+
+            {loading && (
+              <div className="rounded-xl bg-slate-50 p-8 text-center">
+                <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-4 border-orange-200 border-t-orange-600" />
+                <p className="text-sm text-slate-500">
+                  Loading menu recommendations…
+                </p>
+              </div>
+            )}
+
+            {!loading && filteredItems.length === 0 && (
+              <div className="rounded-xl bg-slate-50 p-8 text-center">
+                <p className="text-3xl">🍽️</p>
+                <p className="mt-2 text-sm font-medium text-slate-700">
+                  No items match this category right now
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Try another category.
+                </p>
+              </div>
+            )}
+
+            {!loading && filteredItems.length > 0 && (
+              <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 md:grid-cols-3">
+                {filteredItems.map((item) => (
+                  <article
+                    key={item.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onViewItem?.(item)}
+                    onKeyDown={(event) => {
+                      if ((event.key === "Enter" || event.key === " ") && onViewItem) {
+                        event.preventDefault();
+                        onViewItem(item);
+                      }
+                    }}
+                    className="relative group flex min-w-0 cursor-pointer flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md focus-visible:outline-2 focus-visible:outline-orange-600"
+                  >
+
+                    {item.image_url && (
+                      <img
+                        src={item.image_url.startsWith("/") ? BACKEND_URL + item.image_url : item.image_url}
+                        alt={item.name}
+                        loading="lazy"
+                        className="h-32 w-full object-cover sm:h-36"
+                      />
+                    )}
+
+                    <div className="flex flex-1 flex-col p-3 sm:p-4">
+                      <p className="text-xs font-medium text-orange-700">
+                        {merchantName(item.merchant_id)}
+                      </p>
+
+                      <h3 className="mt-1 text-sm font-bold leading-snug text-slate-900">
+                        {item.name}
+                      </h3>
+
+                      <p className="mt-1 line-clamp-2 min-h-[2rem] text-xs leading-relaxed text-slate-500">
+                        {item.description || "A fresh pick from your campus stalls."}
+                      </p>
+
+                      <div className="mt-auto flex items-center justify-between gap-2 pt-3">
+                        <span className="text-sm font-bold text-slate-900">
+                          RM&nbsp;{Number(item.price).toFixed(2)}
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onAddToCart(item);
+                          }}
+                          className="relative z-20 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-white transition hover:opacity-90 active:scale-95 cursor-pointer"
+                          style={{ backgroundColor: BRAND_ORANGE }}
+                        >
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400" />
+                          Customise
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
 }

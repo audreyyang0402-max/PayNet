@@ -73,6 +73,35 @@ CREATE TABLE menu_items (
 	FOREIGN KEY(merchant_id) REFERENCES merchants (id)
 );
 
+CREATE TABLE daily_food_logs (
+	id UUID PRIMARY KEY,
+	merchant_id UUID NOT NULL REFERENCES merchants(id),
+	menu_item_id UUID NOT NULL REFERENCES menu_items(id),
+	service_date DATE NOT NULL,
+	was_offered BOOLEAN,
+	prepared_portions INTEGER NOT NULL DEFAULT 0 CHECK (prepared_portions >= 0),
+	unsold_portions INTEGER NOT NULL DEFAULT 0 CHECK (unsold_portions >= 0),
+	discarded_portions INTEGER NOT NULL DEFAULT 0 CHECK (discarded_portions >= 0),
+	sold_out BOOLEAN NOT NULL DEFAULT FALSE,
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	CONSTRAINT daily_food_logs_portions_check CHECK (unsold_portions + discarded_portions <= prepared_portions),
+	CONSTRAINT daily_food_logs_merchant_item_date_unique UNIQUE (merchant_id, menu_item_id, service_date)
+);
+ALTER TABLE daily_food_logs ENABLE ROW LEVEL SECURITY;
+CREATE INDEX daily_food_logs_merchant_date_idx ON daily_food_logs (merchant_id, service_date DESC);
+
+CREATE TABLE daily_item_stock (
+	id UUID PRIMARY KEY,
+	merchant_id UUID NOT NULL REFERENCES merchants(id),
+	menu_item_id UUID NOT NULL REFERENCES menu_items(id),
+	service_date DATE NOT NULL,
+	total_portions INTEGER NOT NULL CHECK (total_portions >= 0),
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	CONSTRAINT daily_item_stock_merchant_item_date_unique UNIQUE (merchant_id, menu_item_id, service_date)
+);
+ALTER TABLE daily_item_stock ENABLE ROW LEVEL SECURITY;
+CREATE INDEX daily_item_stock_merchant_date_idx ON daily_item_stock (merchant_id, service_date);
+
 CREATE TABLE pickup_slots (
 	id UUID NOT NULL,
 	merchant_id UUID NOT NULL,
@@ -82,6 +111,23 @@ CREATE TABLE pickup_slots (
 	PRIMARY KEY (id),
 	FOREIGN KEY(merchant_id) REFERENCES merchants (id)
 );
+
+CREATE TABLE surplus_offers (
+	id UUID PRIMARY KEY,
+	merchant_id UUID NOT NULL REFERENCES merchants(id),
+	menu_item_id UUID NOT NULL REFERENCES menu_items(id),
+	pickup_slot_id UUID REFERENCES pickup_slots(id) ON DELETE SET NULL,
+	service_date DATE NOT NULL,
+	sale_price NUMERIC(10, 2) NOT NULL CHECK (sale_price > 0),
+	total_portions INTEGER NOT NULL CHECK (total_portions > 0),
+	expires_at TIMESTAMPTZ NOT NULL,
+	is_active BOOLEAN NOT NULL DEFAULT TRUE,
+	confirmed_safe_at TIMESTAMPTZ NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE surplus_offers ENABLE ROW LEVEL SECURITY;
+CREATE INDEX surplus_offers_merchant_expiry_idx ON surplus_offers (merchant_id, expires_at);
+CREATE UNIQUE INDEX surplus_offers_one_active_dish_day_idx ON surplus_offers (merchant_id, menu_item_id, service_date) WHERE is_active;
 
 CREATE TABLE event_vendors (
 	id UUID NOT NULL,
@@ -109,6 +155,7 @@ CREATE TABLE orders (
 	rejection_reason VARCHAR,
 	rejection_note TEXT,
 	pickup_slot_id UUID,
+	pickup_service_date DATE,
 	created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
 	PRIMARY KEY (id),
 	FOREIGN KEY(customer_id) REFERENCES users (id),
@@ -175,6 +222,7 @@ CREATE TABLE order_items (
 	id UUID NOT NULL,
 	order_id UUID NOT NULL,
 	menu_item_id UUID NOT NULL,
+	surplus_offer_id UUID REFERENCES surplus_offers(id),
 	quantity INTEGER NOT NULL,
 	price_at_order NUMERIC(10, 2) NOT NULL,
 	special_instructions TEXT,

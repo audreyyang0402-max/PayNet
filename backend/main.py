@@ -7,42 +7,47 @@ import logging
 import secrets
 import hashlib
 import json
+import csv
+import hmac
 from decimal import Decimal
 from datetime import datetime, date, timedelta, timezone
-import httpx as httpx_client  # aliased since you might already have httpx elsewhere
+import httpx as httpx_client
 from fastapi import UploadFile, File, Form, HTTPException, Request, Header
 import shutil
 
-from fastapi_offline import FastAPIOffline
 from fastapi import FastAPI, Depends, Query, status, BackgroundTasks
-from fastapi.staticfiles import StaticFiles  # <--- Added import for serving static upload files
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import case, func, or_, update, text
+from sqlalchemy import and_, case, delete, func, or_, update, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload  # <--- Added import for eager loading relationships
-from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy.orm import selectinload
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from typing import List, Optional, Literal
 from uuid import UUID
 
-# --- NEW SUPABASE STORAGE IMPORTS ---
 from supabase import create_client, Client
 from PIL import Image, ImageOps
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from database import engine, get_db
+<<<<<<< HEAD
 from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent
 from promotions import router as promotions_router, MIGRATIONS as PROMOTION_MIGRATIONS, active_promotions, public_offer, discounted_price, money
+=======
+from models import Base, User, Merchant, MenuItem, DailyFoodLog, DailyItemStock, SurplusOffer, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent, AdminAuditLog
+from admin_audit import log_admin_action, is_super_admin
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
 
-# --- NEW AUTH IMPORTS ---
 from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN, validate_password, password_stamp
 from email_verification import check_code, normalize_email
 from email_service import send_order_ready_email
+from pickup_schedule import MYT as PICKUP_MYT, PickupSchedule, candidate_times, default_schedule, is_closed
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +69,7 @@ from auth_endpoints import (
 from contextlib import asynccontextmanager
 
 
+<<<<<<< HEAD
 ORDER_STATUS_VALUES = (
     "draft",
     "pending_verification",
@@ -169,6 +175,9 @@ STARTUP_MIGRATIONS = [*PROMOTION_MIGRATIONS,
     """,
     "CREATE INDEX IF NOT EXISTS refund_audit_events_refund_idx ON refund_audit_events (refund_id, created_at)",
 ]
+=======
+from startup_migrations import ORDER_STATUS_VALUES, ORDER_STATUS_CONSTRAINT_MIGRATION, STARTUP_MIGRATIONS
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
 
 
 async def run_startup_migration(statement: str, max_attempts: int = 5) -> None:
@@ -196,29 +205,33 @@ async def run_startup_migration(statement: str, max_attempts: int = 5) -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPIOffline):
+async def lifespan(app: FastAPI):
     # Idempotent lightweight migrations for fields introduced after the
     # original Supabase schema was created.
     for statement in STARTUP_MIGRATIONS:
         await run_startup_migration(statement)
     yield
 
+<<<<<<< HEAD
 app = FastAPIOffline(lifespan=lifespan)
 app.include_router(promotions_router)
+=======
+# docs_url/redoc_url/openapi_url disabled: this is a backend-only API with no
+# need to publish a public map of every route and parameter to anyone who asks.
+app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
 
-# --- RATE LIMITING (in-memory; fine for Render's single-instance free tier) ---
+# This limiter is per process; it does not coordinate across app instances.
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# --- MOUNT STATIC UPLOADS DIRECTORY ---
 # Fresh deployments may not contain this runtime-created directory.
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# --- SUPABASE STORAGE CONFIGURATION ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") # Service role key to bypass RLS for uploads
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -244,8 +257,19 @@ def validate_menu_image_url(image_url: Optional[str]) -> Optional[str]:
     return value
 
 
+<<<<<<< HEAD
 def public_menu_item(item: MenuItem, promotion=None) -> dict:
     """Serialize a menu item without leaking legacy multi-megabyte data URLs."""
+=======
+def public_menu_item(item: MenuItem) -> dict:
+    """Serialize a menu item without leaking legacy multi-megabyte data URLs.
+
+    Deliberately omits `created_at`: when a menu item was added is admin-only
+    information (see /admin/merchants/{merchant_id}/items), and this
+    serializer is shared by both the merchant's own dashboard and the public
+    customer marketplace, so it must never appear here even in the raw JSON.
+    """
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
     image_url = item.image_url
     if image_url and image_url.lstrip().lower().startswith("data:"):
         image_url = f"/menu-items/{item.id}/image"
@@ -258,7 +282,6 @@ def public_menu_item(item: MenuItem, promotion=None) -> dict:
         "promotion": public_offer(promotion, item.price) if promotion else None,
         "image_url": image_url,
         "is_available": item.is_available,
-        "created_at": item.created_at,
     }
 
 PUBLIC_BUCKET = os.getenv("SUPABASE_PUBLIC_BUCKET", "uploads")      # QR codes, menu photos, banners: meant to be public
@@ -583,7 +606,6 @@ async def anonymize_account(user, db: AsyncSession):
     user.deleted_at = datetime.now(timezone.utc)
 
 
-# --- BULLETPROOF CORS CONFIGURATION ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -599,22 +621,19 @@ app.add_middleware(
     allow_headers=["*"], 
 )
 
-# Pydantic Schemas for validation
 class UserCreate(BaseModel):
     name: str
     phone_number: str | None = None
     email: EmailStr
-    password: str  # UPDATED: Changed from password_hash since client sends plain text
-    verification_code: str  # 6-digit code emailed via /auth/send-code
+    password: str
+    verification_code: str
     role: str = "customer"
 
-# NEW: Schema for updating user profile
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
     password: Optional[str] = None
 
-# NEW: Schema for updating merchant profile & store details
 class MerchantProfileUpdate(BaseModel):
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
@@ -623,7 +642,6 @@ class MerchantProfileUpdate(BaseModel):
     description: Optional[str] = None
     location: Optional[str] = None
 
-# NEW: Schemas for handling login and token generation
 class MerchantRegisterRequest(BaseModel):
     name: str
     email: EmailStr
@@ -631,7 +649,7 @@ class MerchantRegisterRequest(BaseModel):
     store_name: str
     location: Optional[str] = None
     description: Optional[str] = None
-    verification_code: str  # 6-digit code emailed via /auth/send-code
+    verification_code: str
     role: str = "merchant"
 
 class LoginRequest(BaseModel):
@@ -654,15 +672,18 @@ class MerchantCreate(BaseModel):
 # Public merchant data includes the merchant ID because customers need it to
 # load menus and pickup slots. It does not expose the owner's user ID.
 class MerchantPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     name: str
     location: Optional[str] = None
     description: Optional[str] = None
     duitnow_qr_url: Optional[str] = None
     is_active: Optional[bool] = True
-
-    class Config:
-        from_attributes = True
+    # Weekly operating hours -- surfaced so customers (and the stall's own
+    # profile) can see exactly when pickup slots get auto-generated, instead
+    # of only seeing the slots themselves with no sense of the pattern.
+    operating_hours: Optional[dict] = None
 
 class MenuItemCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
@@ -671,11 +692,36 @@ class MenuItemCreate(BaseModel):
     image_url: Optional[str] = None
     is_available: bool = True
 
+
+class DailyFoodLogInput(BaseModel):
+    service_date: date
+    was_offered: bool
+    prepared_portions: int = Field(ge=0, le=10000)
+    unsold_portions: int = Field(ge=0, le=10000)
+    discarded_portions: int = Field(ge=0, le=10000)
+    sold_out: bool = False
+
+
+class DailyStockInput(BaseModel):
+    service_date: date
+    total_portions: Optional[int] = Field(default=None, ge=0, le=10000)
+
+
+class SurplusOfferCreate(BaseModel):
+    menu_item_id: UUID
+    pickup_slot_id: UUID
+    sale_price: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    total_portions: int = Field(ge=1, le=1000)
+    max_orders: int = Field(default=100, ge=1, le=1000)
+    expires_at: datetime
+    confirm_safe_to_sell: bool
+
 class OrderItemCreate(BaseModel):
     menu_item_id: UUID
     quantity: int = Field(default=1, ge=1, le=50)
     expected_price: Decimal | None = Field(default=None, gt=0, max_digits=10, decimal_places=2)
     special_instructions: Optional[str] = Field(default=None, max_length=300)
+    surplus_offer_id: Optional[UUID] = None
 
 class OrderCreate(BaseModel):
     checkout_key: UUID | None = None
@@ -693,7 +739,7 @@ class PickupSlotBatchCreate(BaseModel):
 class ForgotPasswordRequest(BaseModel):
     email: str
     new_password: str
-    verification_code: str  # 6-digit code emailed via /auth/send-code
+    verification_code: str
 
 class SendCodeRequest(BaseModel):
     email: EmailStr
@@ -716,7 +762,6 @@ class RefundAdminReview(BaseModel):
     note: Optional[str] = Field(default=None, max_length=1000)
 
 
-# NEW: Schemas for Events
 class EventCreate(BaseModel):
     name: str
     description: Optional[str] = None
@@ -738,13 +783,13 @@ class RoleUpdateRequest(BaseModel):
     description: Optional[str] = None
 
 
-# --- ROUTES ---
 
 @app.get("/")
 def read_root():
     return {"message": "Click & Collect API is running"}
 
 
+<<<<<<< HEAD
 # --- PHASE 5: RECOMMENDATION ROUTE ---
 @app.get("/recommendations/pickup-availability")
 async def recommendation_pickup_availability(db: AsyncSession = Depends(get_db)):
@@ -754,6 +799,8 @@ async def recommendation_pickup_availability(db: AsyncSession = Depends(get_db))
     return [str(row[0]) for row in rows]
 
 
+=======
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
 @app.get("/recommendations/items")
 async def get_recommended_items(
     limit: int = Query(default=20, ge=1, le=100),
@@ -776,7 +823,6 @@ async def get_recommended_items(
 
 
 
-# 1. Route to create a user first (Merchants need a user_id)
 @app.post("/users", response_model=dict)
 async def create_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     existing_user = await db.execute(select(User).where(func.lower(func.trim(User.email)) == normalize_email(user_data.email)))
@@ -890,12 +936,17 @@ async def admin_delete_user(
         raise HTTPException(status_code=400, detail="You cannot delete your own account here.")
     # Hard-deleting fails once the user has orders (foreign keys), and would erase sales history.
     # Anonymising keeps history, removes personal data, hides their stall and stops their logins.
+    deleted_email, deleted_role = target_user.email, target_user.role
     await anonymize_account(target_user, db)
+    await log_admin_action(
+        db, current_user, "user.delete",
+        f"Deleted account {deleted_email} ({deleted_role})",
+        target_type="user", target_id=target_user.id, target_label=deleted_email,
+    )
     await db.commit()
     return {"status": "success", "message": "User deleted successfully."}
 
 
-# --- NEW: Admin Update User Role Endpoint ---
 @app.put("/admin/users/{user_id}/role")
 async def update_user_role(
     user_id: UUID,
@@ -918,6 +969,7 @@ async def update_user_role(
 
     if target_user.id == current_user.id and payload.role != "admin":
         raise HTTPException(status_code=400, detail="You cannot remove your own admin role.")
+    previous_role = target_user.role
     target_user.role = payload.role
 
     if payload.role == "merchant":
@@ -945,6 +997,12 @@ async def update_user_role(
                     existing_merchant.location = payload.location
 
     try:
+        await log_admin_action(
+            db, current_user, "user.role_change",
+            f"Changed {target_user.email}'s role: {previous_role} → {payload.role}",
+            target_type="user", target_id=target_user.id, target_label=target_user.email,
+            details={"from": previous_role, "to": payload.role},
+        )
         await db.commit()
         await db.refresh(target_user)
         return {"status": "success", "message": "User role updated successfully.", "role": target_user.role}
@@ -1054,12 +1112,14 @@ async def upload_menu_image(
 
 
 @app.post("/auth/send-code")
-async def send_verification_code(payload: SendCodeRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def send_verification_code(request: Request, payload: SendCodeRequest, db: AsyncSession = Depends(get_db)):
     return await send_verification(SendVerificationRequest(email=payload.email, purpose=payload.purpose), db)
 
 
 @app.post("/auth/forgot-password")
-async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def forgot_password(request: Request, payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
     return await verify_code(VerifyCodeRequest(email=payload.email, purpose="reset", code=payload.verification_code, password=payload.new_password), db)
 
 
@@ -1140,12 +1200,14 @@ async def get_me(current_user: User = Depends(get_current_user)):
 
 
 @app.post("/auth/send-verification")
-async def send_verification_endpoint(req: SendVerificationRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def send_verification_endpoint(request: Request, req: SendVerificationRequest, db: AsyncSession = Depends(get_db)):
     return await send_verification(req, db)
 
 
 @app.post("/auth/verify-code")
-async def verify_code_endpoint(req: VerifyCodeRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def verify_code_endpoint(request: Request, req: VerifyCodeRequest, db: AsyncSession = Depends(get_db)):
     return await verify_code(req, db)
 
 
@@ -1257,6 +1319,275 @@ async def get_admin_analytics(days: int = Query(default=30, ge=7, le=90), db: As
     return await build_order_analytics(db, days)
 
 
+@app.get("/admin/food-planning/dataset.csv")
+async def export_food_planning_dataset(days: int = Query(default=90, ge=7, le=180),
+                                       db: AsyncSession = Depends(get_db),
+                                       current_user: User = Depends(get_current_user)):
+    """Admin-only, pseudonymous dish/day dataset; unknown availability is not a zero."""
+    from customer_analytics import MYT, PAID
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin privileges required.")
+    today = datetime.now(MYT).date()
+    first = today - timedelta(days=days - 1)
+    first_utc = datetime.combine(first, datetime.min.time(), MYT).astimezone(timezone.utc)
+    end_utc = datetime.combine(today + timedelta(days=1), datetime.min.time(), MYT).astimezone(timezone.utc)
+    slot_day = func.date(func.timezone("Asia/Kuala_Lumpur", PickupSlot.time_slot))
+    offered_result = await db.execute(
+        select(PickupSlot.merchant_id, slot_day, func.count(PickupSlot.id), func.sum(PickupSlot.max_capacity))
+        .where(PickupSlot.time_slot >= first_utc, PickupSlot.time_slot < end_utc)
+        .group_by(PickupSlot.merchant_id, slot_day)
+    )
+    offered = [(row[0], row[1], int(row[2]), int(row[3])) for row in offered_result]
+    merchant_ids = {row[0] for row in offered}
+    item_result = await db.execute(select(MenuItem.id, MenuItem.merchant_id, MenuItem.created_at)
+                                   .where(MenuItem.merchant_id.in_(merchant_ids)))
+    items_by_merchant = {}
+    for item_id, merchant_id, created_at in item_result:
+        items_by_merchant.setdefault(merchant_id, []).append(
+            (item_id, created_at.astimezone(MYT).date() if created_at else first))
+    sold_result = await db.execute(
+        select(Order.merchant_id, slot_day, OrderItem.menu_item_id,
+               func.sum(OrderItem.quantity), func.count(func.distinct(Order.id)))
+        .select_from(PickupSlot).join(Order, Order.pickup_slot_id == PickupSlot.id)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .where(PickupSlot.time_slot >= first_utc, PickupSlot.time_slot < end_utc,
+               Order.status.in_(PAID))
+        .group_by(Order.merchant_id, slot_day, OrderItem.menu_item_id)
+    )
+    sold = {(row[0], row[1], row[2]): (int(row[3]), int(row[4])) for row in sold_result}
+    log_result = await db.execute(select(DailyFoodLog).where(DailyFoodLog.service_date >= first,
+                                                                DailyFoodLog.service_date <= today))
+    logs = {(row.merchant_id, row.service_date, row.menu_item_id): row
+            for row in log_result.scalars().all()}
+    stock_result = await db.execute(select(DailyItemStock).where(DailyItemStock.service_date >= first,
+                                                                  DailyItemStock.service_date <= today))
+    stock_limits = {(row.merchant_id, row.service_date, row.menu_item_id): row.total_portions
+                    for row in stock_result.scalars().all()}
+
+    def code(identifier: UUID) -> str:
+        return hmac.new(os.environ["SECRET_KEY"].encode(), identifier.bytes,
+                        hashlib.sha256).hexdigest()[:16]
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["merchant_code", "dish_code", "service_date_myt", "weekday",
+                     "pickup_slot_count", "pickup_slot_capacity", "availability_evidence",
+                     "merchant_reported_offered", "data_conflict",
+                     "confirmed_portions", "confirmed_order_count", "prepared_portions",
+                     "unsold_portions", "discarded_portions", "sold_out_reported",
+                     "daily_portion_limit", "demand_censored"])
+    for merchant_id, day, slot_count, capacity in sorted(offered, key=lambda row: (str(row[0]), row[1])):
+        for item_id, created_day in items_by_merchant.get(merchant_id, []):
+            if created_day > day:
+                continue
+            key = (merchant_id, day, item_id)
+            log = logs.get(key)
+            quantities = sold.get(key)
+            cap = stock_limits.get(key)
+            censored = bool((log and log.sold_out) or
+                            (cap is not None and (quantities[0] if quantities else 0) >= cap))
+            evidence = ("confirmed_sale" if quantities else
+                        "merchant_confirmed_available" if log and log.was_offered is True else
+                        "merchant_confirmed_unavailable" if log and log.was_offered is False else
+                        "prepared_log" if log and log.prepared_portions > 0 else "unknown")
+            observed = evidence in {"confirmed_sale", "merchant_confirmed_available", "prepared_log"}
+            conflict = bool(log and log.was_offered is False and quantities)
+            writer.writerow([code(merchant_id), code(item_id), day.isoformat(), day.weekday(),
+                             slot_count, capacity, evidence,
+                             log.was_offered if log and log.was_offered is not None else "", conflict,
+                             quantities[0] if quantities else (0 if observed else ""),
+                             quantities[1] if quantities else (0 if observed else ""),
+                             log.prepared_portions if log else "", log.unsold_portions if log else "",
+                             log.discarded_portions if log else "", log.sold_out if log else "",
+                             cap if cap is not None else "", censored])
+    return Response(content=output.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="sunway-food-planning-{today}.csv"',
+                             "Cache-Control": "no-store"})
+
+
+async def require_own_merchant(db: AsyncSession, current_user: User) -> Merchant:
+    if current_user.role != "merchant":
+        raise HTTPException(status_code=403, detail="Merchant privileges required.")
+    result = await db.execute(select(Merchant).where(Merchant.user_id == current_user.id, Merchant.is_deleted.is_(False)))
+    merchant = result.scalars().first()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="No merchant profile found for this user.")
+    return merchant
+
+
+@app.get("/merchants/me/food-planning")
+async def get_food_planning(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Return merchant records, a weekday baseline and a validated model candidate."""
+    from customer_analytics import MYT, PAID
+    from demand_planning import forecast_portions, trained_forecast, walk_forward_validation
+
+    merchant = await require_own_merchant(db, current_user)
+    now_utc = datetime.now(timezone.utc)
+    today = now_utc.astimezone(MYT).date()
+    first = today - timedelta(days=180)
+    baseline_start = today - timedelta(days=56)
+    last = today + timedelta(days=7)
+    first_utc = datetime.combine(first, datetime.min.time(), MYT).astimezone(timezone.utc)
+    end_utc = datetime.combine(last + timedelta(days=1), datetime.min.time(), MYT).astimezone(timezone.utc)
+    slot_day = func.date(func.timezone("Asia/Kuala_Lumpur", PickupSlot.time_slot))
+    offered_result = await db.execute(
+        select(slot_day).where(PickupSlot.merchant_id == merchant.id,
+                               PickupSlot.time_slot >= first_utc, PickupSlot.time_slot < end_utc)
+        .distinct().order_by(slot_day)
+    )
+    offered_days = [row[0] for row in offered_result]
+    upcoming_result = await db.execute(
+        select(slot_day).where(PickupSlot.merchant_id == merchant.id,
+                               PickupSlot.time_slot >= now_utc, PickupSlot.time_slot < end_utc)
+        .distinct().order_by(slot_day)
+    )
+    future_days = [row[0] for row in upcoming_result]
+    sales_result = await db.execute(
+        select(slot_day, OrderItem.menu_item_id, func.sum(OrderItem.quantity))
+        .select_from(PickupSlot).join(Order, Order.pickup_slot_id == PickupSlot.id)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .where(PickupSlot.merchant_id == merchant.id, PickupSlot.time_slot >= first_utc,
+               PickupSlot.time_slot < end_utc, Order.status.in_(PAID))
+        .group_by(slot_day, OrderItem.menu_item_id)
+    )
+    sold = {(row[0], row[1]): int(row[2]) for row in sales_result}
+    items = (await db.execute(select(MenuItem).where(MenuItem.merchant_id == merchant.id,
+                                                     MenuItem.approval_status == "approved")
+                              .order_by(MenuItem.name))).scalars().all()
+    availability_result = await db.execute(
+        select(DailyFoodLog.menu_item_id, DailyFoodLog.service_date,
+               DailyFoodLog.prepared_portions, DailyFoodLog.sold_out, DailyFoodLog.was_offered)
+        .where(DailyFoodLog.merchant_id == merchant.id,
+               DailyFoodLog.service_date >= first, DailyFoodLog.service_date < today)
+    )
+    historical_logs = {(row[0], row[1]): (row[2], row[3], row[4]) for row in availability_result}
+    historical_stock_result = await db.execute(select(DailyItemStock).where(
+        DailyItemStock.merchant_id == merchant.id,
+        DailyItemStock.service_date >= first, DailyItemStock.service_date < today))
+    historical_limits = {(row.menu_item_id, row.service_date): row.total_portions
+                         for row in historical_stock_result.scalars().all()}
+    history_days = [day for day in offered_days if day < today]
+
+    def verified_offered(item_id: UUID, day: date) -> bool:
+        prepared, _, offered = historical_logs.get((item_id, day), (0, False, None))
+        return offered is True or (prepared > 0 and offered is not False)
+
+    def uncensored(item_id: UUID, day: date) -> bool:
+        _, sold_out, _ = historical_logs.get((item_id, day), (0, False, None))
+        cap = historical_limits.get((item_id, day))
+        return not sold_out and (cap is None or sold.get((day, item_id), 0) < cap)
+
+    model_history = {}
+    for item in items:
+        created_date = item.created_at.astimezone(MYT).date() if item.created_at else first
+        model_history[item.id] = [(day, sold.get((day, item.id), 0)) for day in history_days
+                                  if day >= created_date and verified_offered(item.id, day)
+                                  and uncensored(item.id, day)]
+    forecasts = []
+    for service_date in future_days:
+        for item in items:
+            if not item.is_available:
+                continue
+            created_date = item.created_at.astimezone(MYT).date() if item.created_at else first
+            matching_days = [day for day in history_days if day >= baseline_start and day.weekday() == service_date.weekday()
+                             and day >= created_date]
+            verified_days = [day for day in matching_days if verified_offered(item.id, day)]
+            availability_verified = len(verified_days) >= 3
+            candidate_days = verified_days if availability_verified else [day for day in matching_days
+                              if historical_logs.get((item.id, day), (0, False, None))[2] is not False]
+            training_days = [day for day in candidate_days if uncensored(item.id, day)]
+            observed = [sold.get((day, item.id), 0) for day in training_days]
+            estimate = forecast_portions(observed,
+                                         sold.get((service_date, item.id), 0))
+            model = trained_forecast(model_history[item.id],
+                                     service_date, sold.get((service_date, item.id), 0))
+            if model["selected"]:
+                estimate.update({"expected": model["expected"], "low": model["low"],
+                                 "high": model["high"], "confidence": "trained_model"})
+            forecasts.append({"date": service_date.isoformat(), "menu_item_id": str(item.id),
+                              "menu_item_name": item.name, "availability_verified": availability_verified,
+                              "excluded_censored_days": len(candidate_days) - len(training_days),
+                              "validation": walk_forward_validation(observed),
+                              "prediction_method": "trained_model" if model["selected"] else "weekday_baseline",
+                              "model_evaluation": model, **estimate})
+
+    log_start = today - timedelta(days=30)
+    log_rows = (await db.execute(select(DailyFoodLog, MenuItem.name)
+                                 .join(MenuItem, MenuItem.id == DailyFoodLog.menu_item_id)
+                                 .where(DailyFoodLog.merchant_id == merchant.id,
+                                        DailyFoodLog.service_date >= log_start,
+                                        DailyFoodLog.service_date <= today)
+                                 .order_by(DailyFoodLog.service_date.desc(), MenuItem.name))).all()
+    logs = [{"menu_item_id": str(log.menu_item_id), "menu_item_name": name,
+             "service_date": log.service_date.isoformat(), "prepared_portions": log.prepared_portions,
+             "unsold_portions": log.unsold_portions, "discarded_portions": log.discarded_portions,
+             "sold_out": log.sold_out, "was_offered": log.was_offered,
+             "updated_at": log.updated_at.isoformat() if log.updated_at else None}
+            for log, name in log_rows]
+    logged_keys = {(log.menu_item_id, log.service_date) for log, _ in log_rows}
+    review_rows = [{"service_date": day.isoformat(), "menu_item_id": str(item.id),
+                    "menu_item_name": item.name, "confirmed_portions": sold.get((day, item.id), 0)}
+                   for day in reversed(history_days) if today - timedelta(days=14) <= day < today
+                   for item in items if item.created_at is None or item.created_at.astimezone(MYT).date() <= day
+                   if (item.id, day) not in logged_keys]
+    review_rows.sort(key=lambda row: (row["confirmed_portions"] > 0, row["service_date"]), reverse=True)
+    return {"updated_at": now_utc.isoformat(), "timezone": "Asia/Kuala_Lumpur",
+            "method": "Same-weekday baseline across 8 weeks; a regularized weekday/trend model replaces it only after enough verified history and better chronological validation. Ranges are planning bands, not probability intervals.",
+            "history_offered_days": len(history_days), "upcoming_slot_days": [day.isoformat() for day in future_days],
+            "menu_items": [{"id": str(item.id), "name": item.name} for item in items],
+            "forecasts": forecasts, "logs": logs,
+            "review_total": len(review_rows), "review_records": review_rows[:30],
+            "measured": {"logged_days": len({log.service_date for log, _ in log_rows}),
+                         "prepared_portions": sum(log.prepared_portions for log, _ in log_rows),
+                         "unsold_portions": sum(log.unsold_portions for log, _ in log_rows),
+                         "discarded_portions": sum(log.discarded_portions for log, _ in log_rows),
+                         "sold_out_dish_days": sum(bool(log.sold_out) for log, _ in log_rows)}}
+
+
+@app.put("/merchants/me/food-planning/{menu_item_id}")
+async def save_daily_food_log(menu_item_id: UUID, payload: DailyFoodLogInput,
+                              db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    from customer_analytics import MYT, PAID
+    merchant = await require_own_merchant(db, current_user)
+    today = datetime.now(MYT).date()
+    if not today - timedelta(days=90) <= payload.service_date <= today:
+        raise HTTPException(422, "Choose today or a day within the last 90 days.")
+    if payload.unsold_portions + payload.discarded_portions > payload.prepared_portions:
+        raise HTTPException(422, "Unsold and discarded portions cannot exceed prepared portions.")
+    if not payload.was_offered and (payload.prepared_portions or payload.unsold_portions
+                                    or payload.discarded_portions or payload.sold_out):
+        raise HTTPException(422, "A dish marked not offered cannot have prepared, leftover or discarded portions.")
+    item = await db.get(MenuItem, menu_item_id)
+    if not item or item.merchant_id != merchant.id:
+        raise HTTPException(404, "Menu item not found for your stall.")
+    # Lock the unique key's merchant row so simultaneous submissions cannot create duplicates.
+    await db.execute(select(Merchant.id).where(Merchant.id == merchant.id).with_for_update())
+    if not payload.was_offered:
+        sold_count = (await db.execute(select(func.coalesce(func.sum(OrderItem.quantity), 0))
+                                       .select_from(OrderItem).join(Order, Order.id == OrderItem.order_id)
+                                       .where(Order.merchant_id == merchant.id,
+                                              Order.pickup_service_date == payload.service_date,
+                                              Order.status.in_(PAID),
+                                              OrderItem.menu_item_id == menu_item_id))).scalar_one()
+        if sold_count:
+            raise HTTPException(409, "This dish has confirmed orders for that day; it cannot be marked not offered.")
+    row = (await db.execute(select(DailyFoodLog).where(
+        DailyFoodLog.merchant_id == merchant.id, DailyFoodLog.menu_item_id == menu_item_id,
+        DailyFoodLog.service_date == payload.service_date))).scalars().first()
+    if row is None:
+        row = DailyFoodLog(merchant_id=merchant.id, menu_item_id=menu_item_id,
+                           service_date=payload.service_date)
+        db.add(row)
+    row.prepared_portions = payload.prepared_portions
+    row.was_offered = payload.was_offered
+    row.unsold_portions = payload.unsold_portions
+    row.discarded_portions = payload.discarded_portions
+    row.sold_out = payload.sold_out
+    row.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"message": "Daily food record saved.", "service_date": payload.service_date.isoformat()}
+
+
 @app.get("/merchants/me/analytics")
 async def get_merchant_analytics(days: int = Query(default=30, ge=7, le=90), db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.role != "merchant":
@@ -1291,6 +1622,12 @@ async def create_merchant(merchant_data: MerchantCreate, db: AsyncSession = Depe
         location=merchant_data.location
     )
     db.add(new_merchant)
+    await db.flush()
+    await log_admin_action(
+        db, current_user, "merchant.create",
+        f"Created stall '{new_merchant.name}'",
+        target_type="merchant", target_id=new_merchant.id, target_label=new_merchant.name,
+    )
     await db.commit()
     await db.refresh(new_merchant)
     return new_merchant
@@ -1348,10 +1685,12 @@ async def list_merchants_sorted(db: AsyncSession = Depends(get_db)):
 @app.get("/merchants/{merchant_id}", response_model=MerchantPublic)
 async def get_merchant_details(merchant_id: UUID, db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
     merchant = await require_shop_access(db, merchant_id, authorization)
-    return MerchantPublic.model_validate(merchant)
+    public = MerchantPublic.model_validate(merchant)
+    if merchant.pickup_schedule:
+        public.operating_hours = merchant.pickup_schedule
+    return public
 
 
-# --- 1. SECURED: Create Menu Item (Merchant Owner or Admin Only) ---
 @app.post("/merchants/{merchant_id}/items")
 async def create_menu_item(
     merchant_id: UUID, 
@@ -1385,7 +1724,6 @@ async def create_menu_item(
         raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
-# --- 2. SECURED: Update Menu Item ---
 @app.put("/merchants/items/{item_id}")
 async def update_menu_item(
     item_id: UUID, 
@@ -1417,7 +1755,6 @@ async def update_menu_item(
         raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
-# --- 3. SECURED: Delete Menu Item ---
 @app.delete("/merchants/items/{item_id}")
 async def delete_menu_item(
     item_id: UUID, 
@@ -1433,13 +1770,21 @@ async def delete_menu_item(
         raise HTTPException(status_code=403, detail="Access denied.")
 
     used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
+<<<<<<< HEAD
     from models import Promotion
     has_promotion = (await db.execute(select(Promotion.id).where(Promotion.menu_item_id == item.id).limit(1))).first()
     if used or has_promotion:
         # Past orders point at this item; deleting it would break receipts and sales history.
+=======
+    has_planning_history = (await db.execute(select(func.count(DailyFoodLog.id)).where(DailyFoodLog.menu_item_id == item.id))).scalar_one()
+    has_stock_limit = (await db.execute(select(func.count(DailyItemStock.id)).where(DailyItemStock.menu_item_id == item.id))).scalar_one()
+    has_surplus_offer = (await db.execute(select(func.count(SurplusOffer.id)).where(SurplusOffer.menu_item_id == item.id))).scalar_one()
+    if used or has_planning_history or has_stock_limit or has_surplus_offer:
+        # Preserve order receipts, planning observations and daily caps.
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
         item.is_available = False
         await db.commit()
-        return {"message": "This item has past orders, so it was hidden instead of deleted.", "hidden": True}
+        return {"message": "This item has order or planning records, so it was hidden instead of deleted.", "hidden": True}
     try:
         await db.delete(item)
         await db.commit()
@@ -1450,7 +1795,102 @@ async def delete_menu_item(
         raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
-# --- 4. SECURED: Create Pickup Slot ---
+async def sync_automatic_pickup_slots(db: AsyncSession, merchant: Merchant, now: datetime) -> None:
+    """Keep a rolling week of bookable rows under the merchant transaction lock."""
+    if not merchant.pickup_schedule:
+        return
+    schedule = PickupSchedule.model_validate(merchant.pickup_schedule)
+    horizon = datetime.combine(now.astimezone(PICKUP_MYT).date() + timedelta(days=7),
+                               datetime.min.time(), PICKUP_MYT).astimezone(timezone.utc)
+    existing = (await db.execute(select(PickupSlot).where(
+        PickupSlot.merchant_id == merchant.id,
+        PickupSlot.time_slot >= now,
+        PickupSlot.time_slot < horizon,
+    ).with_for_update())).scalars().all()
+    desired = set(candidate_times(schedule, now))
+    occupied = {slot.time_slot.astimezone(timezone.utc) for slot in existing}
+    for slot in existing:
+        if slot.is_automatic:
+            active = slot.time_slot.astimezone(timezone.utc) in desired
+            slot.is_bookable = active
+            if active:
+                slot.max_capacity = max(slot.current_bookings, schedule.max_capacity)
+    for when in desired - occupied:
+        db.add(PickupSlot(merchant_id=merchant.id, time_slot=when,
+                          max_capacity=schedule.max_capacity, current_bookings=0,
+                          is_automatic=True, is_bookable=True))
+    merchant.pickup_schedule_synced_on = now.astimezone(PICKUP_MYT).date()
+
+
+async def prune_old_automatic_pickup_slots(db: AsyncSession, merchant_id: UUID, now: datetime) -> int:
+    """Remove a bounded batch of old, unused generated rows without touching order history."""
+    cutoff_day = now.astimezone(PICKUP_MYT).date() - timedelta(days=181)
+    cutoff = datetime.combine(cutoff_day, datetime.min.time(), PICKUP_MYT).astimezone(timezone.utc)
+    no_orders = ~select(Order.id).where(Order.pickup_slot_id == PickupSlot.id).exists()
+    no_offers = ~select(SurplusOffer.id).where(SurplusOffer.pickup_slot_id == PickupSlot.id).exists()
+    eligible = (
+        PickupSlot.merchant_id == merchant_id,
+        PickupSlot.is_automatic.is_(True),
+        PickupSlot.time_slot < cutoff,
+        PickupSlot.current_bookings == 0,
+        no_orders,
+        no_offers,
+    )
+    ids = (await db.execute(select(PickupSlot.id).where(*eligible)
+                            .order_by(PickupSlot.time_slot).limit(1000)
+                            .with_for_update(skip_locked=True))).scalars().all()
+    if not ids:
+        return 0
+    result = await db.execute(delete(PickupSlot).where(PickupSlot.id.in_(ids), *eligible)
+                              .execution_options(synchronize_session=False))
+    return result.rowcount
+
+
+@app.get("/merchants/me/pickup-schedule")
+async def get_pickup_schedule(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    merchant = await require_own_merchant(db, current_user)
+    return merchant.pickup_schedule or default_schedule()
+
+
+@app.get("/merchants/me/pickup-demand")
+async def get_pickup_demand(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Observed pickup demand, for planning only; merchants choose their own capacity."""
+    from customer_analytics import PAID
+
+    merchant = await require_own_merchant(db, current_user)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=28)
+    rows = (await db.execute(select(PickupSlot.time_slot).join(Order, Order.pickup_slot_id == PickupSlot.id)
+        .where(Order.merchant_id == merchant.id, Order.status.in_(PAID),
+               PickupSlot.time_slot >= cutoff)
+        .order_by(PickupSlot.time_slot.desc()).limit(5000))).scalars().all()
+    buckets: dict[tuple[int, int], dict] = {}
+    for when in rows:
+        local = when.astimezone(PICKUP_MYT)
+        key = (local.weekday(), local.hour)
+        bucket = buckets.setdefault(key, {"orders": 0, "dates": set()})
+        bucket["orders"] += 1
+        bucket["dates"].add(local.date())
+    busiest = sorted(buckets.items(), key=lambda pair: pair[1]["orders"], reverse=True)[:3]
+    return {"period_days": 28, "confirmed_orders": len(rows), "enough_history": len(rows) >= 10,
+            "busiest_hours": [{"weekday": weekday, "hour": hour,
+                               "orders": data["orders"], "observed_days": len(data["dates"])}
+                              for (weekday, hour), data in busiest] if len(rows) >= 10 else []}
+
+
+@app.put("/merchants/me/pickup-schedule")
+async def put_pickup_schedule(payload: PickupSchedule, db: AsyncSession = Depends(get_db),
+                              current_user: User = Depends(get_current_user)):
+    merchant = await require_own_merchant(db, current_user)
+    # Serialize with checkout and manual slot creation.
+    merchant = (await db.execute(select(Merchant).where(Merchant.id == merchant.id).with_for_update())).scalars().one()
+    merchant.pickup_schedule = payload.model_dump(mode="json")
+    now = datetime.now(timezone.utc)
+    await sync_automatic_pickup_slots(db, merchant, now)
+    await prune_old_automatic_pickup_slots(db, merchant.id, now)
+    await db.commit()
+    return merchant.pickup_schedule
+
+
 @app.post("/merchants/{merchant_id}/pickup-slots")
 async def create_pickup_slot(
     merchant_id: UUID, 
@@ -1468,6 +1908,8 @@ async def create_pickup_slot(
     when = as_malaysia_time(slot_data.time_slot)
     if when < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Pickup time must be in the future.")
+    if getattr(merchant, "pickup_schedule", None) and is_closed(PickupSchedule.model_validate(merchant.pickup_schedule), when):
+        raise HTTPException(status_code=400, detail="This date is marked closed in your pickup schedule.")
     existing = (await db.execute(select(PickupSlot).where(
         PickupSlot.merchant_id == merchant_id, PickupSlot.time_slot == when
     ))).scalars().first()
@@ -1505,6 +1947,10 @@ async def create_pickup_slots_batch(
     times = [as_malaysia_time(slot.time_slot) for slot in payload.slots]
     if any(when <= datetime.now(timezone.utc) for when in times):
         raise HTTPException(status_code=400, detail="All pickup times must be in the future. Refresh your preview.")
+    if getattr(merchant, "pickup_schedule", None):
+        schedule = PickupSchedule.model_validate(merchant.pickup_schedule)
+        if any(is_closed(schedule, when) for when in times):
+            raise HTTPException(status_code=400, detail="One or more dates are marked closed in your pickup schedule.")
     existing = set((await db.execute(select(PickupSlot.time_slot).where(
         PickupSlot.merchant_id == merchant_id, PickupSlot.time_slot.in_(times)
     ))).scalars().all())
@@ -1525,16 +1971,35 @@ async def create_pickup_slots_batch(
     return {"created": created, "skipped": len(payload.slots) - created}
 
 
-# --- PUBLIC: List Pickup Slots ---
 @app.get("/merchants/{merchant_id}/pickup-slots")
-async def list_pickup_slots(merchant_id: UUID, db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
-    await require_shop_access(db, merchant_id, authorization)
+async def list_pickup_slots(merchant_id: UUID, from_date: date | None = None,
+                            db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
+    merchant = await require_shop_access(db, merchant_id, authorization)
     await expire_stale_drafts(db)
-    result = await db.execute(select(PickupSlot).where(PickupSlot.merchant_id == merchant_id).order_by(PickupSlot.time_slot))
-    return result.scalars().all()
+    today = datetime.now(PICKUP_MYT).date()
+    if merchant.pickup_schedule and merchant.pickup_schedule_synced_on != today:
+        merchant = (await db.execute(select(Merchant).where(Merchant.id == merchant_id).with_for_update())).scalars().one()
+        if merchant.pickup_schedule_synced_on != today:
+            now = datetime.now(timezone.utc)
+            await sync_automatic_pickup_slots(db, merchant, now)
+            await prune_old_automatic_pickup_slots(db, merchant.id, now)
+            await db.commit()
+    if from_date and from_date < today - timedelta(days=90):
+        raise HTTPException(status_code=400, detail="Pickup slot history is available for the last 90 days.")
+    first_day = from_date or (today - timedelta(days=8))
+    cutoff = datetime.combine(first_day, datetime.min.time(), PICKUP_MYT).astimezone(timezone.utc)
+    result = await db.execute(select(PickupSlot).where(PickupSlot.merchant_id == merchant_id,
+                                                      PickupSlot.time_slot >= cutoff).order_by(PickupSlot.time_slot))
+    schedule = PickupSchedule.model_validate(merchant.pickup_schedule) if merchant.pickup_schedule else None
+    current_auto_times = set(candidate_times(schedule, datetime.now(timezone.utc))) if schedule else set()
+    return [{"id": slot.id, "merchant_id": slot.merchant_id, "time_slot": slot.time_slot,
+             "max_capacity": slot.max_capacity, "current_bookings": slot.current_bookings,
+             "is_automatic": slot.is_automatic,
+             "is_bookable": slot.is_bookable and not (schedule and is_closed(schedule, slot.time_slot))
+                            and (not slot.is_automatic or slot.time_slot.astimezone(timezone.utc) in current_auto_times)}
+            for slot in result.scalars().all()]
 
 
-# --- 5. SECURED: Delete Pickup Slot ---
 @app.delete("/merchants/pickup-slots/{slot_id}")
 async def delete_pickup_slot(
     slot_id: UUID, 
@@ -1550,6 +2015,8 @@ async def delete_pickup_slot(
         raise HTTPException(status_code=404, detail="Merchant not found.")
     if current_user.role != "admin" and (current_user.role != "merchant" or merchant.user_id != current_user.id):
         raise HTTPException(status_code=403, detail="Access denied.")
+    if getattr(slot, "is_automatic", False):
+        raise HTTPException(status_code=400, detail="Edit your weekly schedule or close the date to remove automatic times.")
 
     # Expire abandoned drafts before deciding whether this slot is still in use.
     await expire_stale_drafts(db)
@@ -1580,7 +2047,6 @@ async def delete_pickup_slot(
         raise HTTPException(status_code=400, detail="Something went wrong. Please try again.")
 
 
-# --- PUBLIC: List Menu Items ---
 @app.get("/merchants/{merchant_id}/items")
 async def list_menu_items(merchant_id: UUID, db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
     await require_shop_access(db, merchant_id, authorization)
@@ -1588,6 +2054,295 @@ async def list_menu_items(merchant_id: UUID, db: AsyncSession = Depends(get_db),
     items = result.scalars().all()
     offers = await active_promotions(db, merchant_id)
     return [public_menu_item(item, offers.get(item.id)) for item in items]
+
+
+STOCK_RESERVATION_STATUSES = ("draft", "pending_verification", "pending", "preparing", "ready", "completed")
+
+
+def stock_day_bounds(service_date: date) -> tuple[datetime, datetime]:
+    start = datetime.combine(service_date, datetime.min.time(), MALAYSIA_TZ).astimezone(timezone.utc)
+    return start, start + timedelta(days=1)
+
+
+async def reserved_item_quantities(db: AsyncSession, merchant_id: UUID, service_date: date,
+                                   item_ids: list[UUID]) -> dict[UUID, int]:
+    if not item_ids:
+        return {}
+    start, end = stock_day_bounds(service_date)
+    result = await db.execute(
+        select(OrderItem.menu_item_id, func.sum(OrderItem.quantity))
+        .join(Order, Order.id == OrderItem.order_id)
+        .outerjoin(PickupSlot, PickupSlot.id == Order.pickup_slot_id)
+        .where(Order.merchant_id == merchant_id, Order.status.in_(STOCK_RESERVATION_STATUSES),
+               or_(Order.pickup_service_date == service_date,
+                   and_(Order.pickup_service_date.is_(None),
+                        PickupSlot.time_slot >= start, PickupSlot.time_slot < end)),
+               OrderItem.menu_item_id.in_(item_ids))
+        .group_by(OrderItem.menu_item_id)
+    )
+    return {row[0]: int(row[1]) for row in result}
+
+
+@app.get("/merchants/{merchant_id}/stock")
+async def get_daily_stock(merchant_id: UUID, service_date: date = Query(...),
+                          db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
+    await require_shop_access(db, merchant_id, authorization)
+    await expire_stale_drafts(db)
+    rows = (await db.execute(select(DailyItemStock).where(
+        DailyItemStock.merchant_id == merchant_id,
+        DailyItemStock.service_date == service_date))).scalars().all()
+    reserved = await reserved_item_quantities(db, merchant_id, service_date,
+                                               [row.menu_item_id for row in rows])
+    return [{"menu_item_id": str(row.menu_item_id), "service_date": service_date.isoformat(),
+             "total_portions": row.total_portions, "reserved_portions": reserved.get(row.menu_item_id, 0),
+             "remaining_portions": max(0, row.total_portions - reserved.get(row.menu_item_id, 0))}
+            for row in rows]
+
+
+@app.put("/merchants/me/stock/{item_id}")
+async def set_daily_stock(item_id: UUID, payload: DailyStockInput,
+                          db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    from customer_analytics import MYT
+    await expire_stale_drafts(db)
+    today = datetime.now(MYT).date()
+    if not today <= payload.service_date <= today + timedelta(days=30):
+        raise HTTPException(422, "Choose today or a date within the next 30 days.")
+    merchant = await require_own_merchant(db, current_user)
+    # Checkout takes the same merchant lock before reading stock. This also
+    # serializes first-time cap creation with a concurrent checkout.
+    await db.execute(select(Merchant.id).where(Merchant.id == merchant.id).with_for_update())
+    item = await db.get(MenuItem, item_id)
+    if not item or item.merchant_id != merchant.id:
+        raise HTTPException(404, "Menu item not found for your stall.")
+    existing = (await db.execute(select(DailyItemStock).where(
+        DailyItemStock.merchant_id == merchant.id, DailyItemStock.menu_item_id == item_id,
+        DailyItemStock.service_date == payload.service_date).with_for_update())).scalars().first()
+    reserved = (await reserved_item_quantities(db, merchant.id, payload.service_date, [item_id])).get(item_id, 0)
+    if payload.total_portions is not None and payload.total_portions < reserved:
+        raise HTTPException(409, f"{reserved} portions are already reserved or sold for this date. The limit cannot be lower.")
+    if payload.total_portions is None:
+        if existing:
+            await db.delete(existing)
+    elif existing:
+        existing.total_portions = payload.total_portions
+        existing.updated_at = datetime.now(timezone.utc)
+    else:
+        db.add(DailyItemStock(merchant_id=merchant.id, menu_item_id=item_id,
+                              service_date=payload.service_date, total_portions=payload.total_portions))
+    await db.commit()
+    return {"menu_item_id": str(item_id), "service_date": payload.service_date.isoformat(),
+            "total_portions": payload.total_portions, "reserved_portions": reserved,
+            "remaining_portions": None if payload.total_portions is None else payload.total_portions - reserved}
+
+
+async def reserved_offer_quantities(db: AsyncSession, offer_ids: list[UUID]) -> dict[UUID, int]:
+    if not offer_ids:
+        return {}
+    result = await db.execute(
+        select(OrderItem.surplus_offer_id, func.sum(OrderItem.quantity))
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(OrderItem.surplus_offer_id.in_(offer_ids),
+               Order.status.in_(STOCK_RESERVATION_STATUSES))
+        .group_by(OrderItem.surplus_offer_id)
+    )
+    return {row[0]: int(row[1]) for row in result}
+
+
+async def reserved_offer_orders(db: AsyncSession, offer_ids: list[UUID]) -> dict[UUID, int]:
+    if not offer_ids:
+        return {}
+    result = await db.execute(
+        select(OrderItem.surplus_offer_id, func.count(func.distinct(Order.id)))
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(OrderItem.surplus_offer_id.in_(offer_ids),
+               Order.status.in_(STOCK_RESERVATION_STATUSES))
+        .group_by(OrderItem.surplus_offer_id)
+    )
+    return {row[0]: int(row[1]) for row in result}
+
+
+async def surplus_offer_payloads(db: AsyncSession, rows: list[tuple], now: datetime) -> list[dict]:
+    reserved = await reserved_offer_quantities(db, [offer.id for offer, _, _, _ in rows])
+    capped_ids = [offer.id for offer, _, _, _ in rows if getattr(offer, "max_orders", None) is not None]
+    order_counts = await reserved_offer_orders(db, capped_ids)
+    result = []
+    for offer, item, slot, merchant in rows:
+        remaining = max(0, offer.total_portions - reserved.get(offer.id, 0))
+        max_orders = getattr(offer, "max_orders", None)
+        remaining_orders = None if max_orders is None else max(0, max_orders - order_counts.get(offer.id, 0))
+        stock = (await db.execute(select(DailyItemStock).where(
+            DailyItemStock.merchant_id == offer.merchant_id,
+            DailyItemStock.menu_item_id == offer.menu_item_id,
+            DailyItemStock.service_date == offer.service_date))).scalars().first()
+        if stock:
+            by_item = await reserved_item_quantities(db, offer.merchant_id, offer.service_date, [offer.menu_item_id])
+            remaining = min(remaining, max(0, stock.total_portions - by_item.get(offer.menu_item_id, 0)))
+        schedule = PickupSchedule.model_validate(merchant.pickup_schedule) if getattr(merchant, "pickup_schedule", None) else None
+        slot_open = bool(slot and getattr(slot, "is_bookable", True)
+                         and slot.current_bookings < slot.max_capacity
+                         and not (schedule and is_closed(schedule, slot.time_slot))
+                         and (not getattr(slot, "is_automatic", False) or
+                              (schedule and slot.time_slot.astimezone(timezone.utc) in candidate_times(schedule, now))))
+        live = bool(offer.is_active and offer.expires_at > now and slot_open and slot.time_slot > now
+                    and shop_is_public(merchant) and item.is_available and item.approval_status == "approved")
+        result.append({"id": str(offer.id), "merchant_id": str(offer.merchant_id),
+                       "merchant_name": merchant.name, "merchant_location": merchant.location,
+                       "menu_item_id": str(item.id), "menu_item_name": item.name,
+                       "description": item.description, "image_url": public_menu_item(item)["image_url"],
+                       "regular_price": float(item.price), "sale_price": float(offer.sale_price),
+                       "total_portions": offer.total_portions, "remaining_portions": remaining,
+                       "max_orders": max_orders, "remaining_orders": remaining_orders,
+                       "pickup_slot_id": str(slot.id) if slot else None,
+                       "pickup_time": slot.time_slot.isoformat() if slot else None,
+                       "expires_at": offer.expires_at.isoformat(), "service_date": offer.service_date.isoformat(),
+                       "is_active": offer.is_active,
+                       "available": live and remaining > 0 and (remaining_orders is None or remaining_orders > 0)})
+    return result
+
+
+@app.get("/surplus-offers")
+async def list_public_surplus_offers(db: AsyncSession = Depends(get_db)):
+    await expire_stale_drafts(db)
+    now = datetime.now(timezone.utc)
+    rows = (await db.execute(
+        select(SurplusOffer, MenuItem, PickupSlot, Merchant)
+        .join(MenuItem, MenuItem.id == SurplusOffer.menu_item_id)
+        .join(Merchant, Merchant.id == SurplusOffer.merchant_id)
+        .outerjoin(PickupSlot, PickupSlot.id == SurplusOffer.pickup_slot_id)
+        .where(SurplusOffer.is_active.is_(True), SurplusOffer.expires_at > now,
+               PickupSlot.time_slot > now, Merchant.is_active.is_(True),
+               Merchant.is_preview.is_(False), Merchant.is_deleted.is_(False),
+               MenuItem.is_available.is_(True), MenuItem.approval_status == "approved")
+        .order_by(SurplusOffer.expires_at).limit(100)
+    )).all()
+    return [offer for offer in await surplus_offer_payloads(db, rows, now) if offer["available"]]
+
+
+@app.get("/merchants/me/surplus-offers")
+async def list_my_surplus_offers(db: AsyncSession = Depends(get_db),
+                                 current_user: User = Depends(get_current_user)):
+    merchant = await require_own_merchant(db, current_user)
+    now = datetime.now(timezone.utc)
+    rows = (await db.execute(
+        select(SurplusOffer, MenuItem, PickupSlot, Merchant)
+        .join(MenuItem, MenuItem.id == SurplusOffer.menu_item_id)
+        .join(Merchant, Merchant.id == SurplusOffer.merchant_id)
+        .outerjoin(PickupSlot, PickupSlot.id == SurplusOffer.pickup_slot_id)
+        .where(SurplusOffer.merchant_id == merchant.id,
+               SurplusOffer.created_at >= now - timedelta(days=30))
+        .order_by(SurplusOffer.created_at.desc()).limit(100)
+    )).all()
+    return await surplus_offer_payloads(db, rows, now)
+
+
+@app.get("/merchants/me/surplus-impact")
+async def get_my_surplus_impact(days: int = Query(default=30, ge=7, le=90),
+                                db: AsyncSession = Depends(get_db),
+                                current_user: User = Depends(get_current_user)):
+    """Report listing and order outcomes; no sale is counted as prevented waste."""
+    from customer_analytics import MYT
+    from surplus_analytics import summarize_surplus
+
+    merchant = await require_own_merchant(db, current_user)
+    now = datetime.now(MYT)
+    first = now.date() - timedelta(days=days - 1)
+    offers = (await db.execute(select(SurplusOffer).where(
+        SurplusOffer.merchant_id == merchant.id, SurplusOffer.service_date >= first,
+        SurplusOffer.service_date <= now.date()))).scalars().all()
+    offer_ids = [offer.id for offer in offers]
+    order_rows = []
+    if offer_ids:
+        order_rows = (await db.execute(
+            select(OrderItem.surplus_offer_id, Order.status, func.sum(OrderItem.quantity),
+                   func.sum(OrderItem.quantity * OrderItem.price_at_order))
+            .join(Order, Order.id == OrderItem.order_id)
+            .where(OrderItem.surplus_offer_id.in_(offer_ids), Order.merchant_id == merchant.id)
+            .group_by(OrderItem.surplus_offer_id, Order.status))).all()
+    log_keys = {(offer.menu_item_id, offer.service_date) for offer in offers if offer.service_date < now.date()}
+    logs = []
+    if log_keys:
+        logs = (await db.execute(select(DailyFoodLog).where(
+            DailyFoodLog.merchant_id == merchant.id, DailyFoodLog.service_date >= first,
+            DailyFoodLog.service_date < now.date(),
+            DailyFoodLog.menu_item_id.in_({item_id for item_id, _ in log_keys})))).scalars().all()
+    return {"period_days": days, "updated_at": now.isoformat(),
+            **summarize_surplus(offers, order_rows, logs, now)}
+
+
+@app.post("/merchants/me/surplus-offers", status_code=201)
+async def create_surplus_offer(payload: SurplusOfferCreate, db: AsyncSession = Depends(get_db),
+                               current_user: User = Depends(get_current_user)):
+    await expire_stale_drafts(db)
+    merchant = await require_own_merchant(db, current_user)
+    if not payload.confirm_safe_to_sell:
+        raise HTTPException(422, "Confirm that these portions are suitable to offer and collect safely.")
+    now = datetime.now(timezone.utc)
+    expiry = as_malaysia_time(payload.expires_at)
+    if expiry <= now:
+        raise HTTPException(422, "The offer deadline must be in the future.")
+    # Same lock as checkout and stock updates: an offer cannot be created while
+    # another checkout is committing its last portion.
+    await db.execute(select(Merchant.id).where(Merchant.id == merchant.id).with_for_update())
+    now = datetime.now(timezone.utc)
+    if expiry <= now:
+        raise HTTPException(422, "The offer deadline has passed. Choose a later pickup slot.")
+    item = await db.get(MenuItem, payload.menu_item_id)
+    slot = await db.get(PickupSlot, payload.pickup_slot_id)
+    if not item or item.merchant_id != merchant.id or not item.is_available or item.approval_status != "approved":
+        raise HTTPException(404, "Available menu item not found for your stall.")
+    if not slot or slot.merchant_id != merchant.id or slot.time_slot <= now:
+        raise HTTPException(422, "Choose a future pickup slot for your stall.")
+    schedule = PickupSchedule.model_validate(merchant.pickup_schedule) if merchant.pickup_schedule else None
+    if (not slot.is_bookable or (schedule and is_closed(schedule, slot.time_slot)) or
+            (slot.is_automatic and (not schedule or slot.time_slot.astimezone(timezone.utc) not in candidate_times(schedule, now)))):
+        raise HTTPException(422, "This pickup time is closed. Choose an open time for the deal.")
+    if slot.current_bookings >= slot.max_capacity:
+        raise HTTPException(422, "This pickup time is full. Choose another time for the deal.")
+    service_date = slot.time_slot.astimezone(MALAYSIA_TZ).date()
+    if service_date != now.astimezone(MALAYSIA_TZ).date():
+        raise HTTPException(422, "Surplus meals can only be offered for pickup today.")
+    if expiry > slot.time_slot:
+        raise HTTPException(422, "The offer deadline must be no later than its pickup time.")
+    if payload.sale_price >= item.price:
+        raise HTTPException(422, "Set a price below the regular menu price.")
+    existing = (await db.execute(select(SurplusOffer.id).where(
+        SurplusOffer.merchant_id == merchant.id, SurplusOffer.menu_item_id == item.id,
+        SurplusOffer.service_date == service_date, SurplusOffer.is_active.is_(True)))).first()
+    if existing:
+        raise HTTPException(409, "This dish already has an active surplus offer today. End it before creating another.")
+    stock = (await db.execute(select(DailyItemStock).where(
+        DailyItemStock.merchant_id == merchant.id, DailyItemStock.menu_item_id == item.id,
+        DailyItemStock.service_date == service_date))).scalars().first()
+    if stock:
+        reserved = (await reserved_item_quantities(db, merchant.id, service_date, [item.id])).get(item.id, 0)
+        if payload.total_portions > stock.total_portions - reserved:
+            raise HTTPException(409, "The offer exceeds the portions remaining in today's daily limit.")
+    offer = SurplusOffer(merchant_id=merchant.id, menu_item_id=item.id, pickup_slot_id=slot.id,
+                         service_date=service_date, sale_price=payload.sale_price,
+                         total_portions=payload.total_portions, max_orders=payload.max_orders, expires_at=expiry,
+                         confirmed_safe_at=now)
+    db.add(offer)
+    try:
+        await db.commit()
+        await db.refresh(offer)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(409, "An active offer for this dish already exists today.") from exc
+    return {"id": str(offer.id), "message": "Surplus offer is live until its deadline or portions run out."}
+
+
+@app.patch("/merchants/me/surplus-offers/{offer_id}/end")
+async def end_surplus_offer(offer_id: UUID, db: AsyncSession = Depends(get_db),
+                            current_user: User = Depends(get_current_user)):
+    merchant = await require_own_merchant(db, current_user)
+    await db.execute(select(Merchant.id).where(Merchant.id == merchant.id).with_for_update())
+    offer = (await db.execute(select(SurplusOffer).where(
+        SurplusOffer.id == offer_id, SurplusOffer.merchant_id == merchant.id).with_for_update())).scalars().first()
+    if not offer:
+        raise HTTPException(404, "Surplus offer not found for your stall.")
+    offer.is_active = False
+    await db.commit()
+    return {"message": "Surplus offer ended. Existing orders keep their agreed price."}
 
 
 @app.get("/menu-items/{item_id}/image")
@@ -1633,7 +2388,10 @@ async def create_order(
             if previous.checkout_fingerprint != fingerprint:
                 raise HTTPException(409, "This checkout request was already used for another cart.")
             return previous
-    merchant = await db.get(Merchant, order_data.merchant_id)
+    # Serialize checkout with changes to daily stock, including the creation
+    # of a first cap when there is no stock row to lock yet.
+    merchant = (await db.execute(select(Merchant).where(
+        Merchant.id == order_data.merchant_id).with_for_update())).scalars().first()
     if not shop_is_public(merchant):
         raise HTTPException(status_code=400, detail="This stall is not taking orders right now.")
     # Lock the slot row so two customers can't both take the last place.
@@ -1646,12 +2404,28 @@ async def create_order(
         raise HTTPException(status_code=400, detail="Pickup slot does not belong to this merchant.")
     if slot.time_slot < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="This pickup time has already passed.")
+    schedule = PickupSchedule.model_validate(merchant.pickup_schedule) if getattr(merchant, "pickup_schedule", None) else None
+    if not getattr(slot, "is_bookable", True) or (schedule and is_closed(schedule, slot.time_slot)):
+        raise HTTPException(status_code=400, detail="This pickup time is no longer available.")
+    if getattr(slot, "is_automatic", False) and (not schedule or slot.time_slot.astimezone(timezone.utc) not in candidate_times(schedule, datetime.now(timezone.utc))):
+        raise HTTPException(status_code=400, detail="This pickup time is no longer in the merchant's schedule.")
     if slot.current_bookings >= slot.max_capacity:
         raise HTTPException(status_code=400, detail="This pickup slot is fully booked.")
 
+    offer_ids = sorted({line.surplus_offer_id for line in order_data.items if line.surplus_offer_id})
+    offers = {}
+    if offer_ids:
+        offer_rows = (await db.execute(select(SurplusOffer).where(SurplusOffer.id.in_(offer_ids))
+                                       .order_by(SurplusOffer.id).with_for_update())).scalars().all()
+        offers = {offer.id: offer for offer in offer_rows}
     total_price = Decimal("0.00")
     line_items = []
+<<<<<<< HEAD
     offers = await active_promotions(db, order_data.merchant_id)
+=======
+    requested_by_item: dict[UUID, int] = {}
+    requested_by_offer: dict[UUID, int] = {}
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
     for line in order_data.items:
         item = await db.get(MenuItem, line.menu_item_id)
         if not item:
@@ -1660,14 +2434,63 @@ async def create_order(
             raise HTTPException(status_code=400, detail="Menu item does not belong to this merchant.")
         if not item.is_available or item.approval_status == "rejected" or float(item.price) <= 0:
             raise HTTPException(status_code=400, detail=f"'{item.name}' is currently unavailable.")
+<<<<<<< HEAD
         promotion = offers.get(item.id)
         unit_price = discounted_price(item.price, promotion) if promotion else money(item.price)
         if line.expected_price is not None and money(line.expected_price) != unit_price:
             raise HTTPException(409, f"The price of '{item.name}' changed. Refresh the menu and review your cart before paying.")
         line_total = unit_price * line.quantity
+=======
+        offer = offers.get(line.surplus_offer_id) if line.surplus_offer_id else None
+        if line.surplus_offer_id:
+            if (not offer or offer.menu_item_id != item.id or offer.merchant_id != merchant.id
+                    or offer.pickup_slot_id != slot.id or not offer.is_active
+                    or offer.expires_at <= datetime.now(timezone.utc)
+                    or item.approval_status != "approved"
+                    or offer.confirmed_safe_at is None):
+                raise HTTPException(409, f"The surplus offer for '{item.name}' is no longer available for this pickup slot.")
+            requested_by_offer[offer.id] = requested_by_offer.get(offer.id, 0) + line.quantity
+        line_price = offer.sale_price if offer else item.price
+        line_total = line_price * line.quantity
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
         total_price += line_total
+        requested_by_item[item.id] = requested_by_item.get(item.id, 0) + line.quantity
         instructions = line.special_instructions.strip() if line.special_instructions else None
+<<<<<<< HEAD
         line_items.append((item, line.quantity, instructions or None, unit_price, promotion))
+=======
+        line_items.append((item, line.quantity, instructions or None, line_price, offer.id if offer else None))
+
+    if requested_by_offer:
+        reserved_offers = await reserved_offer_quantities(db, list(requested_by_offer))
+        capped_offer_ids = [offer_id for offer_id in requested_by_offer
+                            if getattr(offers[offer_id], "max_orders", None) is not None]
+        offer_orders = await reserved_offer_orders(db, capped_offer_ids)
+        for offer_id, requested in requested_by_offer.items():
+            max_orders = getattr(offers[offer_id], "max_orders", None)
+            if max_orders is not None and offer_orders.get(offer_id, 0) >= max_orders:
+                raise HTTPException(409, "This deal has reached its order limit. Choose the regular menu item or another deal.")
+            remaining = offers[offer_id].total_portions - reserved_offers.get(offer_id, 0)
+            if requested > remaining:
+                raise HTTPException(409, f"Only {max(0, remaining)} surplus portions remain for this offer. Reduce the quantity and try again.")
+
+    stock_rows = (await db.execute(select(DailyItemStock).where(
+        DailyItemStock.merchant_id == order_data.merchant_id,
+        DailyItemStock.service_date == slot.time_slot.astimezone(MALAYSIA_TZ).date(),
+        DailyItemStock.menu_item_id.in_(list(requested_by_item)))
+        .order_by(DailyItemStock.menu_item_id).with_for_update())).scalars().all()
+    if stock_rows:
+        service_date = slot.time_slot.astimezone(MALAYSIA_TZ).date()
+        reserved = await reserved_item_quantities(db, order_data.merchant_id, service_date,
+                                                   [row.menu_item_id for row in stock_rows])
+        item_names = {item.id: item.name for item, _, _, _, _ in line_items}
+        for row in stock_rows:
+            remaining = row.total_portions - reserved.get(row.menu_item_id, 0)
+            if requested_by_item[row.menu_item_id] > remaining:
+                remaining = max(0, remaining)
+                noun = "portion" if remaining == 1 else "portions"
+                raise HTTPException(409, f"Only {remaining} {noun} of '{item_names[row.menu_item_id]}' remain for {service_date}. Reduce the quantity or choose another pickup day.")
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
 
     order_number = new_order_number()
     while (await db.execute(select(Order.id).where(Order.order_number == order_number))).first():
@@ -1679,8 +2502,9 @@ async def create_order(
         customer_id=current_user.id,
         merchant_id=order_data.merchant_id,
         pickup_slot_id=order_data.pickup_slot_id,
+        pickup_service_date=slot.time_slot.astimezone(MALAYSIA_TZ).date(),
         order_number=order_number,
-        status="draft", # <--- UPDATED: Initial state is draft so merchant is not notified yet
+        status="draft",
         total_price=round(total_price, 2),
         transaction_ref=None
     )
@@ -1688,15 +2512,24 @@ async def create_order(
 
     try:
         await db.flush()
+<<<<<<< HEAD
         for item, quantity, instructions, unit_price, promotion in line_items:
+=======
+        for item, quantity, instructions, line_price, offer_id in line_items:
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
             db.add(OrderItem(
                 order_id=new_order.id,
                 menu_item_id=item.id,
                 quantity=quantity,
+<<<<<<< HEAD
                 price_at_order=unit_price,
                 original_price_at_order=money(item.price),
                 discount_at_order=money(item.price) - unit_price,
                 promotion_id=promotion.id if promotion else None,
+=======
+                price_at_order=line_price,
+                surplus_offer_id=offer_id,
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
                 special_instructions=instructions,
             ))
         slot.current_bookings += 1
@@ -1726,7 +2559,7 @@ async def submit_order_receipt(
 
     # Receipts go to a PRIVATE bucket; the customer, the stall and admins get short-lived links.
     order.transaction_ref = await upload_to_supabase(receipt_file, private=True)
-    order.status = "pending_verification" # <--- UPDATED: Transitions status from draft to pending_verification
+    order.status = "pending_verification"
 
     try:
         await db.commit()
@@ -1767,6 +2600,7 @@ async def get_order(order_id: UUID, db: AsyncSession = Depends(get_db), current_
             "name": item.menu_item.name if item.menu_item else "Unknown Dish",
             "quantity": item.quantity,
             "price_at_order": float(item.price_at_order),
+            "surplus_offer_id": str(item.surplus_offer_id) if item.surplus_offer_id else None,
             "special_instructions": item.special_instructions,
         }
         for item in order.items
@@ -1806,7 +2640,22 @@ async def list_customer_orders(db: AsyncSession = Depends(get_db), current_user:
         .order_by(Order.created_at.desc())
     )
     orders = result.scalars().all()
-    
+
+    # Customers need the pickup date front and center -- a slot days away must
+    # never look like "today" on this list. Batch-fetch slot times and merchant
+    # names in two queries instead of one lookup per order.
+    slot_ids = {order.pickup_slot_id for order in orders if order.pickup_slot_id}
+    pickup_times: dict[str, Optional[str]] = {}
+    if slot_ids:
+        slot_rows = (await db.execute(select(PickupSlot.id, PickupSlot.time_slot).where(PickupSlot.id.in_(slot_ids)))).all()
+        pickup_times = {str(slot_id): (time_slot.isoformat() if time_slot else None) for slot_id, time_slot in slot_rows}
+
+    merchant_ids = {order.merchant_id for order in orders if order.merchant_id}
+    merchant_names: dict[str, str] = {}
+    if merchant_ids:
+        merchant_rows = (await db.execute(select(Merchant.id, Merchant.name).where(Merchant.id.in_(merchant_ids)))).all()
+        merchant_names = {str(merchant_id): name for merchant_id, name in merchant_rows}
+
     response = []
     for order in orders:
         items_data = [
@@ -1815,6 +2664,7 @@ async def list_customer_orders(db: AsyncSession = Depends(get_db), current_user:
                 "name": item.menu_item.name if item.menu_item else "Dish",
                 "quantity": item.quantity,
                 "price_at_order": float(item.price_at_order),
+                "surplus_offer_id": str(item.surplus_offer_id) if item.surplus_offer_id else None,
                 "special_instructions": item.special_instructions,
             }
             for item in order.items
@@ -1822,9 +2672,14 @@ async def list_customer_orders(db: AsyncSession = Depends(get_db), current_user:
         response.append({
             "id": str(order.id),
             "merchant_id": str(order.merchant_id),
+            "merchant_name": merchant_names.get(str(order.merchant_id), "Merchant"),
             "status": order.status,
             "total_price": float(order.total_price),
             "created_at": order.created_at.isoformat() if order.created_at else None,
+            "pickup_time": pickup_times.get(str(order.pickup_slot_id)) if order.pickup_slot_id else None,
+            # Kept even if the slot is later deleted -- this is the reliable field
+            # for "is this order for today", set once at checkout and never moved.
+            "pickup_service_date": order.pickup_service_date.isoformat() if order.pickup_service_date else None,
             "items": items_data
         })
     return response
@@ -2073,6 +2928,11 @@ async def review_refund(
         refund.proof_uploaded_at = None
     refund.admin_note = note or None
     refund.updated_at = datetime.now(timezone.utc)
+    await log_admin_action(
+        db, current_user, "refund.review",
+        f"Refund case {str(refund.id)[:8]}: {review.action} ({previous_status} → {refund.status})",
+        target_type="refund", target_id=refund.id,
+    )
     record_refund_event(
         db, refund, current_user,
         (
@@ -2097,7 +2957,7 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
         select(Order)
         .where(
             Order.merchant_id == merchant_id,
-            Order.status != "draft" # <--- UPDATED: Hides draft/unpaid orders from the merchant dashboard
+            Order.status != "draft"
         )
         .options(
             selectinload(Order.items).selectinload(OrderItem.menu_item),
@@ -2123,6 +2983,7 @@ async def list_merchant_orders(merchant_id: UUID, db: AsyncSession = Depends(get
                 "name": item.menu_item.name if item.menu_item else "Dish",
                 "quantity": item.quantity,
                 "price_at_order": float(item.price_at_order),
+                "surplus_offer_id": str(item.surplus_offer_id) if item.surplus_offer_id else None,
                 "special_instructions": item.special_instructions,
             }
             for item in order.items
@@ -2300,7 +3161,73 @@ async def update_order_status(
     }
 
 
-# --- ADMIN USERS ---
+
+@app.get("/admin/audit-log/access")
+async def admin_audit_log_access(current_user: User = Depends(get_current_user)):
+    """Lets the frontend quietly decide whether to show the Activity tab at all.
+
+    Always 200 with a boolean -- never 403/404 here -- so this check itself gives
+    nothing away to an admin who isn't on the list.
+    """
+    return {"allowed": current_user.role == "admin" and is_super_admin(current_user)}
+
+
+@app.get("/admin/audit-log")
+async def admin_audit_log(
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    target_type: Optional[str] = Query(default=None),
+    actor_email: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None, description="Search within the summary / target label"),
+    days: Optional[int] = Query(default=None, ge=1, le=365, description="Only entries from the last N days"),
+    since: Optional[datetime] = Query(default=None, description="Only entries at/after this timestamp (overrides `days` if both given)"),
+    until: Optional[datetime] = Query(default=None, description="Only entries at/before this timestamp"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Deliberately 404, not 403: an admin who isn't one of the two founders should
+    # see this look exactly like a route that doesn't exist.
+    if current_user.role != "admin" or not is_super_admin(current_user):
+        raise HTTPException(status_code=404, detail="Not found.")
+
+    stmt = select(AdminAuditLog)
+    if target_type:
+        stmt = stmt.where(AdminAuditLog.target_type == target_type)
+    if actor_email:
+        stmt = stmt.where(func.lower(AdminAuditLog.actor_email) == actor_email.strip().lower())
+    if q:
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(or_(AdminAuditLog.summary.ilike(like), AdminAuditLog.target_label.ilike(like)))
+    effective_since = since or (datetime.now(timezone.utc) - timedelta(days=days) if days else None)
+    if effective_since:
+        stmt = stmt.where(AdminAuditLog.created_at >= effective_since)
+    if until:
+        stmt = stmt.where(AdminAuditLog.created_at <= until)
+    total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    rows = (await db.execute(
+        stmt.order_by(AdminAuditLog.created_at.desc()).offset(offset).limit(limit)
+    )).scalars().all()
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "entries": [
+            {
+                "id": str(r.id),
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "actor_name": r.actor_name,
+                "actor_email": r.actor_email,
+                "action": r.action,
+                "target_type": r.target_type,
+                "target_id": r.target_id,
+                "target_label": r.target_label,
+                "summary": r.summary,
+                "details": r.details,
+            }
+            for r in rows
+        ],
+    }
+
 
 @app.get("/admin/users")
 async def list_all_users(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -2325,7 +3252,6 @@ async def list_all_users(db: AsyncSession = Depends(get_db), current_user: User 
     return response_data
 
 
-# --- ADMIN TRANSACTIONS ---
 
 @app.get("/admin/orders")
 async def admin_list_all_orders(
@@ -2387,7 +3313,6 @@ async def admin_list_all_orders(
     return response
 
 
-# --- EVENT ENDPOINTS ---
 
 @app.post("/events", response_model=dict)
 async def create_event(
@@ -2423,6 +3348,11 @@ async def create_event(
         event_merchant = EventMerchant(event_id=new_event.id, merchant_id=merchant_id)
         db.add(event_merchant)
     
+    await log_admin_action(
+        db, current_user, "event.create",
+        f"Created event '{new_event.name}' with {len(merchant_ids)} vendor(s)",
+        target_type="event", target_id=new_event.id, target_label=new_event.name,
+    )
     await db.commit()
     await db.refresh(new_event)
     return {
@@ -2563,7 +3493,6 @@ async def get_event_merchants(event_id: UUID, db: AsyncSession = Depends(get_db)
                     "description": item.description,
                     "price": float(item.price),
                     "image_url": item.image_url,
-                    # Fallbacks to ensure both frontend properties are met without throwing errors
                     "is_active": getattr(item, "is_active", True),
                     "is_available": getattr(item, "is_available", True)
                 }
@@ -2606,6 +3535,11 @@ async def add_merchant_to_event(
         stall_number=merchant_data.stall_number
     )
     db.add(event_merchant)
+    await log_admin_action(
+        db, current_user, "event.add_merchant",
+        f"Added '{merchant.name}' to event '{event.name}'",
+        target_type="event", target_id=event.id, target_label=event.name,
+    )
     await db.commit()
     
     return {"message": "Merchant added to event successfully"}
@@ -2641,10 +3575,16 @@ async def delete_event(
     event = await db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
+    event_name = event.name
     memberships = (await db.execute(select(EventMerchant).where(EventMerchant.event_id == event_id))).scalars().all()
     for membership in memberships:
         await db.delete(membership)
     await db.delete(event)
+    await log_admin_action(
+        db, current_user, "event.delete",
+        f"Deleted event '{event_name}'",
+        target_type="event", target_id=event_id, target_label=event_name,
+    )
     await db.commit()
     return {"message": "Event deleted. Its vendors are back in Browse Campus Stalls."}
 
@@ -2664,14 +3604,18 @@ async def remove_merchant_from_event(
     ))).scalars().first()
     if not membership:
         raise HTTPException(status_code=404, detail="Merchant is not assigned to this event.")
+    removed_merchant = await db.get(Merchant, merchant_id)
+    removed_event = await db.get(Event, event_id)
     await db.delete(membership)
+    await log_admin_action(
+        db, current_user, "event.remove_merchant",
+        f"Removed '{removed_merchant.name if removed_merchant else merchant_id}' from event '{removed_event.name if removed_event else event_id}'",
+        target_type="event", target_id=event_id, target_label=removed_event.name if removed_event else None,
+    )
     await db.commit()
     return {"message": "Merchant removed from event."}
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# ADMIN EXTENDED ENDPOINTS (added for full admin authority)
-# ──────────────────────────────────────────────────────────────────────────────
 
 class AdminMerchantProfileUpdate(BaseModel):
     name: Optional[str] = None
@@ -2706,13 +3650,25 @@ async def admin_update_merchant(
     merchant = await db.get(Merchant, merchant_id)
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found.")
-    if payload.name is not None:
+    before = {"name": merchant.name, "description": merchant.description, "location": merchant.location}
+    changed_fields = []
+    if payload.name is not None and payload.name.strip() != merchant.name:
         merchant.name = payload.name.strip()
-    if payload.description is not None:
+        changed_fields.append("name")
+    if payload.description is not None and payload.description != merchant.description:
         merchant.description = payload.description
-    if payload.location is not None:
+        changed_fields.append("description")
+    if payload.location is not None and payload.location != merchant.location:
         merchant.location = payload.location
+        changed_fields.append("location")
     try:
+        if changed_fields:
+            await log_admin_action(
+                db, current_user, "merchant.edit",
+                f"Edited {', '.join(changed_fields)} for stall '{before['name']}'",
+                target_type="merchant", target_id=merchant.id, target_label=merchant.name,
+                details={"before": before, "after": {"name": merchant.name, "description": merchant.description, "location": merchant.location}},
+            )
         await db.commit()
         await db.refresh(merchant)
         return {"message": "Merchant profile updated.", "id": str(merchant.id), "name": merchant.name, "location": merchant.location, "description": merchant.description}
@@ -2734,6 +3690,11 @@ async def admin_toggle_merchant_active(
     if not merchant:
         raise HTTPException(status_code=404, detail="Merchant not found.")
     merchant.is_active = not merchant.is_active
+    await log_admin_action(
+        db, current_user, "merchant.activate" if merchant.is_active else "merchant.deactivate",
+        f"{'Activated' if merchant.is_active else 'Deactivated'} stall '{merchant.name}'",
+        target_type="merchant", target_id=merchant.id, target_label=merchant.name,
+    )
     await db.commit()
     await db.refresh(merchant)
     return {"message": f"Merchant {'activated' if merchant.is_active else 'deactivated'}.", "is_active": merchant.is_active}
@@ -2780,6 +3741,11 @@ async def admin_delete_merchant(
         merchant.is_deleted = True
         await db.execute(update(MenuItem).where(MenuItem.merchant_id == merchant_id).values(is_available=False))
         await db.execute(EventMerchant.__table__.delete().where(EventMerchant.merchant_id == merchant_id))
+        await log_admin_action(
+            db, current_user, "merchant.close",
+            f"Closed stall '{merchant.name}' (hidden from the vendors list, all its menu items disabled)",
+            target_type="merchant", target_id=merchant.id, target_label=merchant.name,
+        )
         await db.commit()
         return {"message": "This stall has been closed and removed from the vendors list. It's still available under the Closed tab.", "closed": True}
     except Exception:
@@ -2803,6 +3769,11 @@ async def admin_approve_menu_item(
     item.approval_status = payload.approval_status
     item.is_available = payload.approval_status == "approved"
     try:
+        await log_admin_action(
+            db, current_user, "menu_item.approval",
+            f"Set '{item.name}' to {payload.approval_status}",
+            target_type="menu_item", target_id=item.id, target_label=item.name,
+        )
         await db.commit()
         await db.refresh(item)
         return {"message": f"Menu item {payload.approval_status}.", "id": str(item.id), "approval_status": payload.approval_status}
@@ -2824,14 +3795,32 @@ async def admin_delete_menu_item(
     if not item:
         raise HTTPException(status_code=404, detail="Menu item not found.")
     used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
+<<<<<<< HEAD
     from models import Promotion
     has_promotion = (await db.execute(select(Promotion.id).where(Promotion.menu_item_id == item.id).limit(1))).first()
     if used or has_promotion:
+=======
+    has_planning_history = (await db.execute(select(func.count(DailyFoodLog.id)).where(DailyFoodLog.menu_item_id == item.id))).scalar_one()
+    has_stock_limit = (await db.execute(select(func.count(DailyItemStock.id)).where(DailyItemStock.menu_item_id == item.id))).scalar_one()
+    has_surplus_offer = (await db.execute(select(func.count(SurplusOffer.id)).where(SurplusOffer.menu_item_id == item.id))).scalar_one()
+    if used or has_planning_history or has_stock_limit or has_surplus_offer:
+>>>>>>> d548db963297557c72099f8a40145a2866c50b3d
         item.is_available = False
+        await log_admin_action(
+            db, current_user, "menu_item.hide",
+            f"Hid '{item.name}' (has order/planning history, so it couldn't be fully deleted)",
+            target_type="menu_item", target_id=item.id, target_label=item.name,
+        )
         await db.commit()
-        return {"message": "This item has past orders, so it was hidden instead of deleted.", "hidden": True}
+        return {"message": "This item has order or planning records, so it was hidden instead of deleted.", "hidden": True}
     try:
+        item_name = item.name
         await db.delete(item)
+        await log_admin_action(
+            db, current_user, "menu_item.delete",
+            f"Deleted menu item '{item_name}'",
+            target_type="menu_item", target_id=item_id, target_label=item_name,
+        )
         await db.commit()
         return {"message": "Menu item deleted."}
     except Exception as e:
@@ -2865,7 +3854,13 @@ async def admin_delete_pickup_slot(
         for order in linked_orders.scalars().all():
             order.pickup_slot_id = None
         await db.flush()
+        slot_time, slot_merchant_id = slot.time_slot, slot.merchant_id
         await db.delete(slot)
+        await log_admin_action(
+            db, current_user, "pickup_slot.delete",
+            f"Deleted pickup slot at {slot_time.isoformat() if slot_time else slot_id}",
+            target_type="pickup_slot", target_id=slot_id, target_label=str(slot_merchant_id),
+        )
         await db.commit()
         return {"message": "Pickup slot deleted. Completed order history was preserved."}
     except Exception as e:
@@ -2887,6 +3882,11 @@ async def admin_reorder_merchants(
             merchant = await db.get(Merchant, merchant_id)
             if merchant:
                 setattr(merchant, "display_order", index)
+        await log_admin_action(
+            db, current_user, "merchant.reorder",
+            f"Reordered {len(payload.ordered_ids)} vendors on the vendors list",
+            target_type="merchant", details={"ordered_ids": [str(i) for i in payload.ordered_ids]},
+        )
         await db.commit()
         return {"message": "Merchant display order updated."}
     except Exception as e:
@@ -2910,6 +3910,11 @@ async def admin_toggle_preview(
     current_val = getattr(merchant, "is_preview", False) or False
     setattr(merchant, "is_preview", not current_val)
     try:
+        await log_admin_action(
+            db, current_user, "merchant.hide" if merchant.is_preview else "merchant.show",
+            f"{'Hid' if merchant.is_preview else 'Made visible'} stall '{merchant.name}' on the public marketplace",
+            target_type="merchant", target_id=merchant.id, target_label=merchant.name,
+        )
         await db.commit()
         await db.refresh(merchant)
         return {"id": str(merchant.id), "is_preview": getattr(merchant, "is_preview", False)}
@@ -2968,6 +3973,11 @@ async def admin_upload_event_banner(
     public_url = await upload_to_supabase(banner_file, optimize_for_display=True)
     event.banner_image_url = public_url
     try:
+        await log_admin_action(
+            db, current_user, "event.banner_update",
+            f"Updated banner image for event '{event.name}'",
+            target_type="event", target_id=event.id, target_label=event.name,
+        )
         await db.commit()
         await db.refresh(event)
         return {"message": "Event banner uploaded.", "banner_image_url": event.banner_image_url}
@@ -3004,6 +4014,13 @@ async def admin_update_event(
     if payload.event_url is not None:
         setattr(event, "event_url", payload.event_url)
     try:
+        changed = [f for f in ("name", "description", "location", "event_date", "start_time", "end_time", "event_url") if getattr(payload, f, None) is not None]
+        if changed:
+            await log_admin_action(
+                db, current_user, "event.edit",
+                f"Edited {', '.join(changed)} for event '{event.name}'",
+                target_type="event", target_id=event.id, target_label=event.name,
+            )
         await db.commit()
         await db.refresh(event)
         return {
@@ -3067,6 +4084,25 @@ async def admin_list_pickup_slots(
             "max_capacity": s.max_capacity,
             "current_bookings": s.current_bookings,
             "is_full": s.current_bookings >= s.max_capacity,
+            # So admins can tell at a glance which slots came from the weekly
+            # schedule versus a one-off the merchant added by hand.
+            "is_automatic": bool(getattr(s, "is_automatic", False)),
+            "is_bookable": getattr(s, "is_bookable", True) is not False,
         }
         for s in slots
     ]
+
+
+@app.get("/admin/merchants/{merchant_id}/pickup-schedule")
+async def admin_get_pickup_schedule(
+    merchant_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Read-only view of a vendor's weekly operating hours, for the admin vendor detail panel."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required.")
+    merchant = await db.get(Merchant, merchant_id)
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant not found.")
+    return merchant.pickup_schedule or default_schedule()

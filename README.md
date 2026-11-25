@@ -35,6 +35,7 @@ Everyone signs up as a customer at `/vendor/register` (email code). An admin ass
 - [`SCHEMA.sql`](SCHEMA.sql): tables and storage buckets for a new database
 - [`AUTH_EMAIL_SETUP.md`](AUTH_EMAIL_SETUP.md): email verification codes
 - [`backend/.env.example`](backend/.env.example): backend settings
+- [`FYP_DATA_PLAN.md`](FYP_DATA_PLAN.md): food planning pilot, dataset definitions and evaluation plan
 
 ## Run locally
 
