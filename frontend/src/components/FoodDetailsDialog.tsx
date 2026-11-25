@@ -2,9 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { BACKEND_URL } from "@/lib/backend-url";
+import OfferPrice from "@/components/OfferPrice";
+import { type Offer } from "@/lib/promotions";
 import { getMenuCustomizationPolicy, parseMenuDescription } from "@/lib/menu-customizations";
 
 type Food = {
+  original_price?: number;
+  promotion?: Offer | null;
   name: string;
   description: string | null;
   price: number;
@@ -127,7 +131,7 @@ export default function FoodDetailsDialog({ item, merchant, onClose, onAdd }: Fo
         </div>
         <div className="mt-5 flex items-center justify-between">
           <span className="text-sm text-slate-600">{item.is_available ? "Available" : "Sold out"}</span>
-          <strong className="text-xl text-orange-600">RM {Number(item.price).toFixed(2)}</strong>
+          <div className="text-lg"><OfferPrice item={item} /></div>
         </div>
         <button type="button" disabled={!item.is_available} onClick={handleAdd} className="mt-4 w-full rounded-xl bg-[#F04B14] px-4 py-3 font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50">
           {item.is_available ? (hasCustomizations ? "Add customised item to cart" : "Add item to cart") : "Currently unavailable"}

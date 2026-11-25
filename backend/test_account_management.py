@@ -58,7 +58,7 @@ class AccountManagementTests(unittest.IsolatedAsyncioTestCase):
             db.commit.assert_not_awaited()
     async def test_all_self_delete_routes_use_same_guard(self):
         for path in ("/users/me","/api/users/me","/users/me/account"):
-            route=next(r for r in main.app.routes if r.path==path and "DELETE" in r.methods)
+            route=next(r for r in main.app.routes if getattr(r, "path", None)==path and "DELETE" in r.methods)
             with patch.object(main,"delete_account",new_callable=AsyncMock) as guard:
                 user=self.user();db=self.db();req=auth.DeleteAccountRequest(password="p",code="12345678")
                 if path=="/users/me/account":await route.endpoint(req,user,db)

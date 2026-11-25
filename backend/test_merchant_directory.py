@@ -17,7 +17,7 @@ class MerchantDirectoryTests(unittest.TestCase):
         self.assertIn("display_order", Merchant.__table__.columns)
 
     def test_sorted_route_precedes_dynamic_merchant_route(self):
-        paths = [route.path for route in main.app.routes]
+        paths = [route.path for route in main.app.routes if hasattr(route, "path")]
         self.assertEqual(paths.count("/merchants/sorted"), 1)
         self.assertLess(paths.index("/merchants/sorted"), paths.index("/merchants/{merchant_id}"))
 

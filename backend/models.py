@@ -151,11 +151,28 @@ class OrderItem(Base):
     quantity = Column(Integer, nullable=False, default=1)
     price_at_order = Column(Numeric(10, 2), nullable=False)
     special_instructions = Column(Text, nullable=True)
+    original_price_at_order = Column(Numeric(10, 2), nullable=True)
+    discount_at_order = Column(Numeric(10, 2), nullable=False, default=0, server_default="0")
+    promotion_id = Column(UUID(as_uuid=True), ForeignKey("promotions.id"), nullable=True)
 
     # --- RELATIONSHIPS ---
     order = relationship("Order", back_populates="items")
     menu_item = relationship("MenuItem")
 
+
+
+class Promotion(Base):
+    __tablename__ = "promotions"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    merchant_id = Column(UUID(as_uuid=True), ForeignKey("merchants.id"), nullable=False, index=True)
+    menu_item_id = Column(UUID(as_uuid=True), ForeignKey("menu_items.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    discount_type = Column(String, nullable=False)
+    discount_value = Column(Numeric(10, 2), nullable=False)
+    starts_at = Column(DateTime(timezone=True), nullable=False)
+    ends_at = Column(DateTime(timezone=True), nullable=False)
+    stopped_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class Event(Base):

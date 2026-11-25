@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import DailyStatistics, { type DailyStats } from "./DailyStatistics";
 import CustomerSpendingDashboard from "./CustomerSpendingDashboard";
+import MerchantPromotions from "./MerchantPromotions";
 
 type Analytics = {
   period_days: number;
@@ -127,6 +128,7 @@ function SalesDashboard({ audience, embedded = false }: { audience: string; embe
         {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-stone-500"><p>{updatedAt ? `Updated ${updatedAt} MYT · refreshes every 15 seconds` : "Loading latest totals"}</p><button onClick={() => setRefreshKey(k => k + 1)} className="rounded-xl border bg-white px-4 py-2 font-semibold text-orange-700">Refresh</button></div>
         {loading && <div className="rounded-xl border border-slate-200 bg-white p-8 text-slate-500">Loading analytics…</div>}
+        {!isAdmin && !isCustomer && <MerchantPromotions refreshKey={refreshKey} />}
         {data && <>
           <section aria-label="Key metrics" className="grid grid-cols-2 gap-3 xl:grid-cols-4">
             {(isCustomer ? [
@@ -174,7 +176,7 @@ function SalesDashboard({ audience, embedded = false }: { audience: string; embe
             </article>
           </section>
 
-          <details className="rounded-2xl border bg-white p-5"><summary className="cursor-pointer list-none font-semibold text-orange-700">View daily sales and order counts</summary><div className="mt-4 max-h-80 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th>Date (MYT)</th><th>Orders</th><th>Completed sales</th></tr></thead><tbody>{data.revenue_trend.map(d => <tr key={d.date} className="border-t"><td className="py-2">{d.date}</td><td>{d.orders}</td><td>{money(d.revenue)}</td></tr>)}</tbody></table></div></details>
+          <details className="rounded-2xl border bg-white p-5"><summary className="cursor-pointer list-none font-semibold text-orange-700">View daily sales and order counts</summary><div className="mt-4 max-h-80 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th>Date (MYT)</th><th>Confirmed orders</th><th>Confirmed sales</th></tr></thead><tbody>{data.revenue_trend.map(d => <tr key={d.date} className="border-t"><td className="py-2">{d.date}</td><td>{d.orders}</td><td>{money(d.revenue)}</td></tr>)}</tbody></table></div></details>
           <p className="text-xs text-stone-500">Sales include preparing, ready and completed orders, grouped by order date. Pending payments and cancelled orders are excluded. Refunds, ingredient costs and bank settlement are not recorded here, so these totals are not net profit.</p>
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
             <div className="mb-5"><h2 className="font-bold text-slate-900">Top three dishes</h2><p className="mt-1 text-xs text-slate-500">Ranked by units in vendor-confirmed orders. Compare quantities and revenue when planning stock.</p></div>

@@ -22,6 +22,8 @@ import ShopDetailsDialog from "@/components/ShopDetailsDialog";
 import RecommendationWidget from "@/components/RecommendationWidget";
 import FoodDetailsDialog from "@/components/FoodDetailsDialog";
 import MenuScrollRow from "@/components/MenuScrollRow";
+import OfferPrice from "@/components/OfferPrice";
+import { customerPrice, type Offer } from "@/lib/promotions";
 
 // ─── Type Definitions ────────────────────────────────────────────────────────
 
@@ -43,6 +45,8 @@ interface ActiveEvent {
 }
 
 interface MenuItem {
+  original_price?: number;
+  promotion?: Offer | null;
   id: string;
   name: string;
   description: string | null;
@@ -202,7 +206,7 @@ export default function Home() {
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(`Menu request failed with ${response.status}`);
-        const items: MenuItem[] = await response.json();
+        const items: MenuItem[] = (await response.json()).map((item: MenuItem) => customerPrice(item));
         // Keep the existing order within each availability group.
         items.sort((a, b) => Number(b.is_available) - Number(a.is_available));
         if (!cancelled) {
@@ -228,6 +232,7 @@ export default function Home() {
 
   // ─── 5. Add to Cart Handler (with jumping animation & toast) ───────────────
   const addToCart = (item: MenuItem, specialInstructions = "") => {
+    item = customerPrice(item);
     if (!item.is_available) return false;
     if (selectedMerchantId && selectedMerchantId !== item.merchant_id && Object.keys(cart).length > 0) {
       const currentMerchant = merchants.find((merchant) => merchant.id === selectedMerchantId);
@@ -336,6 +341,7 @@ export default function Home() {
         items: Object.values(cart).map(({ item, quantity, specialInstructions }) => ({
           menu_item_id: item.id,
           quantity: quantity,
+          expected_price: Number(item.price),
           special_instructions: specialInstructions || null,
         })),
       };
@@ -430,7 +436,7 @@ export default function Home() {
           <div className="flex items-start justify-between gap-1">
             <h4 className="font-bold text-slate-900 text-sm leading-tight line-clamp-1">{item.name}</h4>
             <span className="shrink-0 font-extrabold text-[#F04B14] text-sm">
-              RM {Number(item.price).toFixed(2)}
+              <OfferPrice item={item} />
             </span>
           </div>
 

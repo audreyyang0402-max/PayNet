@@ -37,6 +37,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from database import engine, get_db
 from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent
+from promotions import router as promotions_router, MIGRATIONS as PROMOTION_MIGRATIONS, active_promotions, public_offer, discounted_price, money
 
 # --- NEW AUTH IMPORTS ---
 from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN, validate_password, password_stamp
@@ -100,7 +101,7 @@ ORDER_STATUS_CONSTRAINT_MIGRATION = f"""
 """
 
 
-STARTUP_MIGRATIONS = [
+STARTUP_MIGRATIONS = [*PROMOTION_MIGRATIONS,
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_key VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_fingerprint VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR",
@@ -203,6 +204,7 @@ async def lifespan(app: FastAPIOffline):
     yield
 
 app = FastAPIOffline(lifespan=lifespan)
+app.include_router(promotions_router)
 
 # --- RATE LIMITING (in-memory; fine for Render's single-instance free tier) ---
 limiter = Limiter(key_func=get_remote_address)
@@ -242,7 +244,7 @@ def validate_menu_image_url(image_url: Optional[str]) -> Optional[str]:
     return value
 
 
-def public_menu_item(item: MenuItem) -> dict:
+def public_menu_item(item: MenuItem, promotion=None) -> dict:
     """Serialize a menu item without leaking legacy multi-megabyte data URLs."""
     image_url = item.image_url
     if image_url and image_url.lstrip().lower().startswith("data:"):
@@ -253,6 +255,7 @@ def public_menu_item(item: MenuItem) -> dict:
         "name": item.name,
         "description": item.description,
         "price": float(item.price),
+        "promotion": public_offer(promotion, item.price) if promotion else None,
         "image_url": image_url,
         "is_available": item.is_available,
         "created_at": item.created_at,
@@ -671,6 +674,7 @@ class MenuItemCreate(BaseModel):
 class OrderItemCreate(BaseModel):
     menu_item_id: UUID
     quantity: int = Field(default=1, ge=1, le=50)
+    expected_price: Decimal | None = Field(default=None, gt=0, max_digits=10, decimal_places=2)
     special_instructions: Optional[str] = Field(default=None, max_length=300)
 
 class OrderCreate(BaseModel):
@@ -742,6 +746,14 @@ def read_root():
 
 
 # --- PHASE 5: RECOMMENDATION ROUTE ---
+@app.get("/recommendations/pickup-availability")
+async def recommendation_pickup_availability(db: AsyncSession = Depends(get_db)):
+    rows = await db.execute(select(PickupSlot.merchant_id).join(Merchant, Merchant.id == PickupSlot.merchant_id).where(
+        PickupSlot.time_slot > datetime.now(timezone.utc), PickupSlot.current_bookings < PickupSlot.max_capacity,
+        Merchant.is_active == True, Merchant.is_preview == False, Merchant.is_deleted == False).distinct())
+    return [str(row[0]) for row in rows]
+
+
 @app.get("/recommendations/items")
 async def get_recommended_items(
     limit: int = Query(default=20, ge=1, le=100),
@@ -1421,7 +1433,9 @@ async def delete_menu_item(
         raise HTTPException(status_code=403, detail="Access denied.")
 
     used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
-    if used:
+    from models import Promotion
+    has_promotion = (await db.execute(select(Promotion.id).where(Promotion.menu_item_id == item.id).limit(1))).first()
+    if used or has_promotion:
         # Past orders point at this item; deleting it would break receipts and sales history.
         item.is_available = False
         await db.commit()
@@ -1571,7 +1585,9 @@ async def delete_pickup_slot(
 async def list_menu_items(merchant_id: UUID, db: AsyncSession = Depends(get_db), authorization: str | None = Header(default=None)):
     await require_shop_access(db, merchant_id, authorization)
     result = await db.execute(select(MenuItem).where(MenuItem.merchant_id == merchant_id))
-    return [public_menu_item(item) for item in result.scalars().all()]
+    items = result.scalars().all()
+    offers = await active_promotions(db, merchant_id)
+    return [public_menu_item(item, offers.get(item.id)) for item in items]
 
 
 @app.get("/menu-items/{item_id}/image")
@@ -1635,6 +1651,7 @@ async def create_order(
 
     total_price = Decimal("0.00")
     line_items = []
+    offers = await active_promotions(db, order_data.merchant_id)
     for line in order_data.items:
         item = await db.get(MenuItem, line.menu_item_id)
         if not item:
@@ -1643,10 +1660,14 @@ async def create_order(
             raise HTTPException(status_code=400, detail="Menu item does not belong to this merchant.")
         if not item.is_available or item.approval_status == "rejected" or float(item.price) <= 0:
             raise HTTPException(status_code=400, detail=f"'{item.name}' is currently unavailable.")
-        line_total = item.price * line.quantity
+        promotion = offers.get(item.id)
+        unit_price = discounted_price(item.price, promotion) if promotion else money(item.price)
+        if line.expected_price is not None and money(line.expected_price) != unit_price:
+            raise HTTPException(409, f"The price of '{item.name}' changed. Refresh the menu and review your cart before paying.")
+        line_total = unit_price * line.quantity
         total_price += line_total
         instructions = line.special_instructions.strip() if line.special_instructions else None
-        line_items.append((item, line.quantity, instructions or None))
+        line_items.append((item, line.quantity, instructions or None, unit_price, promotion))
 
     order_number = new_order_number()
     while (await db.execute(select(Order.id).where(Order.order_number == order_number))).first():
@@ -1667,12 +1688,15 @@ async def create_order(
 
     try:
         await db.flush()
-        for item, quantity, instructions in line_items:
+        for item, quantity, instructions, unit_price, promotion in line_items:
             db.add(OrderItem(
                 order_id=new_order.id,
                 menu_item_id=item.id,
                 quantity=quantity,
-                price_at_order=item.price,
+                price_at_order=unit_price,
+                original_price_at_order=money(item.price),
+                discount_at_order=money(item.price) - unit_price,
+                promotion_id=promotion.id if promotion else None,
                 special_instructions=instructions,
             ))
         slot.current_bookings += 1
@@ -2800,7 +2824,9 @@ async def admin_delete_menu_item(
     if not item:
         raise HTTPException(status_code=404, detail="Menu item not found.")
     used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
-    if used:
+    from models import Promotion
+    has_promotion = (await db.execute(select(Promotion.id).where(Promotion.menu_item_id == item.id).limit(1))).first()
+    if used or has_promotion:
         item.is_available = False
         await db.commit()
         return {"message": "This item has past orders, so it was hidden instead of deleted.", "hidden": True}

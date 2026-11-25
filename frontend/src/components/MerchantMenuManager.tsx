@@ -18,6 +18,7 @@ import { BACKEND_URL } from "@/lib/backend-url";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import BackLink from "@/components/BackLink";
+import MerchantPromotions from "@/components/MerchantPromotions";
 import SpiceSettings from "@/components/SpiceSettings";
 import {
   getMenuCustomizationPolicy,
@@ -515,6 +516,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
   return (
     <Container className={embedded ? "space-y-6" : "min-h-screen p-4 sm:p-6 md:p-8"}>
       <div className={embedded ? "space-y-6" : "max-w-6xl mx-auto space-y-6"}>
+        <MerchantPromotions items={menuItems} manage />
         {/* ────────────────────────────────────────────────────────────────
             HEADER
         ──────────────────────────────────────────────────────────────── */}
