@@ -105,6 +105,9 @@ class PromotionApiTests(unittest.IsolatedAsyncioTestCase):
         records = [(line(None), start - timedelta(days=6), None),
                    (line(campaign.id, 3), start + timedelta(hours=1), None),
                    (line(campaign.id, 2), start + timedelta(hours=2), "verified")]
+        surplus_line = line(None, 100)
+        surplus_line.surplus_offer_id = uuid4()
+        records.append((surplus_line, start - timedelta(days=6), None))
         db = NS(execute=AsyncMock(side_effect=[rows([(campaign, "Coffee")]), rows(records)]))
         result = (await list_promotions(db, NS(id=uuid4())))[0]
         self.assertEqual(result["promotion"]["revenue"], 24)
@@ -118,8 +121,9 @@ class PromotionApiTests(unittest.IsolatedAsyncioTestCase):
         item = NS(id=item_id, merchant_id=merchant_id, price=Decimal("10"), name="Coffee", is_available=True, approval_status="approved")
         offer = NS(id=promotion_id, discount_type="percentage", discount_value=Decimal(20))
         slot = NS(merchant_id=merchant_id, time_slot=datetime.now(timezone.utc) + timedelta(days=1), current_bookings=0, max_capacity=10)
-        db = MagicMock(get=AsyncMock(side_effect=[NS(is_active=True, is_preview=False, is_deleted=False), item]),
-                       execute=AsyncMock(side_effect=[rows([slot]), rows([])]), flush=AsyncMock(), commit=AsyncMock(), refresh=AsyncMock(), rollback=AsyncMock())
+        merchant = NS(id=merchant_id, is_active=True, is_preview=False, is_deleted=False)
+        db = MagicMock(get=AsyncMock(return_value=item),
+                       execute=AsyncMock(side_effect=[rows([merchant]), rows([slot]), rows([]), rows([])]), flush=AsyncMock(), commit=AsyncMock(), refresh=AsyncMock(), rollback=AsyncMock())
         data = OrderCreate(merchant_id=merchant_id, pickup_slot_id=slot_id, items=[dict(menu_item_id=item_id, quantity=2, expected_price="8.00")])
         with patch("main.expire_stale_drafts", AsyncMock()), patch("main.active_promotions", AsyncMock(return_value={item_id: offer})):
             result = await create_order(data, db, NS(id=uuid4()))
@@ -136,7 +140,8 @@ class PromotionApiTests(unittest.IsolatedAsyncioTestCase):
         merchant_id, item_id = uuid4(), uuid4()
         slot = NS(merchant_id=merchant_id, time_slot=datetime.now(timezone.utc) + timedelta(days=1), current_bookings=0, max_capacity=10)
         item = NS(id=item_id, merchant_id=merchant_id, price=Decimal(10), name="Coffee", is_available=True, approval_status="approved")
-        db = MagicMock(get=AsyncMock(side_effect=[NS(is_active=True, is_preview=False, is_deleted=False), item]), execute=AsyncMock(return_value=rows([slot])))
+        merchant = NS(id=merchant_id, is_active=True, is_preview=False, is_deleted=False)
+        db = MagicMock(get=AsyncMock(return_value=item), execute=AsyncMock(side_effect=[rows([merchant]), rows([slot])]))
         data = OrderCreate(merchant_id=merchant_id, pickup_slot_id=uuid4(), items=[dict(menu_item_id=item_id, expected_price=8)])
         with patch("main.expire_stale_drafts", AsyncMock()), patch("main.active_promotions", AsyncMock(return_value={})):
             with self.assertRaises(HTTPException) as error:

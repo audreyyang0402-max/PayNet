@@ -16,6 +16,12 @@ from main import create_order, OrderCreate, shop_is_public, require_shop_access,
 
 
 class CheckoutTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        # These cases exercise stock/surplus behavior without a regular campaign.
+        self.promotions = patch('main.active_promotions', AsyncMock(return_value={}))
+        self.mock_promotions = self.promotions.start()
+        self.addCleanup(self.promotions.stop)
+
     async def test_deal_is_hidden_when_order_limit_is_reached(self):
         now = datetime.now(timezone.utc)
         offer_id, merchant_id, item_id, slot_id = uuid4(), uuid4(), uuid4(), uuid4()
@@ -158,6 +164,8 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_checkout_uses_server_surplus_price(self):
         merchant_id, slot_id, item_id, offer_id = uuid4(), uuid4(), uuid4(), uuid4()
+        self.mock_promotions.return_value = {item_id: SimpleNamespace(
+            id=uuid4(), discount_type="percentage", discount_value=Decimal("50"))}
         request = OrderCreate(merchant_id=merchant_id, pickup_slot_id=slot_id,
                               items=[{'menu_item_id': item_id, 'surplus_offer_id': offer_id, 'quantity': 2}])
         merchant = SimpleNamespace(id=merchant_id, is_active=True, is_preview=False, is_deleted=False)
@@ -189,6 +197,8 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
         line = db.add.call_args_list[1].args[0]
         self.assertEqual(line.price_at_order, Decimal("3.00"))
         self.assertEqual(line.surplus_offer_id, offer_id)
+        self.assertIsNone(line.promotion_id)
+        self.assertEqual(line.original_price_at_order, Decimal("5.00"))
 
     async def test_daily_limit_counts_duplicate_cart_lines_before_payment(self):
         merchant_id, slot_id, item_id = uuid4(), uuid4(), uuid4()

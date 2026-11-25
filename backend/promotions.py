@@ -164,7 +164,8 @@ async def list_promotions(db: AsyncSession = Depends(get_db), merchant=Depends(o
             if line.menu_item_id != p.menu_item_id:
                 continue
             in_promotion = line.promotion_id == p.id and p.starts_at <= created < end
-            in_baseline = line.promotion_id is None and baseline_start <= created < baseline_end
+            in_baseline = (line.promotion_id is None and getattr(line, "surplus_offer_id", None) is None
+                           and baseline_start <= created < baseline_end)
             if not (in_promotion or in_baseline):
                 continue
             if refund_status is not None:

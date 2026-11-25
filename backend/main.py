@@ -36,13 +36,9 @@ from PIL import Image, ImageOps
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from database import engine, get_db
-<<<<<<< HEAD
-from models import Base, User, Merchant, MenuItem, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent
-from promotions import router as promotions_router, MIGRATIONS as PROMOTION_MIGRATIONS, active_promotions, public_offer, discounted_price, money
-=======
-from models import Base, User, Merchant, MenuItem, DailyFoodLog, DailyItemStock, SurplusOffer, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent, AdminAuditLog
+from models import Base, User, Merchant, MenuItem, DailyFoodLog, DailyItemStock, SurplusOffer, PickupSlot, Order, OrderItem, Event, EventMerchant, RefundRequest, RefundAuditEvent, AdminAuditLog, Promotion
 from admin_audit import log_admin_action, is_super_admin
->>>>>>> d548db963297557c72099f8a40145a2866c50b3d
+from promotions import router as promotions_router, MIGRATIONS as PROMOTION_MIGRATIONS, active_promotions, public_offer, discounted_price, money
 
 from auth import hash_password, verify_password, create_access_token, get_current_user, DELETED_EMAIL_DOMAIN, validate_password, password_stamp
 from email_verification import check_code, normalize_email
@@ -69,115 +65,8 @@ from auth_endpoints import (
 from contextlib import asynccontextmanager
 
 
-<<<<<<< HEAD
-ORDER_STATUS_VALUES = (
-    "draft",
-    "pending_verification",
-    "pending",
-    "preparing",
-    "ready",
-    "completed",
-    "rejected",
-    "cancelled",
-    "cancelled_timeout",
-)
-_ORDER_STATUS_SQL = ", ".join(f"'{value}'" for value in ORDER_STATUS_VALUES)
-_ORDER_STATUS_MISSING_CHECKS = " OR ".join(
-    f"current_definition NOT LIKE '%''{value}''%'" for value in ORDER_STATUS_VALUES
-)
-ORDER_STATUS_CONSTRAINT_MIGRATION = f"""
-    DO $$
-    DECLARE
-        current_definition TEXT;
-    BEGIN
-        SELECT pg_get_constraintdef(oid)
-        INTO current_definition
-        FROM pg_constraint
-        WHERE conrelid = 'orders'::regclass
-          AND conname = 'orders_status_check';
-
-        IF current_definition IS NULL OR {_ORDER_STATUS_MISSING_CHECKS} THEN
-            ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;
-            ALTER TABLE orders
-                ADD CONSTRAINT orders_status_check
-                CHECK (status IN ({_ORDER_STATUS_SQL}));
-        END IF;
-    END;
-    $$
-"""
-
-
-STARTUP_MIGRATIONS = [*PROMOTION_MIGRATIONS,
-    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_key VARCHAR",
-    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS checkout_fingerprint VARCHAR",
-    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR",
-    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS rejection_note TEXT",
-    ORDER_STATUS_CONSTRAINT_MIGRATION,
-    "CREATE UNIQUE INDEX IF NOT EXISTS orders_checkout_key_unique ON orders (checkout_key)",
-    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS special_instructions TEXT",
-    "ALTER TABLE merchants ADD COLUMN IF NOT EXISTS is_preview BOOLEAN NOT NULL DEFAULT TRUE",
-    "ALTER TABLE merchants ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0",
-    "ALTER TABLE merchants ALTER COLUMN is_preview SET DEFAULT TRUE",
-    "ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS approval_status VARCHAR NOT NULL DEFAULT 'approved'",
-    """
-        CREATE TABLE IF NOT EXISTS refund_requests (
-            id UUID PRIMARY KEY,
-            order_id UUID NOT NULL UNIQUE REFERENCES orders(id),
-            customer_id UUID NOT NULL REFERENCES users(id),
-            merchant_id UUID NOT NULL REFERENCES merchants(id),
-            amount NUMERIC(10, 2) NOT NULL,
-            status VARCHAR NOT NULL DEFAULT 'awaiting_customer',
-            method VARCHAR,
-            reason VARCHAR NOT NULL,
-            rejection_note TEXT,
-            legal_name_encrypted TEXT,
-            bank_name_encrypted TEXT,
-            account_number_encrypted TEXT,
-            account_last4 VARCHAR,
-            duitnow_qr_path TEXT,
-            proof_path TEXT,
-            merchant_note TEXT,
-            customer_dispute_note TEXT,
-            admin_note TEXT,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            requested_at TIMESTAMPTZ,
-            proof_uploaded_at TIMESTAMPTZ,
-            customer_responded_at TIMESTAMPTZ,
-            admin_approved_at TIMESTAMPTZ,
-            admin_approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
-            verified_at TIMESTAMPTZ
-        )
-    """,
-    "ALTER TABLE refund_requests ADD COLUMN IF NOT EXISTS admin_approved_at TIMESTAMPTZ",
-    "ALTER TABLE refund_requests ADD COLUMN IF NOT EXISTS admin_approved_by UUID REFERENCES users(id) ON DELETE SET NULL",
-    """
-        UPDATE refund_requests
-        SET admin_approved_at = COALESCE(admin_approved_at, requested_at, created_at)
-        WHERE admin_approved_at IS NULL
-          AND status IN ('proof_submitted', 'customer_confirmed', 'disputed', 'verified')
-    """,
-    "CREATE INDEX IF NOT EXISTS refund_requests_merchant_status_idx ON refund_requests (merchant_id, status)",
-    "CREATE INDEX IF NOT EXISTS refund_requests_customer_idx ON refund_requests (customer_id, created_at DESC)",
-    """
-        CREATE TABLE IF NOT EXISTS refund_audit_events (
-            id UUID PRIMARY KEY,
-            refund_id UUID NOT NULL REFERENCES refund_requests(id) ON DELETE CASCADE,
-            actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-            actor_role VARCHAR NOT NULL,
-            action VARCHAR NOT NULL,
-            from_status VARCHAR,
-            to_status VARCHAR NOT NULL,
-            note TEXT,
-            evidence_path TEXT,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    """,
-    "CREATE INDEX IF NOT EXISTS refund_audit_events_refund_idx ON refund_audit_events (refund_id, created_at)",
-]
-=======
-from startup_migrations import ORDER_STATUS_VALUES, ORDER_STATUS_CONSTRAINT_MIGRATION, STARTUP_MIGRATIONS
->>>>>>> d548db963297557c72099f8a40145a2866c50b3d
+from startup_migrations import ORDER_STATUS_VALUES, ORDER_STATUS_CONSTRAINT_MIGRATION, STARTUP_MIGRATIONS as BASE_STARTUP_MIGRATIONS
+STARTUP_MIGRATIONS = [*BASE_STARTUP_MIGRATIONS, *PROMOTION_MIGRATIONS]
 
 
 async def run_startup_migration(statement: str, max_attempts: int = 5) -> None:
@@ -212,14 +101,10 @@ async def lifespan(app: FastAPI):
         await run_startup_migration(statement)
     yield
 
-<<<<<<< HEAD
-app = FastAPIOffline(lifespan=lifespan)
-app.include_router(promotions_router)
-=======
 # docs_url/redoc_url/openapi_url disabled: this is a backend-only API with no
 # need to publish a public map of every route and parameter to anyone who asks.
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
->>>>>>> d548db963297557c72099f8a40145a2866c50b3d
+app.include_router(promotions_router)
 
 # This limiter is per process; it does not coordinate across app instances.
 limiter = Limiter(key_func=get_remote_address)
@@ -257,11 +142,7 @@ def validate_menu_image_url(image_url: Optional[str]) -> Optional[str]:
     return value
 
 
-<<<<<<< HEAD
 def public_menu_item(item: MenuItem, promotion=None) -> dict:
-    """Serialize a menu item without leaking legacy multi-megabyte data URLs."""
-=======
-def public_menu_item(item: MenuItem) -> dict:
     """Serialize a menu item without leaking legacy multi-megabyte data URLs.
 
     Deliberately omits `created_at`: when a menu item was added is admin-only
@@ -269,7 +150,6 @@ def public_menu_item(item: MenuItem) -> dict:
     serializer is shared by both the merchant's own dashboard and the public
     customer marketplace, so it must never appear here even in the raw JSON.
     """
->>>>>>> d548db963297557c72099f8a40145a2866c50b3d
     image_url = item.image_url
     if image_url and image_url.lstrip().lower().startswith("data:"):
         image_url = f"/menu-items/{item.id}/image"
@@ -789,18 +669,16 @@ def read_root():
     return {"message": "Click & Collect API is running"}
 
 
-<<<<<<< HEAD
 # --- PHASE 5: RECOMMENDATION ROUTE ---
 @app.get("/recommendations/pickup-availability")
 async def recommendation_pickup_availability(db: AsyncSession = Depends(get_db)):
     rows = await db.execute(select(PickupSlot.merchant_id).join(Merchant, Merchant.id == PickupSlot.merchant_id).where(
-        PickupSlot.time_slot > datetime.now(timezone.utc), PickupSlot.current_bookings < PickupSlot.max_capacity,
+        PickupSlot.time_slot > datetime.now(timezone.utc), PickupSlot.is_bookable == True,
+        PickupSlot.current_bookings < PickupSlot.max_capacity,
         Merchant.is_active == True, Merchant.is_preview == False, Merchant.is_deleted == False).distinct())
     return [str(row[0]) for row in rows]
 
 
-=======
->>>>>>> d548db963297557c72099f8a40145a2866c50b3d
 @app.get("/recommendations/items")
 async def get_recommended_items(
     limit: int = Query(default=20, ge=1, le=100),
@@ -1770,18 +1648,12 @@ async def delete_menu_item(
         raise HTTPException(status_code=403, detail="Access denied.")
 
     used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
-<<<<<<< HEAD
-    from models import Promotion
-    has_promotion = (await db.execute(select(Promotion.id).where(Promotion.menu_item_id == item.id).limit(1))).first()
-    if used or has_promotion:
-        # Past orders point at this item; deleting it would break receipts and sales history.
-=======
     has_planning_history = (await db.execute(select(func.count(DailyFoodLog.id)).where(DailyFoodLog.menu_item_id == item.id))).scalar_one()
     has_stock_limit = (await db.execute(select(func.count(DailyItemStock.id)).where(DailyItemStock.menu_item_id == item.id))).scalar_one()
     has_surplus_offer = (await db.execute(select(func.count(SurplusOffer.id)).where(SurplusOffer.menu_item_id == item.id))).scalar_one()
-    if used or has_planning_history or has_stock_limit or has_surplus_offer:
+    has_promotion = (await db.execute(select(Promotion.id).where(Promotion.menu_item_id == item.id).limit(1))).first()
+    if used or has_promotion or has_planning_history or has_stock_limit or has_surplus_offer:
         # Preserve order receipts, planning observations and daily caps.
->>>>>>> d548db963297557c72099f8a40145a2866c50b3d
         item.is_available = False
         await db.commit()
         return {"message": "This item has order or planning records, so it was hidden instead of deleted.", "hidden": True}
@@ -2420,12 +2292,9 @@ async def create_order(
         offers = {offer.id: offer for offer in offer_rows}
     total_price = Decimal("0.00")
     line_items = []
-<<<<<<< HEAD
-    offers = await active_promotions(db, order_data.merchant_id)
-=======
     requested_by_item: dict[UUID, int] = {}
     requested_by_offer: dict[UUID, int] = {}
->>>>>>> d548db963297557c72099f8a40145a2866c50b3d
+    promotions_by_item = await active_promotions(db, order_data.merchant_id)
     for line in order_data.items:
         item = await db.get(MenuItem, line.menu_item_id)
         if not item:
@@ -2434,13 +2303,6 @@ async def create_order(
             raise HTTPException(status_code=400, detail="Menu item does not belong to this merchant.")
         if not item.is_available or item.approval_status == "rejected" or float(item.price) <= 0:
             raise HTTPException(status_code=400, detail=f"'{item.name}' is currently unavailable.")
-<<<<<<< HEAD
-        promotion = offers.get(item.id)
-        unit_price = discounted_price(item.price, promotion) if promotion else money(item.price)
-        if line.expected_price is not None and money(line.expected_price) != unit_price:
-            raise HTTPException(409, f"The price of '{item.name}' changed. Refresh the menu and review your cart before paying.")
-        line_total = unit_price * line.quantity
-=======
         offer = offers.get(line.surplus_offer_id) if line.surplus_offer_id else None
         if line.surplus_offer_id:
             if (not offer or offer.menu_item_id != item.id or offer.merchant_id != merchant.id
@@ -2450,16 +2312,17 @@ async def create_order(
                     or offer.confirmed_safe_at is None):
                 raise HTTPException(409, f"The surplus offer for '{item.name}' is no longer available for this pickup slot.")
             requested_by_offer[offer.id] = requested_by_offer.get(offer.id, 0) + line.quantity
-        line_price = offer.sale_price if offer else item.price
+        # An explicit surplus offer owns its price; scheduled discounts never stack.
+        promotion = promotions_by_item.get(item.id) if not offer else None
+        line_price = (money(offer.sale_price) if offer else
+                      discounted_price(item.price, promotion) if promotion else money(item.price))
+        if line.expected_price is not None and money(line.expected_price) != line_price:
+            raise HTTPException(409, f"The price of '{item.name}' changed. Refresh the menu and review your cart before paying.")
         line_total = line_price * line.quantity
->>>>>>> d548db963297557c72099f8a40145a2866c50b3d
         total_price += line_total
         requested_by_item[item.id] = requested_by_item.get(item.id, 0) + line.quantity
         instructions = line.special_instructions.strip() if line.special_instructions else None
-<<<<<<< HEAD
-        line_items.append((item, line.quantity, instructions or None, unit_price, promotion))
-=======
-        line_items.append((item, line.quantity, instructions or None, line_price, offer.id if offer else None))
+        line_items.append((item, line.quantity, instructions or None, line_price, offer.id if offer else None, promotion))
 
     if requested_by_offer:
         reserved_offers = await reserved_offer_quantities(db, list(requested_by_offer))
@@ -2483,14 +2346,13 @@ async def create_order(
         service_date = slot.time_slot.astimezone(MALAYSIA_TZ).date()
         reserved = await reserved_item_quantities(db, order_data.merchant_id, service_date,
                                                    [row.menu_item_id for row in stock_rows])
-        item_names = {item.id: item.name for item, _, _, _, _ in line_items}
+        item_names = {item.id: item.name for item, *_ in line_items}
         for row in stock_rows:
             remaining = row.total_portions - reserved.get(row.menu_item_id, 0)
             if requested_by_item[row.menu_item_id] > remaining:
                 remaining = max(0, remaining)
                 noun = "portion" if remaining == 1 else "portions"
                 raise HTTPException(409, f"Only {remaining} {noun} of '{item_names[row.menu_item_id]}' remain for {service_date}. Reduce the quantity or choose another pickup day.")
->>>>>>> d548db963297557c72099f8a40145a2866c50b3d
 
     order_number = new_order_number()
     while (await db.execute(select(Order.id).where(Order.order_number == order_number))).first():
@@ -2512,24 +2374,16 @@ async def create_order(
 
     try:
         await db.flush()
-<<<<<<< HEAD
-        for item, quantity, instructions, unit_price, promotion in line_items:
-=======
-        for item, quantity, instructions, line_price, offer_id in line_items:
->>>>>>> d548db963297557c72099f8a40145a2866c50b3d
+        for item, quantity, instructions, line_price, offer_id, promotion in line_items:
             db.add(OrderItem(
                 order_id=new_order.id,
                 menu_item_id=item.id,
                 quantity=quantity,
-<<<<<<< HEAD
-                price_at_order=unit_price,
-                original_price_at_order=money(item.price),
-                discount_at_order=money(item.price) - unit_price,
-                promotion_id=promotion.id if promotion else None,
-=======
                 price_at_order=line_price,
                 surplus_offer_id=offer_id,
->>>>>>> d548db963297557c72099f8a40145a2866c50b3d
+                original_price_at_order=money(item.price),
+                discount_at_order=max(Decimal("0.00"), money(item.price) - line_price),
+                promotion_id=promotion.id if promotion else None,
                 special_instructions=instructions,
             ))
         slot.current_bookings += 1
@@ -3795,16 +3649,11 @@ async def admin_delete_menu_item(
     if not item:
         raise HTTPException(status_code=404, detail="Menu item not found.")
     used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id))).scalar_one()
-<<<<<<< HEAD
-    from models import Promotion
-    has_promotion = (await db.execute(select(Promotion.id).where(Promotion.menu_item_id == item.id).limit(1))).first()
-    if used or has_promotion:
-=======
     has_planning_history = (await db.execute(select(func.count(DailyFoodLog.id)).where(DailyFoodLog.menu_item_id == item.id))).scalar_one()
     has_stock_limit = (await db.execute(select(func.count(DailyItemStock.id)).where(DailyItemStock.menu_item_id == item.id))).scalar_one()
     has_surplus_offer = (await db.execute(select(func.count(SurplusOffer.id)).where(SurplusOffer.menu_item_id == item.id))).scalar_one()
-    if used or has_planning_history or has_stock_limit or has_surplus_offer:
->>>>>>> d548db963297557c72099f8a40145a2866c50b3d
+    has_promotion = (await db.execute(select(Promotion.id).where(Promotion.menu_item_id == item.id).limit(1))).first()
+    if used or has_promotion or has_planning_history or has_stock_limit or has_surplus_offer:
         item.is_available = False
         await log_admin_action(
             db, current_user, "menu_item.hide",
