@@ -2,10 +2,11 @@
 "use client";
 
 import { BACKEND_URL } from "@/lib/backend-url";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { markAdminSessionStart } from "@/lib/admin-session";
+import { signOut } from "@/lib/sign-out";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,6 +14,23 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [currentRole, setCurrentRole] = useState<string | null>(null);
+  const [merchantPortal, setMerchantPortal] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setCurrentRole(localStorage.getItem("token") ? localStorage.getItem("userRole") : null);
+      setMerchantPortal(new URLSearchParams(window.location.search).get("portal") === "merchant");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const switchAccount = () => {
+    signOut();
+    setCurrentRole(null);
+    setFormData({ email: "", password: "" });
+    setError(null);
+  };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -37,6 +55,14 @@ export default function LoginPage() {
 
       const data = await res.json();
 
+      if (merchantPortal && data.role !== "merchant") {
+        throw new Error("This account is not a merchant account. Sign in with the merchant email, or ask an admin to assign the merchant role.");
+      }
+
+      if (localStorage.getItem("user_id") !== data.user_id) {
+        for (const key of ["profilePicture", "preferredName", "dietaryPreferences"]) localStorage.removeItem(key);
+      }
+
       localStorage.setItem("token", data.access_token);
       localStorage.setItem("userRole", data.role);
       localStorage.setItem("userName", data.name);
@@ -51,8 +77,8 @@ export default function LoginPage() {
       } else {
         router.push("/");
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not sign in. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -68,11 +94,17 @@ export default function LoginPage() {
             P
           </div>
           <h1 className="text-2xl font-black text-slate-900">Welcome back</h1>
-          <p className="text-sm text-slate-500 mt-1">Log in to continue to Payvolution</p>
+          <p className="text-sm text-slate-500 mt-1">{merchantPortal ? "Sign in with your merchant account" : "Log in to continue to Payvolution"}</p>
         </div>
 
         {/* Card */}
         <div className="bg-white rounded-2xl shadow-sm border border-stone-200 p-6 space-y-4">
+          {currentRole && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+              <p>You are signed in as {currentRole}. {merchantPortal && currentRole !== "merchant" ? "Switch accounts to open the merchant portal." : "You can sign in with another account below."}</p>
+              <button type="button" onClick={switchAccount} className="mt-2 font-semibold text-orange-700 underline underline-offset-2">Switch account</button>
+            </div>
+          )}
           {error && (
             <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl border border-red-100 text-sm font-medium">
               {error}

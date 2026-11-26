@@ -4,6 +4,8 @@ import { BACKEND_URL } from "@/lib/backend-url";
 import { getErrorMessage } from "@/lib/errors";
 import { useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { signOut } from "@/lib/sign-out";
 import ShopDetailsDialog from "@/components/ShopDetailsDialog";
 import RecommendationWidget from "@/components/RecommendationWidget";
 import FoodDetailsDialog from "@/components/FoodDetailsDialog";
@@ -81,6 +83,7 @@ interface CartLine {
 }
 
 export default function Home() {
+  const router = useRouter();
   const checkoutInFlight = useRef(false);
   const requestedSurplusSlotId = useRef<string | null>(null);
   const [merchants, setMerchants] = useState<Merchant[]>([]);
@@ -136,6 +139,7 @@ export default function Home() {
 
   const [userProfilePic, setUserProfilePic] = useState<string | null>(null);
   const [userDisplayName, setUserDisplayName] = useState<string>("");
+  const [signedIn, setSignedIn] = useState(false);
 
   const [errorMessage, setErrorMessage] = useState("");
   const [loading, setLoading] = useState(true);
@@ -149,6 +153,7 @@ export default function Home() {
       const preferred = localStorage.getItem("preferredName");
       const savedName = localStorage.getItem("userName");
       setUserDisplayName(preferred || savedName || "Profile");
+      setSignedIn(Boolean(localStorage.getItem("token")));
     }
   }, []);
 
@@ -631,8 +636,17 @@ export default function Home() {
                 </span>
               )}
 
-              <span className="hidden sm:inline truncate max-w-[100px]">{userDisplayName}</span>
+              <span className="truncate max-w-[100px]">{signedIn ? userDisplayName : "Account"}</span>
             </Link>
+            {signedIn && (
+              <button
+                type="button"
+                onClick={() => { signOut(); router.push("/login"); }}
+                className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100 sm:text-sm"
+              >
+                Log out
+              </button>
+            )}
           </div>
         </header>
 

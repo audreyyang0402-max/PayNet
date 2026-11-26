@@ -15,6 +15,7 @@ import DeleteAccountButton from "@/components/DeleteAccountButton";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 import RefundManagement from "@/components/RefundManagement";
 import FoodPlanning from "@/components/FoodPlanning";
+import { signOut } from "@/lib/sign-out";
 
 const MerchantMenuManager = dynamic(
   () => import("@/components/MerchantMenuManager").then((module) => module.MerchantMenuManager),
@@ -316,9 +317,7 @@ export default function MerchantDashboard() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("userRole");
-    localStorage.removeItem("userName");
+    signOut();
     router.push("/vendor/login");
   };
 

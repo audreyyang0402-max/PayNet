@@ -8,6 +8,7 @@ import { BACKEND_URL } from "@/lib/backend-url";
 import CustomerSpendingDashboard from "@/components/CustomerSpendingDashboard";
 import DeleteAccountButton from "@/components/DeleteAccountButton";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
+import { signOut } from "@/lib/sign-out";
 
 type User = { id: string; name: string; email: string; phone_number?: string; role: string };
 type Order = { id: string; status: string };
@@ -85,7 +86,7 @@ export default function ProfilePage() {
     reader.onerror = () => setError("Could not read that photo. Please choose another.");
     reader.readAsDataURL(uploaded);
   }
-  function logout() { ["token", "user_id", "userRole", "userName"].forEach(k => localStorage.removeItem(k)); router.replace("/login"); }
+  function logout() { signOut(); router.replace("/login"); }
   return (<><main className="min-h-screen bg-[#faf8f3] px-4 py-6 text-stone-900 sm:py-10">
     <div className="mx-auto max-w-3xl space-y-5">
       <BackLink href="/">Back to marketplace</BackLink>

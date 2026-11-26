@@ -2,6 +2,7 @@
 
 import { BACKEND_URL } from "@/lib/backend-url";
 import { getErrorMessage } from "@/lib/errors";
+import { signOut } from "@/lib/sign-out";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import BackLink from "@/components/BackLink";
@@ -469,9 +470,7 @@ export function MerchantMenuManager({ embedded = false }: { embedded?: boolean }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("userRole");
-    localStorage.removeItem("userName");
+    signOut();
     router.push("/vendor/login");
   };
 
